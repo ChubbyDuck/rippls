@@ -25,3 +25,7 @@ Write Effects as pipes (`andThen`, `matchEffect`, `filterOrFail`, …) while the
 ## Sandcastle source
 
 When working with Sandcastle (`@ai-hero/sandcastle`), read the library from the local fork at `/Users/chubbyduck/_Projects/fork/sandcastle`. Do not guess APIs from types or docs when the source is available.
+
+## Effect source
+
+When working with Effect (`effect`, `@effect/*`), read the library from the local fork at `/Users/chubbyduck/_Projects/fork/effect` (packages under `packages/`, e.g. `packages/effect`, `packages/platform`). Do not guess APIs from types or docs when the source is available.
