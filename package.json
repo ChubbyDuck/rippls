@@ -1,11 +1,36 @@
 {
   "name": "rippls",
   "version": "0.0.1",
-  "private": true,
+  "description": "An opinionated ticket-based agentic loops-runner",
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
+  "bin": {
+    "rippls": "dist/rippls.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ChubbyDuck/rippls.git"
+  },
+  "keywords": [
+    "cli",
+    "loop",
+    "harness",
+    "tickets",
+    "agents"
+  ],
   "scripts": {
-    "dev": "tsx --watch src/index.ts",
-    "start": "tsx src/index.ts",
+    "dev": "tsx --watch src/cli.ts",
+    "start": "tsx src/cli.ts",
+    "build": "vite build",
+    "prepack": "pnpm build",
     "generate": "tsx bin/generate.ts",
     "clean-tickets": "tsx bin/clean.ts",
     "typecheck": "tsc --noEmit",
@@ -36,6 +61,7 @@
     "oxlint": "1.80.0",
     "oxlint-tsgolint": "^7.0.2001",
     "tsx": "^4.19.4",
+    "vite": "8.3.0",
     "vitest": "^5.0.0"
   },
   "engines": {

@@ -1,12 +1,12 @@
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime';
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { Config, ConfigProvider, Effect, Layer, Option, Schema } from 'effect';
+import { Config, Effect, Layer, Option, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 
-import { harnessFileConfig } from '~/config/config';
+import { HarnessFileConfigLive } from '~/config/layer';
 import {
   HarnessConfig,
-  harnessConfigProvider,
+  harnessConfig,
   idleTimeoutConfig,
   pollIntervalConfig,
   resolveTicketSource,
@@ -22,16 +22,16 @@ import { StrategyRepositoryDefault } from '~/Infrastructure/Tickets/StrategyRepo
 import { liveTicketRepository } from '~/Infrastructure/Tickets/TicketRepository/fromSource';
 import { WorktreeRepositoryLive } from '~/Infrastructure/Tickets/WorktreeRepository/sandcastle';
 
-const TracingLive = makeTracingLayer(Option.fromNullishOr(harnessFileConfig.otlpTraceUrl));
+const TracingLive = Layer.unwrap(
+  harnessConfig.pipe(Effect.map((config) => makeTracingLayer(Option.fromNullishOr(config.otlpTraceUrl))))
+);
 
 const AppLive = Layer.mergeAll(
   StrategyRepositoryDefault,
   ConfiguredAgentsLive,
-  Layer.unwrap(RepositoryRoot.pipe(Effect.map(WorktreeRepositoryLive)))
-).pipe(
-  Layer.provideMerge(RepositoryRootLive),
-  Layer.provide(ConfigProvider.layer(harnessConfigProvider(harnessFileConfig)))
-);
+  Layer.unwrap(RepositoryRoot.pipe(Effect.map(WorktreeRepositoryLive))),
+  TracingLive
+).pipe(Layer.provideMerge(HarnessFileConfigLive), Layer.provideMerge(RepositoryRootLive));
 
 const Concurrency = Schema.Int.check(Schema.isGreaterThan(0));
 
@@ -66,14 +66,14 @@ const command = Command.make(
 );
 
 export const program = Command.run(command, { version: '0.0.1' }).pipe(
-  Effect.provide(Layer.mergeAll(AppLive, TracingLive).pipe(Layer.provideMerge(NodeServices.layer)))
+  Effect.provide(AppLive.pipe(Layer.provideMerge(NodeServices.layer)))
 );
 
 const describeError = (error: unknown) => (error instanceof Config.ConfigError ? error.cause.message : error);
 
-if (import.meta.main) {
+export const run = () =>
   program.pipe(
     Effect.tapError((error) => Effect.logError(describeError(error))),
     NodeRuntime.runMain({ disableErrorReporting: true })
   );
-}
+

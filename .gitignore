@@ -8,6 +8,13 @@ node_modules_original
 .env.local
 .env.*.local
 
+rippls.config.ts
+rippls.config.js
+rippls.config.json
+rippls.config.yaml
+rippls.config.yml
+src/config/config.ts
+
 coverage
 .vitest
 test-results/

@@ -1,14 +1,15 @@
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime';
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { ConfigProvider, Console, Effect, FileSystem, Layer, Path } from 'effect';
+import { Console, Effect, FileSystem, Layer, Path } from 'effect';
 import { Command } from 'effect/unstable/cli';
 
-import { harnessFileConfig } from '~/config/config';
-import { harnessConfig, harnessConfigProvider, resolveTicketSource } from '~/Core/Shared/Domain/HarnessConfig';
+import { HarnessFileConfigLive } from '~/config/layer';
+import { harnessConfig, resolveTicketSource } from '~/Core/Shared/Domain/HarnessConfig';
+import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunHarness/repositoryRoot';
 
 const ID_FILE = /^\d+.*\.md$/;
 
-const AppLive = ConfigProvider.layer(harnessConfigProvider(harnessFileConfig));
+const AppLive = HarnessFileConfigLive.pipe(Layer.provideMerge(RepositoryRootLive));
 
 const command = Command.make('clean', {}, () =>
   Effect.gen(function* () {

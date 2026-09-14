@@ -136,11 +136,7 @@ export type ScheduledConfig = typeof ScheduledConfig.Type;
 
 const ScheduledConfigs = Schema.Array(ScheduledConfig);
 
-export const TicketsDir = Schema.NonEmptyString.check(
-  Schema.makeFilter((path: string) =>
-    path.startsWith('/') ? undefined : 'ticketsDir must be an absolute path'
-  )
-).pipe(Schema.brand('TicketsDir'));
+export const TicketsDir = Schema.NonEmptyString.pipe(Schema.brand('TicketsDir'));
 
 export type TicketsDir = typeof TicketsDir.Type;
 

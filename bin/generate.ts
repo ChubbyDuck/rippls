@@ -1,11 +1,12 @@
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime';
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { Config, ConfigProvider, Console, Effect, Layer, Schema } from 'effect';
+import { Config, Console, Effect, Layer, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 
-import { harnessFileConfig } from '~/config/config';
-import { harnessConfig, harnessConfigProvider, resolveTicketSource } from '~/Core/Shared/Domain/HarnessConfig';
+import { HarnessFileConfigLive } from '~/config/layer';
+import { harnessConfig, resolveTicketSource } from '~/Core/Shared/Domain/HarnessConfig';
 import { generateTickets } from '~/Core/Tickets/Application/UseCases/Generate/generate';
+import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunHarness/repositoryRoot';
 import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import { TicketStatus } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketStatus';
@@ -16,7 +17,7 @@ const AppLive = Layer.unwrap(
     Effect.flatMap((config) => resolveTicketSource(config.source, 'folder')),
     Effect.map((source) => ticketRepositoryLive(source))
   )
-).pipe(Layer.provide(ConfigProvider.layer(harnessConfigProvider(harnessFileConfig))));
+).pipe(Layer.provide(HarnessFileConfigLive), Layer.provideMerge(RepositoryRootLive));
 
 const Count = Schema.Int.check(Schema.isGreaterThan(0));
 
