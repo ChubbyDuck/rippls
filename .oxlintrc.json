@@ -1,0 +1,49 @@
+{
+  "$schema": "./node_modules/@effect/tsgo/oxlint-schema.json",
+  "extends": ["./node_modules/@effect/tsgo/oxlint-presets/recommended.json"],
+  "plugins": ["typescript", "import", "vitest", "effecttsgo"],
+  "jsPlugins": ["./oxlint-plugin.ts"],
+  "categories": {
+    "correctness": "warn"
+  },
+  "rules": {
+    "harness/consistent-agent-priorities": "error",
+    "typescript/consistent-type-imports": [
+      "warn",
+      {
+        "prefer": "type-imports",
+        "fixStyle": "separate-type-imports",
+        "disallowTypeAnnotations": false
+      }
+    ],
+    "eslint/no-unused-vars": [
+      "warn",
+      {
+        "vars": "all",
+        "args": "none",
+        "caughtErrors": "none",
+        "varsIgnorePattern": "^_",
+        "ignoreRestSiblings": true
+      }
+    ],
+    "eslint/no-debugger": "warn",
+    "typescript/triple-slash-reference": "off"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.*", "**/*.spec.*", "**/*test*.ts"],
+      "rules": {
+        "effecttsgo/async-function": "off",
+        "typescript/no-non-null-assertion": "off",
+        "vitest/require-mock-type-parameters": "off"
+      }
+    }
+  ],
+  "ignorePatterns": [
+    "**/node_modules",
+    "**/node_modules_sandbox",
+    "**/node_modules_original",
+    "**/dist",
+    "**/coverage"
+  ]
+}

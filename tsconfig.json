@@ -1,0 +1,44 @@
+{
+  "$schema": "./node_modules/@effect/tsgo/schema.json",
+  "include": ["."],
+  "exclude": ["node_modules", "node_modules_sandbox", "node_modules_original"],
+  "compilerOptions": {
+    "plugins": [
+      {
+        "name": "@effect/language-service",
+        "diagnostics": false,
+        "refactors": true,
+        "completions": true,
+        "quickinfo": true,
+        "goto": true,
+        "renames": true,
+        "ignoreEffectSuggestionsInTscExitCode": true,
+        "ignoreEffectWarningsInTscExitCode": false,
+        "ignoreEffectErrorsInTscExitCode": false
+      }
+    ],
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false,
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "inlineSources": false,
+    "isolatedModules": true,
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "preserveWatchOutput": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "noUncheckedSideEffectImports": false,
+    "lib": ["esnext"],
+    "target": "ESNext",
+    "allowImportingTsExtensions": true,
+    "types": ["node"],
+    "paths": {
+      "~/*": ["./src/*"]
+    },
+    "noEmit": true
+  }
+}
