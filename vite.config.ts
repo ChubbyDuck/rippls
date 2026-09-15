@@ -9,6 +9,10 @@ export default defineConfig({
       '~': src,
     },
   },
+  // Fresh installs float platform-node-shared past the pinned effect RC.
+  ssr: {
+    noExternal: ['@effect/platform-node', '@effect/platform-node-shared'],
+  },
   build: {
     ssr: 'src/cli.ts',
     outDir: 'dist',

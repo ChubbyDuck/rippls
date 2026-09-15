@@ -40,7 +40,7 @@ const command = Command.make(
     )
 );
 
-export const program = Command.run(command, { version: '0.0.1' }).pipe(
+export const program = Command.run(command, { version: '0.0.2' }).pipe(
   Effect.provide(AppLive.pipe(Layer.provideMerge(NodeServices.layer)))
 );
 
