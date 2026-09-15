@@ -1,7 +1,7 @@
 import { Data, Effect, FileSystem, Path, Schema } from 'effect';
 import { parse } from 'yaml';
 
-import { defaultHarnessConfig } from '~/Core/Shared/Domain/HarnessConfig';
+import { defaultEngineConfig } from '~/Core/Shared/Domain/EngineConfig';
 
 const DEFAULT_TICKETS_DIR = '.agents/tickets';
 
@@ -24,8 +24,8 @@ const isRecord = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
 
 const configFromModule = (mod: Record<string, unknown>): unknown => {
-  if (mod.harnessFileConfig !== undefined) {
-    return mod.harnessFileConfig;
+  if (mod.engineFileConfig !== undefined) {
+    return mod.engineFileConfig;
   }
   return mod.default;
 };
@@ -37,16 +37,16 @@ const defaultFolderSource = (path: Path.Path, root: string, ticketsDir = DEFAULT
 
 export const applyConfigDefaults = (input: unknown, root: string, path: Path.Path) => {
   const record = isRecord(input) ? input : {};
-  const withAgents = record.agents === undefined ? { ...record, agents: defaultHarnessConfig.agents } : record;
-  const source = withAgents.source;
+  const withHarnesses = record.harnesses === undefined ? { ...record, harnesses: defaultEngineConfig.harnesses } : record;
+  const source = withHarnesses.source;
   if (!isRecord(source)) {
-    return { ...withAgents, source: defaultFolderSource(path, root) };
+    return { ...withHarnesses, source: defaultFolderSource(path, root) };
   }
   if (source._tag === 'folder') {
     const ticketsDir = typeof source.ticketsDir === 'string' ? source.ticketsDir : DEFAULT_TICKETS_DIR;
-    return { ...withAgents, source: { ...source, ticketsDir: path.resolve(root, ticketsDir) } };
+    return { ...withHarnesses, source: { ...source, ticketsDir: path.resolve(root, ticketsDir) } };
   }
-  return withAgents;
+  return withHarnesses;
 };
 
 const asRecord = (raw: unknown, path: string) =>
@@ -83,7 +83,7 @@ const importFile = (file: string, path: Path.Path) =>
     )
   );
 
-export const loadHarnessFileConfig = Effect.fn('config.load')(function* (root: string) {
+export const loadEngineFileConfig = Effect.fn('config.load')(function* (root: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   for (const name of CONFIG_FILES) {

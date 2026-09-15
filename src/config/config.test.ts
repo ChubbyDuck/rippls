@@ -4,17 +4,17 @@ import { expect, test } from 'vitest';
 import {
   defaultIdleTimeout,
   defaultPollInterval,
-  harnessConfig,
-  harnessConfigProvider,
-} from '~/Core/Shared/Domain/HarnessConfig';
+  engineConfig,
+  engineConfigProvider,
+} from '~/Core/Shared/Domain/EngineConfig';
 
-import { harnessFileConfig as folderExample } from './examples/folder';
-import { harnessFileConfig as linearExample } from './examples/linear';
-import { harnessFileConfig as scheduleExample } from './examples/schedule';
+import { engineFileConfig as folderExample } from './examples/folder';
+import { engineFileConfig as linearExample } from './examples/linear';
+import { engineFileConfig as scheduleExample } from './examples/schedule';
 
 test('folder example loads', () => {
-  expect(Effect.runSync(harnessConfig.parse(harnessConfigProvider(folderExample)))).toEqual({
-    agents: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
+  expect(Effect.runSync(engineConfig.parse(engineConfigProvider(folderExample)))).toEqual({
+    harnesses: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
     schedule: [],
     otlpTraceUrl: 'http://127.0.0.1:4318/v1/traces',
     source: {
@@ -27,11 +27,11 @@ test('folder example loads', () => {
 });
 
 test('schedule example loads', () => {
-  expect(Effect.runSync(harnessConfig.parse(harnessConfigProvider(scheduleExample)))).toEqual({
-    agents: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
+  expect(Effect.runSync(engineConfig.parse(engineConfigProvider(scheduleExample)))).toEqual({
+    harnesses: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
     schedule: [
       {
-        agents: [{ name: 'Cursor' }],
+        harnesses: [{ name: 'Cursor' }],
         rrule: {
           freq: 'DAILY',
           dtstart: DateTime.toDateUtc(DateTime.makeUnsafe('2026-01-01T18:00:00.000Z')),
@@ -46,8 +46,8 @@ test('schedule example loads', () => {
 });
 
 test('linear example loads', () => {
-  expect(Effect.runSync(harnessConfig.parse(harnessConfigProvider(linearExample)))).toEqual({
-    agents: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
+  expect(Effect.runSync(engineConfig.parse(engineConfigProvider(linearExample)))).toEqual({
+    harnesses: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
     schedule: [],
     source: {
       _tag: 'linear',

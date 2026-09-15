@@ -1,9 +1,9 @@
 /** Copy to `rippls.config.ts` at the repository Rippls should process and set the window and timezone. */
-export const harnessFileConfig = {
-  agents: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
+export const engineFileConfig = {
+  harnesses: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
   schedule: [
     {
-      agents: [{ name: 'Cursor' }],
+      harnesses: [{ name: 'Cursor' }],
       rule: {
         freq: 'DAILY',
         from: '18:00',

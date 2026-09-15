@@ -3,19 +3,19 @@ import * as NodeServices from '@effect/platform-node/NodeServices';
 import { Console, Effect, FileSystem, Layer, Path } from 'effect';
 import { Command } from 'effect/unstable/cli';
 
-import { HarnessFileConfigLive } from '~/config/layer';
-import { harnessConfig, resolveTicketSource } from '~/Core/Shared/Domain/HarnessConfig';
-import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunHarness/repositoryRoot';
+import { EngineFileConfigLive } from '~/config/layer';
+import { engineConfig, resolveTicketSource } from '~/Core/Shared/Domain/EngineConfig';
+import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngine/repositoryRoot';
 
 const ID_FILE = /^\d+.*\.md$/;
 
-const AppLive = HarnessFileConfigLive.pipe(Layer.provideMerge(RepositoryRootLive));
+const AppLive = EngineFileConfigLive.pipe(Layer.provideMerge(RepositoryRootLive));
 
 const command = Command.make('clean', {}, () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
-    const config = yield* harnessConfig;
+    const config = yield* engineConfig;
     const source = yield* resolveTicketSource(config.source, 'folder');
     const files = yield* fs.readDirectory(source.ticketsDir);
     const tickets = files.filter((file) => ID_FILE.test(file));

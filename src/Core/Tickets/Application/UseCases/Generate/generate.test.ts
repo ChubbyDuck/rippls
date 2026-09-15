@@ -6,7 +6,7 @@ import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import { TicketStatus } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketStatus';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import { TicketRepository } from '~/Core/Tickets/Ports/TicketRepository';
+import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import { generateTickets } from './generate';
 import type { GenerateOptions } from './plan';
@@ -15,7 +15,7 @@ const defaults: GenerateOptions = { count: 36, kinds: [], statuses: [], hitls: [
 
 const runGenerate = (options: Partial<GenerateOptions>) => {
   const saved: Ticket[] = [];
-  const repo = Layer.succeed(TicketRepository, {
+  const source = Layer.succeed(TicketSource, {
     getOneBy: () => Effect.fail(new TicketNotFound()),
     getManyBy: () => Effect.succeed([]),
     save: (ticket) =>
@@ -30,7 +30,7 @@ const runGenerate = (options: Partial<GenerateOptions>) => {
   return Effect.runPromise(
     generateTickets({ ...defaults, ...options }).pipe(
       Effect.map((created) => ({ created, saved })),
-      Effect.provide(repo)
+      Effect.provide(source)
     )
   );
 };
@@ -112,7 +112,7 @@ test('generateTickets fails when the kind and hitl constraints contradict', asyn
     generateTickets({ ...defaults, kinds: ['implementation'], hitls: ['yes'] }).pipe(
       Effect.flip,
       Effect.provide(
-        Layer.succeed(TicketRepository, {
+        Layer.succeed(TicketSource, {
           getOneBy: () => Effect.fail(new TicketNotFound()),
           getManyBy: () => Effect.succeed([]),
           save: () => Effect.void,

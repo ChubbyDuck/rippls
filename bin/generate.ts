@@ -3,21 +3,21 @@ import * as NodeServices from '@effect/platform-node/NodeServices';
 import { Config, Console, Effect, Layer, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 
-import { HarnessFileConfigLive } from '~/config/layer';
-import { harnessConfig, resolveTicketSource } from '~/Core/Shared/Domain/HarnessConfig';
+import { EngineFileConfigLive } from '~/config/layer';
+import { engineConfig, resolveTicketSource } from '~/Core/Shared/Domain/EngineConfig';
 import { generateTickets } from '~/Core/Tickets/Application/UseCases/Generate/generate';
-import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunHarness/repositoryRoot';
+import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngine/repositoryRoot';
 import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import { TicketStatus } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketStatus';
-import { ticketRepositoryLive } from '~/Infrastructure/Tickets/TicketRepository/fromSource';
+import { ticketSourceLive } from '~/Infrastructure/Tickets/TicketSource/fromSource';
 
 const AppLive = Layer.unwrap(
-  harnessConfig.pipe(
+  engineConfig.pipe(
     Effect.flatMap((config) => resolveTicketSource(config.source, 'folder')),
-    Effect.map((source) => ticketRepositoryLive(source))
+    Effect.map((source) => ticketSourceLive(source))
   )
-).pipe(Layer.provide(HarnessFileConfigLive), Layer.provideMerge(RepositoryRootLive));
+).pipe(Layer.provide(EngineFileConfigLive), Layer.provideMerge(RepositoryRootLive));
 
 const Count = Schema.Int.check(Schema.isGreaterThan(0));
 

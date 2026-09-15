@@ -2,9 +2,9 @@
 
 ![A duck creating concentric ripples on a calm pond](docs/assets/pond-ripple-hero.jpg)
 
-Rippls is a standalone ticket **Harness**. It polls a folder or Linear, claims eligible
-**Tickets**, and gives each one to a named **Runner**. The selected coding **Agent**
-works in an isolated Git worktree, and successful work is merged into its parent branch.
+Rippls is an opinionated ticket workflow engine. It defines a ticket format, lifecycle
+rules, and reusable **Strategies** built around specific skills. A pool of named
+**Runners** processes a **Ticket Stream**, with work performed in isolated Git worktrees.
 
 Rippls is a CLI. Install it with npm or pnpm, then run it from the Git repository
 you want it to process. No clone of this project is required.
@@ -14,7 +14,7 @@ you want it to process. No clone of this project is required.
 - New user: [Before you start](#before-you-start) and
 [Quick start with folder tickets](#quick-start-with-folder-tickets)
 - Running tickets: [Which tickets are eligible?](#which-tickets-are-eligible) and
-[Running the Harness](#running-the-harness)
+[Running the Engine](#running-the-engine)
 - Connecting a Source: [Folder Source](#folder-source) or
 [Linear Source](#linear-source)
 - Tuning execution: [Configuration](#configuration) and
@@ -23,20 +23,47 @@ you want it to process. No clone of this project is required.
 
 
 
+## How the parts fit together
+
+| Term | Meaning |
+| --- | --- |
+| **Engine** | Coordinates the Runners processing Tickets. |
+| **Runner** | A named worker reused across successive Tickets. |
+| **Ticket Source** | Reads external records, converts them into Tickets, and saves Ticket changes. |
+| **Ticket Stream** | The ongoing sequence of uniform Tickets supplied for processing. |
+| **Ticket Processing** | The shared lifecycle: claim, apply a Strategy, then complete or escalate. |
+| **Strategy** | A reusable procedure for performing a Ticket's work through a Harness. |
+| **Harness** | A coding integration such as Claude Code, Codex, Cursor, or OpenCode. |
+| **Agent** | A running instance of a Harness's model on a Runner; each invocation creates a new Agent. |
+
+Tickets have the same domain shape before entering the Ticket Stream. The Engine and
+Runners apply the same processing rules regardless of whether a Ticket came from a
+folder or Linear; the Source handles conversion and persistence.
+
+The **Strategy Selector** chooses the procedure for a Ticket, while the
+**Harness Selector** chooses the coding integration. A Ticket Kind describes the work; a Strategy
+describes how to perform it. Different Strategies can serve the same Kind, although the
+current selector maps each Kind to one Strategy. Ticket Processing owns claiming,
+completion, and escalation across Strategies.
+
+The **Worktree Manager** prepares Project and Ticket Worktrees and merges and closes
+successful Ticket Worktrees.
+
 ## What a run does
 
-1. Polls the configured **Source** for the next eligible **Ticket**.
+1. Acquires the next eligible **Ticket** through the **Ticket Stream**, which polls the configured **Source**.
 2. Claims it for a stable, named **Runner**.
-3. Selects a configured **Agent**.
+3. Selects a configured **Harness**.
 4. Creates a `ticket-<source>-<id>` branch and **Ticket Worktree**.
 5. Installs workspace dependencies with `corepack pnpm install` when needed.
-6. Runs the **Strategy** associated with the ticket kind.
+6. Runs the selected **Strategy**, which invokes the **Harness** to create Agents for its steps.
 7. On success, merges the ticket branch and marks the ticket `done`.
 8. On Strategy failure, retains the worktree and raises the ticket to a human as
   `kind: task`, `hitl: yes`.
 
-The Harness continues until its quota is reached or it has been idle for the configured
-timeout.
+The **Limit** caps Tickets taken from the stream, rather than successful completions.
+The Engine finishes processing the Tickets it has taken, or stops after the configured
+idle timeout. A Strategy failure escalates the Ticket and halts the run.
 
 ## Before you start
 
@@ -44,13 +71,13 @@ You need:
 
 - Node.js 24 or newer
 - Git, with a commit name and email configured
-- At least one supported Agent CLI installed and authenticated:
+- At least one supported Harness CLI installed and authenticated:
   - `agent` for Cursor
   - `codex` for Codex
   - `claude` for Claude Code
   - `opencode` for OpenCode
 
-Only the Agent CLIs named in your configuration need to be installed. With no
+Only the Harness CLIs named in your configuration need to be installed. With no
 config file, Rippls uses Codex, Cursor, Claude, and OpenCode.
 
 Install the CLI:
@@ -62,7 +89,7 @@ npm install -g rippls
 Or run it without a global install:
 
 ```bash
-npx rippls --queue 1
+npx rippls --limit 1
 ```
 
 pnpm and yarn work the same way (`pnpm add -g rippls`, `pnpm dlx rippls`).
@@ -78,7 +105,7 @@ Create a folder for tickets:
 mkdir -p .agents/tickets
 ```
 
-Rippls defaults to that folder, the four named Agents, and no extra config file.
+Rippls defaults to that folder, the four named Harnesses, and no extra config file.
 `ticketsDir` may be a path relative to the **Repository Root**.
 
 Add `.agents/tickets/1-first-ticket.md`:
@@ -101,7 +128,7 @@ an automated test.
 Process exactly one ticket:
 
 ```bash
-npx rippls --queue 1
+npx rippls --limit 1
 ```
 
 The completed ticket moves to `.agents/tickets/done/`. Because this example has a
@@ -133,11 +160,11 @@ Every ticket has one kind. Most kinds imply whether a human must be in the loop:
 - `task` must explicitly set `hitl: no` or `hitl: yes`.
 
 Only `implementation` currently has the full implement, acceptance-gate, and commit
-workflow. `research` and an unattended `task` run one Agent prompt and then complete;
+workflow. `research` and an unattended `task` invoke the Harness once and then complete;
 they do not run that three-stage workflow. `prototype` and `grilling` imply
-`hitl: yes`, so the Harness does not claim them.
+`hitl: yes`, so the Engine does not claim them.
 
-## Running the Harness
+## Running the Engine
 
 ```text
 rippls [flags]
@@ -146,8 +173,7 @@ rippls [flags]
 Common flags:
 
 - `--project <name>` processes only tickets in that project.
-- `--queue <count>` caps how many tickets this run takes. The domain term is
-**Quota**; `queue` is the current CLI flag name.
+- `--limit <count>` caps how many Tickets this run takes from the Ticket Stream.
 - `--concurrency <count>` keeps that many Runners available. Default: `1`.
 - `--idle-timeout <duration>` stops after continuous idle time. Default: `5 minutes`.
 - `--poll-interval <duration>` controls empty-poll delay. Default: `10 seconds`.
@@ -165,10 +191,10 @@ Examples:
 
 ```bash
 # Safest first run: one ticket, one Runner
-npx rippls --queue 1 --concurrency 1
+npx rippls --limit 1 --concurrency 1
 
 # Process up to six tickets with two concurrent Runners
-npx rippls --queue 6 --concurrency 2
+npx rippls --limit 6 --concurrency 2
 
 # Work only on one project and stop sooner when idle
 npx rippls --project billing --idle-timeout "1 minute"
@@ -189,11 +215,11 @@ Configuration is optional. When `rippls.config.ts` (or `.js`, `.json`, `.yaml`,
 `.yml`) is absent from the **Repository Root**, Rippls uses Codex, Cursor, Claude,
 and OpenCode, and a folder Source at `.agents/tickets`.
 
-To override those defaults, export `harnessFileConfig` or a default object:
+To override those defaults, export `engineFileConfig` or a default object:
 
 ```ts
-export const harnessFileConfig = {
-  agents: [{ name: 'Cursor' }],
+export const engineFileConfig = {
+  harnesses: [{ name: 'Cursor' }],
   source: {
     _tag: 'folder',
     ticketsDir: '.agents/tickets',
@@ -201,13 +227,13 @@ export const harnessFileConfig = {
 };
 ```
 
-### Agent rotation
+### Harness rotation
 
-Without priorities, Agents rotate in the order listed:
+Without priorities, Harnesses rotate in the order listed:
 
 ```ts
-export const harnessFileConfig = {
-  agents: [
+export const engineFileConfig = {
+  harnesses: [
     { name: 'Codex' },
     { name: 'Cursor' },
     { name: 'Claude' },
@@ -216,20 +242,20 @@ export const harnessFileConfig = {
 };
 ```
 
-Priorities create a weighted rotation. Either every Agent must have a positive priority
+Priorities create a weighted rotation. Either every Harness must have a positive priority
 or none may have one, and the highest priority must be unique:
 
 ```ts
-agents: [
+harnesses: [
   { name: 'Cursor', priority: 3 },
   { name: 'Codex', priority: 1 },
 ],
 ```
 
-Agent selection is independent of Runner identity. A Runner can process successive
-tickets with different Agents.
+Harness selection is independent of Runner identity. A Runner can process successive
+tickets with different Harnesses.
 
-### Scheduled Agent rotation
+### Scheduled Harness rotation
 
 A schedule temporarily replaces the default rotation. The first active schedule entry
 wins. The short form supports whole-hour windows and handles windows that cross
@@ -238,7 +264,7 @@ midnight:
 ```ts
 schedule: [
   {
-    agents: [{ name: 'Cursor' }],
+    harnesses: [{ name: 'Cursor' }],
     rule: {
       freq: 'DAILY',
       from: '18:00',
@@ -254,7 +280,7 @@ For more precise schedules, provide an `rrule` object:
 ```ts
 schedule: [
   {
-    agents: [{ name: 'Codex' }, { name: 'Cursor' }],
+    harnesses: [{ name: 'Codex' }, { name: 'Cursor' }],
     rrule: {
       freq: 'WEEKLY',
       byweekday: ['MO', 'TU', 'WE', 'TH', 'FR'],
@@ -277,8 +303,8 @@ pollInterval: '10 seconds',
 otlpTraceUrl: 'http://127.0.0.1:4318/v1/traces',
 ```
 
-Omit `otlpTraceUrl` when no OTLP HTTP trace collector is running. Full Agent logs are
-written under `.sandcastle/logs/`, separately from the concise Harness output.
+Omit `otlpTraceUrl` when no OTLP HTTP trace collector is running. Full Harness logs are
+written under `.sandcastle/logs/`, separately from the concise Engine output.
 
 ## Folder Source
 
@@ -367,8 +393,8 @@ export LINEAR_API_KEY="lin_api_..."
 Then configure the team:
 
 ```ts
-export const harnessFileConfig: HarnessFileConfig = {
-  agents: [{ name: 'Cursor' }],
+export const engineFileConfig = {
+  harnesses: [{ name: 'Cursor' }],
   source: {
     _tag: 'linear',
     teamId: 'your-team-id',
@@ -434,15 +460,19 @@ integrate a completed project branch yourself.
 
 ## Implementation Strategy
 
-An `implementation` ticket runs three Agent passes in the same Ticket Worktree:
+An `implementation` ticket runs three steps in the same Ticket Worktree, each through
+a separate Harness invocation:
 
 1. **Implement** executes the ticket body with `/implement-bare`.
 2. **Gate** runs `/acceptance-gate`, beginning with the repository's typecheck, lint,
   and tests. It has a ten-minute limit and retries once.
 3. **Commit** runs `/commit` with a fast, low-tier model.
 
-If the configured Agent has no model matching a pass's demand, Rippls logs the fallback
-and uses that Agent's default model.
+Each invocation creates a new **Agent**, including a gate retry. The **Runner** remains
+the same throughout Ticket Processing and can process further Tickets afterward.
+
+If the configured Harness has no model matching a step's demand, Rippls logs the fallback
+and uses that Harness's default model.
 
 ## Generate folder tickets
 
@@ -493,19 +523,19 @@ distinguish generated fixtures from hand-written tickets.
 Process a bounded batch before leaving it unattended:
 
 ```bash
-npx rippls --project api --queue 4 --concurrency 2
+npx rippls --project api --limit 4 --concurrency 2
 ```
 
-Use a smaller Agent rotation:
+Use a smaller Harness rotation:
 
 ```ts
-agents: [{ name: 'Codex' }, { name: 'OpenCode' }],
+harnesses: [{ name: 'Codex' }, { name: 'OpenCode' }],
 ```
 
-Keep one preferred Agent in front of a fallback:
+Keep one preferred Harness in front of a fallback:
 
 ```ts
-agents: [
+harnesses: [
   { name: 'Cursor', priority: 4 },
   { name: 'Codex', priority: 1 },
 ],
@@ -519,9 +549,9 @@ npx rippls --completions bash
 npx rippls --completions fish
 ```
 
-Investigate an Agent failure:
+Investigate a Harness failure:
 
-1. Read the Harness error and `.sandcastle/logs/ticket-<source>-<id>-*.log`.
+1. Read the Engine error and `.sandcastle/logs/ticket-<source>-<id>-*.log`.
 2. Inspect the retained Ticket Worktree under `.sandcastle/worktrees/`.
 3. Resolve the raised `task` with `hitl: yes`.
 4. Return it to unattended processing only after the problem is addressed.

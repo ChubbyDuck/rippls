@@ -3,35 +3,35 @@ import * as NodeServices from '@effect/platform-node/NodeServices';
 import { Config, Effect, Layer, Option, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 
-import { HarnessFileConfigLive } from '~/config/layer';
+import { EngineFileConfigLive } from '~/config/layer';
 import {
-  HarnessConfig,
-  harnessConfig,
+  EngineConfig,
+  engineConfig,
   idleTimeoutConfig,
   pollIntervalConfig,
   resolveTicketSource,
   TicketSourceTag,
-} from '~/Core/Shared/Domain/HarnessConfig';
+} from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
-import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunHarness/repositoryRoot';
-import { runHarness } from '~/Core/Tickets/Application/UseCases/RunHarness/runHarness';
+import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngine/repositoryRoot';
+import { runEngine } from '~/Core/Tickets/Application/UseCases/RunEngine/runEngine';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
-import { ConfiguredAgentsLive } from '~/Infrastructure/Shared/AgentRepository/configured';
+import { ConfiguredHarnessesLive } from '~/Infrastructure/Shared/HarnessSelector/configured';
 import { makeTracingLayer } from '~/Infrastructure/Shared/Tracing/otlp';
-import { StrategyRepositoryDefault } from '~/Infrastructure/Tickets/StrategyRepository/default';
-import { liveTicketRepository } from '~/Infrastructure/Tickets/TicketRepository/fromSource';
-import { WorktreeRepositoryLive } from '~/Infrastructure/Tickets/WorktreeRepository/sandcastle';
+import { StrategySelectorDefault } from '~/Infrastructure/Tickets/StrategySelector/default';
+import { liveTicketSource } from '~/Infrastructure/Tickets/TicketSource/fromSource';
+import { WorktreeManagerLive } from '~/Infrastructure/Tickets/WorktreeManager/sandcastle';
 
 const TracingLive = Layer.unwrap(
-  harnessConfig.pipe(Effect.map((config) => makeTracingLayer(Option.fromNullishOr(config.otlpTraceUrl))))
+  engineConfig.pipe(Effect.map((config) => makeTracingLayer(Option.fromNullishOr(config.otlpTraceUrl))))
 );
 
 const AppLive = Layer.mergeAll(
-  StrategyRepositoryDefault,
-  ConfiguredAgentsLive,
-  Layer.unwrap(RepositoryRoot.pipe(Effect.map(WorktreeRepositoryLive))),
+  StrategySelectorDefault,
+  ConfiguredHarnessesLive,
+  Layer.unwrap(RepositoryRoot.pipe(Effect.map(WorktreeManagerLive))),
   TracingLive
-).pipe(Layer.provideMerge(HarnessFileConfigLive), Layer.provideMerge(RepositoryRootLive));
+).pipe(Layer.provideMerge(EngineFileConfigLive), Layer.provideMerge(RepositoryRootLive));
 
 const Concurrency = Schema.Int.check(Schema.isGreaterThan(0));
 
@@ -40,7 +40,7 @@ const command = Command.make(
   {
     source: Flag.choice('source', TicketSourceTag.literals).pipe(Flag.optional),
     project: Flag.string('project').pipe(Flag.withSchema(Project), Flag.optional),
-    queue: Flag.integer('queue').pipe(Flag.optional),
+    limit: Flag.integer('limit').pipe(Flag.optional),
     concurrency: Flag.integer('concurrency').pipe(Flag.withSchema(Concurrency), Flag.withDefault(1)),
     idleTimeout: Flag.string('idle-timeout').pipe(
       Flag.withSchema(Schema.DurationFromString),
@@ -51,17 +51,17 @@ const command = Command.make(
       Flag.withFallbackConfig(pollIntervalConfig)
     ),
   },
-  ({ source, project, queue, concurrency, idleTimeout, pollInterval }) =>
+  ({ source, project, limit, concurrency, idleTimeout, pollInterval }) =>
     Effect.gen(function* () {
-      const config = yield* HarnessConfig;
+      const config = yield* EngineConfig;
       const resolved = yield* resolveTicketSource(config.source, Option.getOrUndefined(source));
-      return yield* runHarness({
+      return yield* runEngine({
         project: Option.getOrUndefined(project),
-        queue: Option.getOrUndefined(queue),
+        limit: Option.getOrUndefined(limit),
         concurrency,
         idleTimeout,
         pollInterval,
-      }).pipe(Effect.provide(liveTicketRepository(resolved)));
+      }).pipe(Effect.provide(liveTicketSource(resolved)));
     })
 );
 

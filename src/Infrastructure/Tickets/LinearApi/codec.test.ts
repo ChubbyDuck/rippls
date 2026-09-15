@@ -16,7 +16,7 @@ import {
 } from './codec';
 
 test('slugify turns a Linear project name into a branch-safe string', () => {
-  expect(slugify('Chubby Harness')).toBe('chubby-harness');
+  expect(slugify('Chubby Engine')).toBe('chubby-engine');
   expect(slugify('Foo/Bar Baz!')).toBe('foo-bar-baz');
   expect(slugify('  Already-Slug  ')).toBe('already-slug');
 });
@@ -74,7 +74,7 @@ const metadata: LinearMetadata = {
     { id: 'label-task', name: 'kind:task' },
     { id: 'label-hitl-yes', name: 'hitl:yes' },
   ],
-  projects: [{ id: 'proj-1', name: 'Chubby Harness', slugId: 'abc123' }],
+  projects: [{ id: 'proj-1', name: 'Chubby Engine', slugId: 'abc123' }],
 };
 
 const issue = (fields: {
@@ -95,7 +95,7 @@ const issue = (fields: {
   project:
     fields.projectName === null
       ? null
-      : { id: 'proj-1', name: fields.projectName ?? 'Chubby Harness', slugId: 'abc123' },
+      : { id: 'proj-1', name: fields.projectName ?? 'Chubby Engine', slugId: 'abc123' },
   labels: fields.labels ?? [{ id: 'label-impl', name: 'kind:implementation' }],
   relations: (fields.outgoing ?? []).map((relation, index) => ({
     relationId: `out-${index}`,
@@ -143,7 +143,7 @@ test('issueToTicket maps native fields and incomplete blockers', () => {
   expect(ticket.id).toBe(`linear:${uuid}`);
   expect(ticket.title).toBe('Pure Linear codecs');
   expect(ticket.body).toBe('Convert an issue to a Ticket.');
-  expect(ticket.project).toBe('chubby-harness');
+  expect(ticket.project).toBe('chubby-engine');
   expect(ticket.kind).toBe('implementation');
   expect(ticket.hitl).toBe('no');
   expect(ticket.status).toBe('blocked');
@@ -157,7 +157,7 @@ const runner = Schema.decodeSync(RunnerId)('runner-1');
 const readyTicket = Ticket.create({
   id: toLinearId(uuid),
   title: 'Pure Linear codecs',
-  project: 'chubby-harness',
+  project: 'chubby-engine',
   kind: 'implementation',
   status: 'ready-for-agent',
   blockedBy: [],

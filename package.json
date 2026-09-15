@@ -1,7 +1,7 @@
 {
   "name": "rippls",
   "version": "0.0.1",
-  "description": "An opinionated ticket-based agentic loops-runner",
+  "description": "An opinionated ticket workflow engine",
   "license": "MIT",
   "publishConfig": {
     "access": "public"
@@ -21,8 +21,8 @@
   },
   "keywords": [
     "cli",
-    "loop",
-    "harness",
+    "workflow",
+    "automation",
     "tickets",
     "agents"
   ],

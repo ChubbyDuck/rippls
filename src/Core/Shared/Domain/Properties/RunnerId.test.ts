@@ -1,12 +1,12 @@
 import { Schema } from 'effect';
 import { expect, test } from 'vitest';
 
-import { HarnessId } from './HarnessId';
+import { EngineId } from './EngineId';
 import { runnerIdFrom } from './RunnerId';
 
-test('runnerIdFrom derives a runner id from a harness id and a unique value', () => {
-  const harnessId = Schema.decodeSync(HarnessId)('harness-a');
+test('runnerIdFrom derives a runner id from an engine id and a unique value', () => {
+  const engineId = Schema.decodeSync(EngineId)('engine-a');
 
-  expect(runnerIdFrom(harnessId, '0')).toBe('harness-a:0');
-  expect(runnerIdFrom(harnessId, '1')).toBe('harness-a:1');
+  expect(runnerIdFrom(engineId, '0')).toBe('engine-a:0');
+  expect(runnerIdFrom(engineId, '1')).toBe('engine-a:1');
 });

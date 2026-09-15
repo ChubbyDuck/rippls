@@ -6,18 +6,18 @@ import { expect, test } from 'vitest';
 import {
   defaultIdleTimeout,
   defaultPollInterval,
-  harnessConfig,
-  harnessConfigProvider,
-} from '~/Core/Shared/Domain/HarnessConfig';
+  engineConfig,
+  engineConfigProvider,
+} from '~/Core/Shared/Domain/EngineConfig';
 
-import { loadHarnessFileConfig } from './load';
+import { loadEngineFileConfig } from './load';
 
 const path = Effect.runSync(Path.Path.pipe(Effect.provide(NodePath.layer)));
 const jsonUnknown = Schema.fromJsonString(Schema.Unknown);
 const jsonString = Schema.encodeSync(jsonUnknown);
 
 const load = (root: string) =>
-  Effect.runPromise(loadHarnessFileConfig(root).pipe(Effect.provide(NodeServices.layer)));
+  Effect.runPromise(loadEngineFileConfig(root).pipe(Effect.provide(NodeServices.layer)));
 
 const withTempRoot = <E>(
   write: (root: string) => Effect.Effect<void, E, FileSystem.FileSystem | Path.Path>
@@ -35,12 +35,12 @@ test('defaults to a folder source under the repository root when no config file 
   const root = await withTempRoot(() => Effect.void);
 
   expect(await load(root)).toEqual({
-    agents: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
+    harnesses: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
     source: { _tag: 'folder', ticketsDir: path.resolve(root, '.agents/tickets') },
   });
 
-  expect(Effect.runSync(harnessConfig.parse(harnessConfigProvider(await load(root))))).toEqual({
-    agents: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
+  expect(Effect.runSync(engineConfig.parse(engineConfigProvider(await load(root))))).toEqual({
+    harnesses: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
     schedule: [],
     source: { _tag: 'folder', ticketsDir: path.resolve(root, '.agents/tickets') },
     idleTimeout: defaultIdleTimeout,
@@ -56,7 +56,7 @@ test('reads rippls.config.json and resolves a relative ticketsDir', async () => 
       yield* fs.writeFileString(
         path.join(dir, 'rippls.config.json'),
         jsonString({
-          agents: [{ name: 'Cursor' }],
+          harnesses: [{ name: 'Cursor' }],
           source: { _tag: 'folder', ticketsDir: '.agents/tickets' },
         })
       );
@@ -64,7 +64,25 @@ test('reads rippls.config.json and resolves a relative ticketsDir', async () => 
   );
 
   expect(await load(root)).toEqual({
-    agents: [{ name: 'Cursor' }],
+    harnesses: [{ name: 'Cursor' }],
+    source: { _tag: 'folder', ticketsDir: path.resolve(root, '.agents/tickets') },
+  });
+});
+
+test('loads engineFileConfig and its harnesses from a JavaScript configuration module', async () => {
+  const root = await withTempRoot((dir) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(
+        path.join(dir, 'rippls.config.js'),
+        "export const engineFileConfig = { harnesses: [{ name: 'Cursor' }] };\n"
+      );
+    })
+  );
+
+  expect(Effect.runSync(engineConfig.parse(engineConfigProvider(await load(root))))).toMatchObject({
+    harnesses: [{ name: 'Cursor' }],
     source: { _tag: 'folder', ticketsDir: path.resolve(root, '.agents/tickets') },
   });
 });
@@ -77,7 +95,7 @@ test('keeps an absolute ticketsDir', async () => {
       yield* fs.writeFileString(
         path.join(dir, 'rippls.config.json'),
         jsonString({
-          agents: [{ name: 'Codex' }],
+          harnesses: [{ name: 'Codex' }],
           source: { _tag: 'folder', ticketsDir: '/tmp/tickets' },
         })
       );
@@ -85,7 +103,7 @@ test('keeps an absolute ticketsDir', async () => {
   );
 
   expect(await load(root)).toEqual({
-    agents: [{ name: 'Codex' }],
+    harnesses: [{ name: 'Codex' }],
     source: { _tag: 'folder', ticketsDir: '/tmp/tickets' },
   });
 });
@@ -98,7 +116,7 @@ test('fills ticketsDir when a folder source omits it', async () => {
       yield* fs.writeFileString(
         path.join(dir, 'rippls.config.json'),
         jsonString({
-          agents: [{ name: 'Claude' }],
+          harnesses: [{ name: 'Claude' }],
           source: { _tag: 'folder' },
         })
       );
@@ -106,7 +124,7 @@ test('fills ticketsDir when a folder source omits it', async () => {
   );
 
   expect(await load(root)).toEqual({
-    agents: [{ name: 'Claude' }],
+    harnesses: [{ name: 'Claude' }],
     source: { _tag: 'folder', ticketsDir: path.resolve(root, '.agents/tickets') },
   });
 });
@@ -118,13 +136,13 @@ test('does not invent a folder source when Linear is configured', async () => {
       const path = yield* Path.Path;
       yield* fs.writeFileString(
         path.join(dir, 'rippls.config.yaml'),
-        'agents:\n  - name: Cursor\nsource:\n  _tag: linear\n  teamId: your-team-id\n'
+        'harnesses:\n  - name: Cursor\nsource:\n  _tag: linear\n  teamId: your-team-id\n'
       );
     })
   );
 
   expect(await load(root)).toEqual({
-    agents: [{ name: 'Cursor' }],
+    harnesses: [{ name: 'Cursor' }],
     source: { _tag: 'linear', teamId: 'your-team-id' },
   });
 });
@@ -134,10 +152,10 @@ test('prefers rippls.config.json over yaml', async () => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      yield* fs.writeFileString(path.join(dir, 'rippls.config.json'), jsonString({ agents: [{ name: 'Codex' }] }));
-      yield* fs.writeFileString(path.join(dir, 'rippls.config.yaml'), 'agents:\n  - name: Cursor\n');
+      yield* fs.writeFileString(path.join(dir, 'rippls.config.json'), jsonString({ harnesses: [{ name: 'Codex' }] }));
+      yield* fs.writeFileString(path.join(dir, 'rippls.config.yaml'), 'harnesses:\n  - name: Cursor\n');
     })
   );
 
-  expect(await load(root)).toMatchObject({ agents: [{ name: 'Codex' }] });
+  expect(await load(root)).toMatchObject({ harnesses: [{ name: 'Codex' }] });
 });

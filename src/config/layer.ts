@@ -1,14 +1,14 @@
 import { ConfigProvider, Effect, Layer } from 'effect';
 
-import { harnessConfigProvider } from '~/Core/Shared/Domain/HarnessConfig';
+import { engineConfigProvider } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 
-import { loadHarnessFileConfig } from './load';
+import { loadEngineFileConfig } from './load';
 
-export const HarnessFileConfigLive = Layer.unwrap(
+export const EngineFileConfigLive = Layer.unwrap(
   Effect.gen(function* () {
     const root = yield* RepositoryRoot;
-    const fileConfig = yield* loadHarnessFileConfig(root);
-    return ConfigProvider.layer(harnessConfigProvider(fileConfig));
+    const fileConfig = yield* loadEngineFileConfig(root);
+    return ConfigProvider.layer(engineConfigProvider(fileConfig));
   })
 );

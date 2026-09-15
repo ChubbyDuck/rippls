@@ -1,103 +1,161 @@
-# Harness
+# Rippls
 
-Language for coordinating workers that process tickets.
+Language for an opinionated ticket workflow engine: uniform Tickets, a shared lifecycle,
+and reusable Strategies for performing the work.
 
 ## Participants
 
-| Term        | Definition                                                                                         | Aliases to avoid                |
-| ----------- | -------------------------------------------------------------------------------------------------- | ------------------------------- |
-| **Harness** | An identified coordinator of a group of named **Runners** that process **Tickets**                 | Loop, orchestrator, worker pool |
-| **Runner**  | A named worker that can process successive **Tickets** under the same identity                     | Agent, ticket execution, worker |
-| **Agent**   | A named performer selected to execute a **Strategy** on a claimed **Ticket**                       | Model, LLM, tool, Runner        |
+**Engine**:
+An identified coordinator of named Runners that process Tickets from a Ticket Stream.
+An Engine is bound to one Repository Root.
+_Avoid_: Harness, loop, orchestrator, worker pool
+
+**Runner**:
+A named worker belonging to one Engine, with a stable identity across successive Tickets.
+A Runner hosts successive Agents during Ticket Processing.
+_Avoid_: Agent, ticket execution, worker
+
+**Harness**:
+A reusable coding integration, such as Claude Code, Codex, Cursor, or OpenCode, that
+runs a selected Model on instructions from a Strategy.
+_Avoid_: Agent, Model, Runner
+
+**Agent**:
+A running instance of a Harness's Model on a Runner. Each Harness invocation creates
+a new Agent, including retries.
+_Avoid_: Harness, Model, Runner
+
+**Model**:
+The language model used by a Harness for an Agent's execution.
+_Avoid_: Agent, Harness
 
 ## Tickets
 
-| Term              | Definition                                                                                           | Aliases to avoid            |
-| ----------------- | ---------------------------------------------------------------------------------------------------- | --------------------------- |
-| **Ticket**        | A unit of work with identity, kind, status, project, body, and blocking relations                    | Issue, task (the noun), job |
-| **Ticket Kind**   | The class of work a **Ticket** is: implementation, research, prototype, grilling, or task            | Type, category              |
-| **HITL**          | Whether a human must be in the loop for this **Ticket**: yes or no                                   | Human review, interactive, AFK |
-| **Ticket Status** | Where a **Ticket** sits in its lifecycle: open, ready-for-agent, claimed, done, resolved, or blocked | State, phase                |
-| **Project**       | The named scope a **Ticket** belongs to                                                              | Repo, app, workspace        |
-| **Title**         | The short human-readable name of a **Ticket**                                                        | Summary, subject            |
+**Ticket**:
+A uniform unit of work with a source-scoped identity, Title, Ticket Kind, Ticket Status,
+body, blocking relations, and an optional Project.
+_Avoid_: Issue, task (the noun), job
 
-## Work
+**Ticket Kind**:
+The class of work a Ticket represents: implementation, research, prototype, grilling,
+or task. A Kind describes the work; a Strategy describes how to perform it.
+_Avoid_: Type, category, Strategy
 
-| Term                  | Definition                                                                                       | Aliases to avoid                |
-| --------------------- | ------------------------------------------------------------------------------------------------ | ------------------------------- |
-| **Ticket Processing** | The work a **Runner** performs on one **Ticket**: claim, run the **Strategy**, record completion | Runner, run, execution, loop    |
-| **Claim**             | Exclusive assignment of a **Ticket** to a **Runner**                                             | Lock, take, checkout            |
-| **Strategy**          | The named procedure that executes one **Ticket Kind**, given a **Ticket** and an **Agent**       | Handler, workflow, prompt       |
-| **Spawn**             | A **Harness** creating a **Runner** with a unique identity derived from the **Harness**          | Fork, allocate, start worker    |
-| **Concurrency**       | How many **Runners** a **Harness** keeps available to process **Tickets** in parallel            | Parallelism, pool size, workers |
-| **Quota**             | How many **Tickets** this **Harness** run will take before stopping                              | Queue, batch, limit             |
-| **Idle**              | A **Harness** state: no **Ticket Processing** is in flight, and no **Eligible** **Ticket** is available |                                 |
+**HITL**:
+Whether a human must be in the loop for a Ticket: yes or no.
+_Avoid_: Human review, interactive, AFK
 
-## Place
+**Ticket Status**:
+A Ticket's position in its lifecycle: open, ready-for-agent, claiming, claimed, done,
+resolved, or blocked. Done records completed work; resolved is a separate status.
+_Avoid_: State, phase
 
-| Term                  | Definition                                                                                          | Aliases to avoid      |
-| --------------------- | --------------------------------------------------------------------------------------------------- | --------------------- |
-| **Repository Root**   | The repository a **Harness** is bound to for one run                                                | CBD, checkout, cwd    |
-| **Project Worktree**  | The stable worktree for a **Project**; it is not merged back automatically                          | checkout, branch      |
-| **Ticket Worktree**   | The temporary worktree that holds every **Agent** run for one **Ticket**                            | per-prompt worktree   |
+**Project**:
+The optional named scope grouping related Tickets whose work accumulates in a Project
+Worktree.
+_Avoid_: Repository Root, repo, app, workspace
 
-## Source
+**Title**:
+The short human-readable name of a Ticket.
+_Avoid_: Summary, subject
 
-| Term       | Definition                                                                                                             | Aliases to avoid                              |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------- |
-| **Source** | The origin a **Ticket** is read from and written to; it converts external records to the **Ticket** shape and back      | Backend, provider, tracker, store, repository |
-| **Issue**  | An external record in a tracker such as Linear; a **Source** converts it to a **Ticket**. It is not itself a **Ticket** | Ticket, task                                  |
+## Processing
+
+**Ticket Processing**:
+The shared lifecycle a Runner carries out for one Ticket: claim, apply a Strategy,
+then record completion or escalate to a human. It owns claiming, completion, and
+escalation across Strategies.
+_Avoid_: Runner, run, execution, loop
+
+**Claim**:
+The exclusive assignment of a Ticket to a Runner.
+_Avoid_: Lock, take, checkout
+
+**Strategy**:
+A named, reusable procedure for carrying out a Ticket's work through a Harness and
+returning an outcome. Different Strategies may serve the same Ticket Kind.
+_Avoid_: Handler, workflow, prompt
+
+**Strategy Selector**:
+The selection policy that determines which Strategy applies to a Ticket.
+_Avoid_: Strategy Repository
+
+**Harness Selector**:
+The selection policy that determines which Harness to use for Ticket Processing.
+Harness selection is independent of Runner identity.
+_Avoid_: Agent Repository, Harness Repository
+
+**Spawn**:
+An Engine creating a Runner with a unique identity.
+_Avoid_: Fork, allocate, start worker
+
+**Concurrency**:
+The number of Runners an Engine keeps available to process Tickets in parallel.
+_Avoid_: Parallelism, pool size, workers
+
+**Limit**:
+The maximum number of Tickets an Engine run takes from the Ticket Stream, regardless
+of how many complete successfully.
+_Avoid_: Queue, batch, quota
+
+**Idle**:
+An Engine's condition when no Ticket Processing is in progress and no Eligible Ticket
+is available.
+
+## Worktrees
+
+**Repository Root**:
+The Git repository an Engine is bound to for one run.
+_Avoid_: Project, CBD, checkout, cwd
+
+**Project Worktree**:
+The stable worktree in which a Project's successful ticket work accumulates.
+It remains for later Tickets and is merged into the Repository Root by a human.
+_Avoid_: Ticket Worktree, checkout, branch
+
+**Ticket Worktree**:
+The temporary worktree in which all Agents for one Ticket perform their work.
+It is merged and closed after success and retained after escalation to a human.
+_Avoid_: Project Worktree, per-prompt worktree
+
+**Worktree Manager**:
+The service responsible for preparing Project Worktrees and Ticket Worktrees, and
+merging and closing successful Ticket Worktrees.
+_Avoid_: Worktree Repository
+
+## Sources
+
+**Ticket Source** (short form: **Source**):
+The origin a Ticket is read from and written to, responsible for converting external
+records to uniform Tickets and Ticket changes back to those records. Source identity
+travels with the Ticket's identity and does not affect processing rules.
+_Avoid_: Backend, provider, tracker, store, repository
+
+**Ticket Stream**:
+The ongoing sequence of uniform Tickets acquired from a Source for processing by the
+Engine. Records are converted before entering the stream, so consumers use the same
+Ticket model and processing rules regardless of origin.
+_Avoid_: Raw issues, source records
+
+**Issue**:
+An external record in a tracker such as Linear that a Source converts into a Ticket.
+_Avoid_: Ticket, task
 
 ## Eligibility
 
-| Term           | Definition                                                                               | Aliases to avoid      |
-| -------------- | ---------------------------------------------------------------------------------------- | --------------------- |
-| **Unblocked**  | A **Ticket** with no remaining blockers                                                  | Ready, free           |
-| **Unclaimed**  | A **Ticket** not assigned to any **Runner**                                              | Available, free, open |
-| **Unattended** | A **Ticket** whose **HITL** is no — it can proceed without a human                       | AFK, automated, no-HITL |
-| **Eligible**   | An **Unblocked**, **Unclaimed**, **Unattended** **Ticket** the **Harness** may take next | Ready, next, pollable |
+**Unblocked**:
+A Ticket with no remaining blockers.
+_Avoid_: Ready, free
 
-## Relationships
+**Unclaimed**:
+A Ticket not assigned to a Runner and not currently being claimed.
+_Avoid_: Available, free, open
 
-- A **Harness** spawns one or more **Runners**; each **Runner** belongs to exactly one **Harness**.
-- A **Runner** identity is stable across successive **Tickets**; **Ticket Processing** is one pass over one **Ticket**.
-- A **Claim** assigns exactly one **Ticket** to exactly one **Runner**.
-- A **Ticket** has exactly one **Ticket Kind**, one **HITL**, one **Ticket Status**, and one **Project**.
-- Every **Ticket Kind** except task implies a fixed **HITL**; a task declares **HITL** explicitly.
-- A **Ticket** may be **blocked by** zero or more other **Tickets**, and may **block** zero or more other **Tickets**.
-- **Ticket Processing** selects one **Agent** and one **Strategy** (by **Ticket Kind**) for the claimed **Ticket**.
-- An **Agent** is chosen from a configured rotation, optionally overridden by a time-bound schedule; it is not a **Runner**.
-- A **Harness** is bound to one **Repository Root**.
-- A **Project** is not a **Repository Root**.
-- A **Project** has one **Project Worktree**.
-- **Ticket Processing** creates one **Ticket Worktree**, installs workspace dependencies there from the tree's own manifest, and runs every **Agent** invocation for that **Ticket** inside it. The **Agent** does not discover or install those dependencies.
-- After a successful **Ticket Processing**, the **Ticket Worktree** is merged back into its parent and closed.
-- After a **HITL** raise, the **Ticket Worktree** is retained and is not merged back.
-- A **Ticket** has exactly one **Source**; the **Source** is part of the **Ticket** identity, and the domain does not branch on it.
-- A **Source** converts an external record — a Linear **Issue** or a local file — into a **Ticket**, and converts **Ticket** changes back to that record.
-- A **Harness** is **Idle** when no **Runner** is in **Ticket Processing** and no **Eligible** **Ticket** is available.
-- **Idle** begins on the first empty poll while no **Runner** is in **Ticket Processing**, and ends when a **Claim** starts.
-- A **Harness** run ends when the **Quota** is reached or the **Harness** has been **Idle** for five minutes.
+**Unattended**:
+A Ticket whose HITL is no, allowing it to proceed without a human.
+_Avoid_: AFK, automated, no-HITL
 
-## Example dialogue
-
-> **Dev:** "When the **Harness** starts, does each **Runner** pick its own **Agent**?"
-> **Domain expert:** "No. The **Harness** **spawns** **Runners** up to **Concurrency**. Each **Runner** is just who claims the work. During **Ticket Processing**, the system selects an **Agent** independently and runs the **Strategy** for that **Ticket Kind**."
-> **Dev:** "So if a **Ticket** is prototype with **HITL** yes, a **Runner** still **claims** it?"
-> **Domain expert:** "Not from this **Harness**. The poll only takes **Eligible** **Tickets** — **Unblocked**, **Unclaimed**, and **Unattended**. Prototype implies **HITL** yes, so it is not **Unattended**."
-> **Dev:** "And after the **Strategy** finishes, the **Runner** is done?"
-> **Domain expert:** "The **Ticket** is **done**. The **Runner** stays; the **Harness** reuses it for the next **Eligible** **Ticket** until the **Quota** is reached or the **Harness** has been **Idle** for five minutes."
-
-## Flagged ambiguities
-
-- **"Runner"** was used for both the named worker and the act of processing a ticket. **Runner** is the identity; **Ticket Processing** is the work.
-- **"Agent"** was used as a synonym for **Runner**. They are distinct: a **Runner** claims a **Ticket**; an **Agent** executes the **Strategy**.
-- **"Ready"** was used for both **Ticket Status** `ready-for-agent` and the poll criteria. The harness takes **Eligible** tickets (unblocked, unclaimed, unattended), not every ticket whose status is ready-for-agent.
-- **"AFK"** in queries means **HITL** is no. Prefer **Unattended**; do not treat AFK as a third concept besides **HITL**.
-- **"Queue"** was used for a numeric cap on tickets in one run. That cap is a **Quota**, not a queue of work.
-- **"Task"** is a **Ticket Kind**, not a synonym for **Ticket**.
-- **"Done"** and **"resolved"** are different **Ticket Status** values. **Ticket Processing** records **done**; **resolved** is a separate status, not the completion of a claim.
-- **"Repo"** was an alias to avoid for **Project**. **Repository Root** is a different term: the repository the **Harness** is bound to, not the named scope of a **Ticket**.
-- **"Worktree"** was used for both the stable **Project Worktree** and the temporary **Ticket Worktree**. They are distinct: the project tree stays until a human merges it; the ticket tree covers every **Agent** run for one **Ticket** and is closed after success.
-- **"Issue"** is an external record a **Source** converts into a **Ticket**. Do not use it as a synonym for **Ticket**.
-- **"Sort"** once named a field. A query now carries a direction only. The **Harness** takes the next **Eligible** **Ticket** in each **Source**'s natural order, and each **Source** chooses the ordering key.
+**Eligible**:
+An Unblocked, Unclaimed, Unattended Ticket that the Engine may take next.
+Eligibility is distinct from the ready-for-agent Ticket Status.
+_Avoid_: Ready, next, pollable

@@ -1,6 +1,6 @@
 # Rippls
 
-Standalone ticket **Harness**. Work in this app is interactive and sequential. The human names one problem, in specific terms, and waits for that change. Do that change. Stop.
+An opinionated ticket workflow engine. Work in this app is interactive and sequential. The human names one problem, in specific terms, and waits for that change. Do that change. Stop.
 
 ## Ubiquitous language
 

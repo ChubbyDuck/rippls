@@ -1,6 +1,6 @@
 import { Result, Schema, SchemaIssue } from 'effect';
 
-import { HarnessConfigSchema } from './src/Core/Shared/Domain/HarnessConfig.ts';
+import { EngineConfigSchema } from './src/Core/Shared/Domain/EngineConfig.ts';
 
 const formatIssues = SchemaIssue.makeFormatterStandardSchemaV1();
 
@@ -134,17 +134,17 @@ const nodeAtPath = (root: EstreeNode, path: readonly (PropertyKey | { readonly k
   return unwrap(current) ?? root;
 };
 
-export const consistentAgentPriorities = {
+export const consistentHarnessPriorities = {
   meta: {
     type: 'problem',
     docs: {
-      description: 'harnessFileConfig must satisfy HarnessConfigSchema',
+      description: 'engineFileConfig must satisfy EngineConfigSchema',
     },
   },
   create(context: { report(descriptor: { node: EstreeNode; message: string }): void }) {
     return {
       VariableDeclarator(node: { id: EstreeNode; init?: EstreeNode }) {
-        if (node.id.type !== 'Identifier' || node.id.name !== 'harnessFileConfig') {
+        if (node.id.type !== 'Identifier' || node.id.name !== 'engineFileConfig') {
           return;
         }
 
@@ -158,7 +158,7 @@ export const consistentAgentPriorities = {
           return;
         }
 
-        const decoded = Schema.decodeUnknownResult(HarnessConfigSchema)(extracted.value);
+        const decoded = Schema.decodeUnknownResult(EngineConfigSchema)(extracted.value);
         if (Result.isSuccess(decoded)) {
           return;
         }
@@ -175,8 +175,8 @@ export const consistentAgentPriorities = {
 };
 
 export default {
-  meta: { name: 'harness' },
+  meta: { name: 'engine' },
   rules: {
-    'consistent-agent-priorities': consistentAgentPriorities,
+    'consistent-harness-priorities': consistentHarnessPriorities,
   },
 };

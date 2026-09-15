@@ -1,6 +1,6 @@
 # Linear as a ticket source
 
-We added Linear as a second Source behind the existing `TicketRepository` port, so the harness processes Linear issues with no domain change: the source converts a Linear issue into a `Ticket` on read, and converts Ticket changes into Linear writes on write. Linear has no custom-field API and no atomic claim, so the mapping uses the fields Linear does model, plus grouped labels for the rest, and a race-tolerant claim. The connection uses `@linear/sdk` with raw GraphQL and Effect `Schema` decoders, authenticated by a personal API key in the `Authorization` header verbatim (no `Bearer`).
+We added Linear as a second Source behind the existing `TicketSource` port, so the engine processes Linear issues with no domain change: the source converts a Linear issue into a `Ticket` on read, and converts Ticket changes into Linear writes on write. Linear has no custom-field API and no atomic claim, so the mapping uses the fields Linear does model, plus grouped labels for the rest, and a race-tolerant claim. The connection uses `@linear/sdk` with raw GraphQL and Effect `Schema` decoders, authenticated by a personal API key in the `Authorization` header verbatim (no `Bearer`).
 
 ## Mapping
 

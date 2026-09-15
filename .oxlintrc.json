@@ -7,7 +7,7 @@
     "correctness": "warn"
   },
   "rules": {
-    "harness/consistent-agent-priorities": "error",
+    "engine/consistent-harness-priorities": "error",
     "typescript/consistent-type-imports": [
       "warn",
       {
