@@ -2,7 +2,7 @@
 
 ![A duck creating concentric ripples on a calm pond](docs/assets/pond-ripple-hero.jpg)
 
-Rippls is an opinionated ticket workflow engine. It defines a ticket format, lifecycle
+Rippls is an opinionated ticket workflow engine for AI agents. It defines a ticket format, lifecycle
 rules, and reusable **Strategies** built around specific skills. A pool of named
 **Runners** processes a **Ticket Stream**, with work performed in isolated Git worktrees.
 
