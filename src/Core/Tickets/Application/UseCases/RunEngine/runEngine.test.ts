@@ -431,7 +431,7 @@ test('runEngine takes a blocked ticket once its blocker is done, without writing
   ]);
 });
 
-test('runEngine does not take a ticket while its blocker is open, and takes it once the blocker is done', async () => {
+test('runEngine does not take a ticket while its blocker is not done, and takes it once the blocker is done', async () => {
   const ran: Ticket[] = [];
   const saved: Ticket[] = [];
   const attendedBlocker = Ticket.create({
@@ -470,7 +470,7 @@ test('runEngine does not take a ticket while its blocker is open, and takes it o
   expect(saved.filter((ticket) => ticket.id === dependent.id)[0]).toEqual(dependent.markClaiming());
 });
 
-test('runEngine keeps a ticket blocked by a blocker that exists neither open nor done', async () => {
+test('runEngine keeps a ticket blocked by a blocker that the Source cannot find', async () => {
   const ran: Ticket[] = [];
   const source = fakeSource([blockedTicket(1, 99), sampleTicket(2).done()]);
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));

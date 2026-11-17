@@ -4,7 +4,7 @@ import type { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 
-import { doneTickets, isDone, isEligible, isUnattended, isUnblocked, isUnclaimed } from './eligibility';
+import { doneTicketIds, isDone, isEligible, isUnattended, isUnblocked, isUnclaimed } from './eligibility';
 
 const id = (value: number) => formatTicketId('folder', String(value));
 const runner = 'runner-1' as RunnerId;
@@ -36,15 +36,15 @@ describe('isDone', () => {
     expect(isDone(ticket().done())).toBe(true);
   });
 
-  it('fails for an open ticket', () => {
+  it('fails for a ticket that is not done', () => {
     expect(isDone(ticket())).toBe(false);
   });
 });
 
-describe('doneTickets', () => {
+describe('doneTicketIds', () => {
   it('collects the identities of the done tickets only', () => {
     const done = ticket({ id: id(2) }).done();
-    expect(doneTickets([ticket(), done, blocked])).toEqual(new Set([id(2)]));
+    expect(doneTicketIds([ticket(), done, blocked])).toEqual(new Set([id(2)]));
   });
 });
 
@@ -53,7 +53,7 @@ describe('isUnblocked', () => {
     expect(isUnblocked(ticket(), none)).toBe(true);
   });
 
-  it('fails while a blocker is open', () => {
+  it('fails while a blocker is not done', () => {
     expect(isUnblocked(blocked, none)).toBe(false);
   });
 
@@ -67,8 +67,8 @@ describe('isUnblocked', () => {
     expect(isUnblocked(twoBlockers, new Set([id(8)]))).toBe(false);
   });
 
-  it('fails for a blocker that exists neither open nor done', () => {
-    expect(isUnblocked(blocked, doneTickets([ticket().done()]))).toBe(false);
+  it('fails for a blocker that the Source cannot find', () => {
+    expect(isUnblocked(blocked, doneTicketIds([ticket().done()]))).toBe(false);
   });
 });
 

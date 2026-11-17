@@ -5,12 +5,12 @@ import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/
 export const isDone = (ticket: Ticket): boolean => ticket.status === 'done';
 
 /** The identities of the done Tickets among the tickets a Source returned. */
-export const doneTickets = (tickets: readonly Ticket[]): ReadonlySet<TicketId> =>
+export const doneTicketIds = (tickets: readonly Ticket[]): ReadonlySet<TicketId> =>
   new Set(tickets.filter(isDone).map((ticket) => ticket.id));
 
 /**
  * A Ticket whose blockers are all done. A blocker that is not among the done
- * tickets, because it is open or because the Source cannot find it, blocks.
+ * tickets, because it is not done or because the Source cannot find it, blocks.
  */
 export const isUnblocked = (ticket: Ticket, done: ReadonlySet<TicketId>): boolean =>
   ticket.blockedBy.every((blocker) => done.has(blocker));

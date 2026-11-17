@@ -4,15 +4,15 @@ import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
-import { doneTickets, isDone, isEligible } from '~/Core/Tickets/Domain/Services/eligibility';
+import { doneTicketIds, isDone, isEligible } from '~/Core/Tickets/Domain/Services/eligibility';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 const scopeQuery = (project?: Project) =>
   (project === undefined ? TicketQuery : TicketQuery.byProject(project)).build();
 
 const hasBlockerOutside = (tickets: readonly Ticket[]): boolean => {
-  const read = new Set(tickets.map((ticket) => ticket.id));
-  return tickets.some((ticket) => !isDone(ticket) && ticket.blockedBy.some((blocker) => !read.has(blocker)));
+  const readIds = new Set(tickets.map((ticket) => ticket.id));
+  return tickets.some((ticket) => !isDone(ticket) && ticket.blockedBy.some((blocker) => !readIds.has(blocker)));
 };
 
 // Blockers resolve against the tickets in scope. A blocker of another Project is
@@ -20,10 +20,10 @@ const hasBlockerOutside = (tickets: readonly Ticket[]): boolean => {
 // ticket of the Source to find out whether that blocker is done.
 const doneFor = (tickets: readonly Ticket[], project?: Project) =>
   project === undefined || !hasBlockerOutside(tickets)
-    ? Effect.succeed(doneTickets(tickets))
+    ? Effect.succeed(doneTicketIds(tickets))
     : TicketSource.pipe(
         Effect.flatMap((source) => source.getManyBy(TicketQuery.build())),
-        Effect.map(doneTickets)
+        Effect.map(doneTicketIds)
       );
 
 const eligibleById = (done: ReadonlySet<TicketId>) => (candidate: Ticket) =>

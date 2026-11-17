@@ -6,9 +6,9 @@ import { expect, test } from 'vitest';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import { completeTicket } from '~/Core/Tickets/Application/UseCases/CompleteTicket/completeTicket';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
-import { completeTicket } from '~/Core/Tickets/Application/UseCases/CompleteTicket/completeTicket';
 import { TicketSourceFolderLive } from './folder';
 
 const NodeFs = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);

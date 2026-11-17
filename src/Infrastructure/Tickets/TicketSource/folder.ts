@@ -202,11 +202,11 @@ export const TicketSourceFolderLive = Layer.effect(
           Effect.catchCause(() => Effect.succeed<readonly Ticket[]>([]))
         );
 
-      // The open tickets in processing order, then the done tickets of `done/`,
+      // The tickets of the tickets folder in processing order, then those of `done/`,
       // so the core eligibility rule can tell which blockers are done.
       const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
         Effect.all([readManyIn(dir, readHead, query), readManyIn(doneDir, readDoneHead, query)]).pipe(
-          Effect.map(([open, done]) => [...open, ...done])
+          Effect.map(([current, done]) => [...current, ...done])
         );
 
       const save = (ticket: Ticket): Effect.Effect<void, TicketNotSaved> => {

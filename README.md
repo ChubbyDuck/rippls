@@ -380,7 +380,8 @@ Update the public API guide to use `makeClient`.
 When ticket 12 completes, its file moves to `ticketsDir/done/` and ticket 13 becomes
 Unblocked. Rippls does not edit ticket 13: it reads the tickets in `done/` as done and
 derives Unblocked on every poll. The stored `status: blocked` does not gate ticket 13.
-A blocker that Rippls finds neither open nor in `done/` keeps its ticket blocked.
+A blocker that Rippls finds neither in the tickets folder nor in `done/` keeps its ticket
+blocked.
 
 Completed files move to `ticketsDir/done/`. Invalid files and files without valid front
 matter are skipped.
