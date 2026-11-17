@@ -252,24 +252,54 @@ test('save updates a slugged filename in place and moves it to done with the sam
   expect(result.doneContent).toContain('Keep this body.');
 });
 
-test('getOneBy applies the query filters and the id sort', async () => {
-  const common = { project: 'demo', kind: 'implementation', status: 'ready-for-agent', blocks: [] };
+test('getManyBy returns every ticket in scope by numeric filename prefix, lowest first', async () => {
+  const common = { project: 'demo', kind: 'implementation', blocks: [] };
+  const tickets = await Effect.runPromise(
+    Effect.gen(function* () {
+      const dir = yield* setup([
+        ['10-ready.md', frontMatter({ id: 10, title: 'ready', status: 'ready-for-agent', blockedBy: [], ...common })],
+        ['2-claimed.md', frontMatter({ id: 2, title: 'claimed', status: 'claimed', claimedBy: 'runner-1', blockedBy: [], ...common })],
+        ['1-blocked.md', frontMatter({ id: 1, title: 'blocked', status: 'blocked', blockedBy: [9], ...common })],
+        ['3-claiming.md', frontMatter({ id: 3, title: 'claiming', status: 'claiming', blockedBy: [], ...common })],
+        ['4-attended.md', frontMatter({ id: 4, title: 'attended', status: 'ready-for-agent', blockedBy: [], ...common, kind: 'prototype' })],
+      ]);
+      return yield* getManyIn(dir, TicketQuery.build());
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(tickets.map((ticket) => ticket.id)).toEqual(['folder:1', 'folder:2', 'folder:3', 'folder:4', 'folder:10']);
+});
+
+test('getManyBy narrows by Project and keeps the processing order', async () => {
+  const common = { kind: 'implementation', status: 'ready-for-agent', blocks: [] };
+  const tickets = await Effect.runPromise(
+    Effect.gen(function* () {
+      const dir = yield* setup([
+        ['5.md', frontMatter({ id: 5, title: 'wanted later', project: 'wanted', blockedBy: [], ...common })],
+        ['1.md', frontMatter({ id: 1, title: 'other', project: 'other', blockedBy: [], ...common })],
+        ['2.md', frontMatter({ id: 2, title: 'no project', blockedBy: [], ...common })],
+        ['3.md', frontMatter({ id: 3, title: 'wanted blocked', project: 'wanted', blockedBy: [1], ...common })],
+      ]);
+      return yield* getManyIn(dir, TicketQuery.byProject('wanted' as never).build());
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(tickets.map((ticket) => ticket.id)).toEqual(['folder:3', 'folder:5']);
+});
+
+test('getOneBy follows the id sort', async () => {
+  const common = { project: 'demo', kind: 'implementation', status: 'ready-for-agent', blockedBy: [], blocks: [] };
   const build = (query: TicketQuery) =>
     Effect.gen(function* () {
       const dir = yield* setup([
-        ['1.md', frontMatter({ id: 1, title: 'blocked', blockedBy: [9], ...common })],
-        ['2.md', frontMatter({ id: 2, title: 'claimed', blockedBy: [], claimedBy: 'runner-1', ...common })],
-        ['3.md', frontMatter({ id: 3, title: 'ready low', blockedBy: [], ...common })],
-        ['4.md', frontMatter({ id: 4, title: 'ready high', blockedBy: [], ...common })],
+        ['3.md', frontMatter({ id: 3, title: 'low', ...common })],
+        ['4.md', frontMatter({ id: 4, title: 'high', ...common })],
       ]);
       return yield* getOneIn(dir, query);
     }).pipe(Effect.provide(NodeFs));
 
-  const ascending = await Effect.runPromise(build(TicketQuery.unblocked().unclaimed().afk().sort('ASC').build()));
-  expect(Option.getOrThrow(ascending).id).toBe('folder:3');
-
-  const descending = await Effect.runPromise(build(TicketQuery.unblocked().unclaimed().afk().sort('DESC').build()));
-  expect(Option.getOrThrow(descending).id).toBe('folder:4');
+  expect(Option.getOrThrow(await Effect.runPromise(build(TicketQuery.sort('ASC').build()))).id).toBe('folder:3');
+  expect(Option.getOrThrow(await Effect.runPromise(build(TicketQuery.sort('DESC').build()))).id).toBe('folder:4');
 });
 
 test('getOneBy filters by project', async () => {
@@ -516,21 +546,6 @@ test('save round-trips a ticket that omits project', async () => {
   expect(Option.getOrThrow(result.reread).project).toBeUndefined();
 });
 
-test('getOneBy skips a claiming ticket when unclaimed is chosen', async () => {
-  const common = { project: 'demo', kind: 'implementation', blocks: [], blockedBy: [] };
-  const ticket = await Effect.runPromise(
-    Effect.gen(function* () {
-      const dir = yield* setup([
-        ['1.md', frontMatter({ id: 1, title: 'being taken', status: 'claiming', ...common })],
-        ['2.md', frontMatter({ id: 2, title: 'ready', status: 'ready-for-agent', ...common })],
-      ]);
-      return yield* getOneIn(dir, TicketQuery.unclaimed().sort('ASC').build());
-    }).pipe(Effect.provide(NodeFs))
-  );
-
-  expect(Option.getOrThrow(ticket).id).toBe('folder:2');
-});
-
 test('getManyBy returns every claiming and claimed ticket, head only', async () => {
   const common = { project: 'demo', kind: 'implementation', blocks: [], blockedBy: [] };
   const tickets = await Effect.runPromise(
@@ -563,15 +578,15 @@ test('getManyBy scopes to the project and returns an empty array when none match
   expect(tickets).toEqual([]);
 });
 
-test('getOneBy fills the body of the returned ticket only', async () => {
+test('getOneBy by identity fills the body of the returned ticket only', async () => {
   const common = { project: 'demo', kind: 'implementation', status: 'ready-for-agent', blocks: [] };
   const ticket = await Effect.runPromise(
     Effect.gen(function* () {
       const dir = yield* setup([
-        ['1.md', frontMatter({ id: 1, title: 'blocked', blockedBy: [9], ...common }) + 'Skipped body.\n'],
-        ['2.md', frontMatter({ id: 2, title: 'ready', blockedBy: [], ...common }) + 'Returned body.\n'],
+        ['1.md', frontMatter({ id: 1, title: 'other', blockedBy: [], ...common }) + 'Skipped body.\n'],
+        ['2.md', frontMatter({ id: 2, title: 'wanted', blockedBy: [], ...common }) + 'Returned body.\n'],
       ]);
-      return yield* getOneIn(dir, TicketQuery.unblocked().build());
+      return yield* getOneIn(dir, TicketQuery.byId(formatTicketId('folder', '2')).build());
     }).pipe(Effect.provide(NodeFs))
   );
 

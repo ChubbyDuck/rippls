@@ -5,6 +5,7 @@ import { expect, test } from 'vitest';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
+import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import { ticketStream } from './ticketStream';
@@ -20,6 +21,30 @@ const sampleTicket = (value: number) =>
     blocks: [],
     body: '',
   });
+
+// Each poll reads the tickets in scope once: `next` gives what the Source holds
+// at that read. The chosen ticket is then read by identity.
+const scriptedSource = (next: () => Ticket | undefined) => {
+  const seen = new Map<string, Ticket>();
+  return TicketSource.of({
+    getOneBy: (query: TicketQuery) =>
+      Effect.suspend(() => {
+        const found = query.id === undefined ? undefined : seen.get(query.id);
+        return found === undefined ? Effect.fail(new TicketNotFound()) : Effect.succeed(found);
+      }),
+    getManyBy: () =>
+      Effect.sync(() => {
+        const ticket = next();
+        if (ticket === undefined) {
+          return [];
+        }
+        seen.set(ticket.id, ticket);
+        return [ticket];
+      }),
+    save: () => Effect.void,
+    saveMany: () => Effect.void,
+  });
+};
 
 test('ticketStream hides empty polls, retries each 10 seconds, and emits available tickets without delay', async () => {
   const first = sampleTicket(1);
@@ -58,16 +83,10 @@ test('ticketStream hides empty polls, retries each 10 seconds, and emits availab
       yield* TestClock.adjust('10 seconds');
       expect(reads).toBe(5);
     }).pipe(
-      Effect.provideService(TicketSource, {
-        getOneBy: () =>
-          Effect.suspend(() => {
-            const ticket = responses[reads++];
-            return ticket === undefined ? Effect.fail(new TicketNotFound()) : Effect.succeed(ticket);
-          }),
-        getManyBy: () => Effect.succeed([]),
-        save: () => Effect.void,
-        saveMany: () => Effect.void,
-      }),
+      Effect.provideService(
+        TicketSource,
+        scriptedSource(() => responses[reads++])
+      ),
       Effect.provide(TestClock.layer())
     )
   );
@@ -91,16 +110,13 @@ test('ticketStream retries empty polls at the given pollInterval', async () => {
       yield* Fiber.join(fiber);
       expect(reads).toBe(2);
     }).pipe(
-      Effect.provideService(TicketSource, {
-        getOneBy: () =>
-          Effect.suspend(() => {
-            reads += 1;
-            return reads === 2 ? Effect.succeed(sampleTicket(1)) : Effect.fail(new TicketNotFound());
-          }),
-        getManyBy: () => Effect.succeed([]),
-        save: () => Effect.void,
-        saveMany: () => Effect.void,
-      }),
+      Effect.provideService(
+        TicketSource,
+        scriptedSource(() => {
+          reads += 1;
+          return reads === 2 ? sampleTicket(1) : undefined;
+        })
+      ),
       Effect.provide(TestClock.layer())
     )
   );
@@ -125,12 +141,10 @@ test('ticketStream waits for downstream demand before reading another ticket', a
       yield* Fiber.join(fiber);
       expect(reads).toBe(2);
     }).pipe(
-      Effect.provideService(TicketSource, {
-        getOneBy: () => Effect.sync(() => sampleTicket(++reads)),
-        getManyBy: () => Effect.succeed([]),
-        save: () => Effect.void,
-        saveMany: () => Effect.void,
-      }),
+      Effect.provideService(
+        TicketSource,
+        scriptedSource(() => sampleTicket(++reads))
+      ),
       Effect.provide(TestClock.layer())
     )
   );

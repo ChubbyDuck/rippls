@@ -36,19 +36,7 @@ const matchesQuery =
     if (query.blockedBy !== undefined && !ticket.isBlockedBy(query.blockedBy)) {
       return false;
     }
-    if (query.unblocked === true && ticket.blockedBy.length !== 0) {
-      return false;
-    }
-    if (
-      query.unclaimed === true &&
-      (ticket.claimedBy !== undefined || ticket.status === 'claiming' || ticket.status === 'claimed')
-    ) {
-      return false;
-    }
     if (query.claimed === true && ticket.status !== 'claiming' && ticket.status !== 'claimed') {
-      return false;
-    }
-    if (query.afk === true && ticket.hitl !== 'no') {
       return false;
     }
     if (query.project !== undefined && ticket.project !== query.project) {

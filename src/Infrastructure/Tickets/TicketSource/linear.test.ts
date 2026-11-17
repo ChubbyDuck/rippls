@@ -4,6 +4,7 @@ import { expect, test } from 'vitest';
 import { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { TicketNotSaved } from '~/Core/Tickets/Domain/Exceptions/TicketNotSaved';
+import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import {
   LinearApi,
   type LinearIssue,
@@ -43,12 +44,14 @@ const issue = (fields: {
   readonly stateType?: string;
   readonly assigneeId?: string | null;
   readonly inverse?: readonly { readonly issueId: string }[];
+  readonly createdAt?: string;
+  readonly project?: LinearIssue['project'];
 }): LinearIssue => ({
   id: fields.id ?? uuid,
   identifier: 'ENG-24',
   title: 'Linear writes',
   description: 'Claim and complete.',
-  createdAt: '2026-01-01T00:00:00.000Z',
+  createdAt: fields.createdAt ?? '2026-01-01T00:00:00.000Z',
   assigneeId: fields.assigneeId === undefined ? null : fields.assigneeId,
   state:
     fields.stateType === 'started'
@@ -56,7 +59,7 @@ const issue = (fields: {
       : fields.stateType === 'completed'
         ? { id: 'state-completed', name: 'Done', type: 'completed' }
         : { id: 'state-unstarted', name: 'Todo', type: 'unstarted' },
-  project: { id: 'proj-1', name: 'Chubby Engine', slugId: 'abc123' },
+  project: fields.project === undefined ? { id: 'proj-1', name: 'Chubby Engine', slugId: 'abc123' } : fields.project,
   labels: fields.labels ?? [{ id: 'label-impl', name: 'kind:implementation' }],
   relations: [],
   inverseRelations: (fields.inverse ?? []).map((relation, index) => ({
@@ -156,6 +159,12 @@ const withRepo = (api: ReturnType<typeof fakeLinear>) =>
   TicketSourceLinearLive.pipe(
     Layer.provide(api.layer),
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ teamId: 'team-1' })))
+  );
+
+const getManyIn = (api: ReturnType<typeof fakeLinear>, query: TicketQuery) =>
+  TicketSource.pipe(
+    Effect.flatMap((source) => source.getManyBy(query)),
+    Effect.provide(withRepo(api))
   );
 
 const saveIn = (api: ReturnType<typeof fakeLinear>, ticket: Ticket) =>
@@ -276,4 +285,41 @@ test('saveMany applies writes and unblock performs no write', async () => {
   await Effect.runPromise(saveManyIn(api, [readyTicket.claim({ by: runner }).done(), blocked.unblockedBy(toLinearId(uuid))]));
 
   expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
+});
+
+test('getManyBy returns every readable issue in scope by creation time, oldest first', async () => {
+  const api = fakeLinear([
+    issue({ id: 'newest', createdAt: '2026-03-01T00:00:00.000Z' }),
+    issue({ id: 'claimed', createdAt: '2026-01-01T00:00:00.000Z', stateType: 'started', assigneeId: 'viewer-1' }),
+    issue({ id: 'blocked', createdAt: '2026-02-01T00:00:00.000Z', inverse: [{ issueId: 'claimed' }] }),
+    issue({
+      id: 'attended',
+      createdAt: '2026-02-15T00:00:00.000Z',
+      labels: [
+        { id: 'label-task', name: 'kind:task' },
+        { id: 'label-hitl-yes', name: 'hitl:yes' },
+      ],
+    }),
+    issue({ id: 'completed', createdAt: '2025-12-01T00:00:00.000Z', stateType: 'completed' }),
+  ]);
+
+  const tickets = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+
+  expect(tickets.map((ticket) => ticket.id)).toEqual(
+    ['claimed', 'blocked', 'attended', 'newest'].map((native) => toLinearId(native))
+  );
+});
+
+test('getManyBy narrows by Project and keeps the creation order', async () => {
+  const other = { id: 'proj-2', name: 'Other Work', slugId: 'def456' };
+  const api = fakeLinear([
+    issue({ id: 'later', createdAt: '2026-03-01T00:00:00.000Z' }),
+    issue({ id: 'other', createdAt: '2026-01-01T00:00:00.000Z', project: other }),
+    issue({ id: 'none', createdAt: '2026-01-15T00:00:00.000Z', project: null }),
+    issue({ id: 'earlier', createdAt: '2026-02-01T00:00:00.000Z', stateType: 'started', assigneeId: 'viewer-1' }),
+  ]);
+
+  const tickets = await Effect.runPromise(getManyIn(api, TicketQuery.byProject('chubby-engine' as never).build()));
+
+  expect(tickets.map((ticket) => ticket.id)).toEqual([toLinearId('earlier'), toLinearId('later')]);
 });
