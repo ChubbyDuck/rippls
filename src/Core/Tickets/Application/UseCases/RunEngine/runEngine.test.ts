@@ -377,28 +377,21 @@ test('runEngine takes the chosen ticket as the Source reads it by identity', asy
   expect(ran).toEqual([full.claim({ by: claiming })]);
 });
 
-test('runEngine skips a chosen ticket that is no longer Eligible when it is read by identity', async () => {
+test('runEngine takes the next Eligible ticket when the chosen one is no longer Eligible by identity', async () => {
   const ran: Ticket[] = [];
   const stale = Schema.decodeSync(RunnerId)('stale');
-  const source = fakeSource([sampleTicket(1).claim({ by: stale })]);
-  const pollOnly = Layer.succeed(TicketSource, {
+  const source = fakeSource([sampleTicket(1).claim({ by: stale }), sampleTicket(2)]);
+  const staleList = Layer.succeed(TicketSource, {
     ...Effect.runSync(TicketSource.pipe(Effect.provide(source.layer))),
     getManyBy: (query) =>
       query.id === undefined && query.claimed === undefined && query.blockedBy === undefined
-        ? Effect.succeed([sampleTicket(1)])
+        ? Effect.succeed([sampleTicket(1), sampleTicket(2)])
         : Effect.succeed([]),
   });
-  const layer = Layer.mergeAll(pollOnly, HarnessSelectorNoop, capturingImplementation(ran));
+  const layer = Layer.mergeAll(staleList, HarnessSelectorNoop, capturingImplementation(ran));
 
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const fiber = yield* runEngine({ project }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
-      yield* TestClock.adjust('0 millis');
-      yield* Fiber.interrupt(fiber);
-    }).pipe(Effect.provide(TestClock.layer()))
-  );
-
-  expect(ran).toEqual([]);
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(ran).toEqual([sampleTicket(2).claim({ by: claiming })]);
   expect(source.store.get(id(1))?.claimedBy).toBe(stale);
 });
 

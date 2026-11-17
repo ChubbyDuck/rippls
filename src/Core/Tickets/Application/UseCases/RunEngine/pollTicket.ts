@@ -1,4 +1,4 @@
-import { Console, Effect, Option } from 'effect';
+import { Console, Effect, Option, Result } from 'effect';
 
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
@@ -6,23 +6,25 @@ import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { isEligible } from '~/Core/Tickets/Domain/Services/eligibility';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
-const inScope = (project?: Project) => (project === undefined ? TicketQuery : TicketQuery.byProject(project)).build();
+const scopeQuery = (project?: Project) =>
+  (project === undefined ? TicketQuery : TicketQuery.byProject(project)).build();
+
+const eligibleById = (candidate: Ticket) =>
+  TicketSource.pipe(
+    Effect.flatMap((source) => source.getOneBy(TicketQuery.byId(candidate.id).build())),
+    Effect.option,
+    Effect.map(Option.filter(isEligible)),
+    Effect.map(Result.fromOption(() => candidate))
+  );
 
 // The Source returns every ticket in scope in its processing order, and the core
-// rule picks the first Eligible one. The chosen ticket is read again by identity,
-// so it carries its full content and is still Eligible when it is taken.
+// rule picks the Eligible ones. Each candidate is read again by identity, so the
+// ticket taken carries its full content and is still Eligible when it is taken.
 const nextEligibleTicket = (project?: Project) =>
   Effect.gen(function* () {
     const source = yield* TicketSource;
-    const tickets = yield* source.getManyBy(inScope(project));
-    const candidate = tickets.find(isEligible);
-    if (candidate === undefined) {
-      return Option.none<Ticket>();
-    }
-    return yield* source.getOneBy(TicketQuery.byId(candidate.id).build()).pipe(
-      Effect.map(Option.liftPredicate(isEligible)),
-      Effect.catchTag('TicketNotFound', () => Effect.succeedNone)
-    );
+    const tickets = yield* source.getManyBy(scopeQuery(project));
+    return yield* Effect.findFirstFilter(tickets.filter(isEligible), eligibleById);
   });
 
 export const pollTicket = (project?: Project) =>
