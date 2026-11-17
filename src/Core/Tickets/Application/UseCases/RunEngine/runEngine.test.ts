@@ -395,6 +395,127 @@ test('runEngine takes the next Eligible ticket when the chosen one is no longer 
   expect(source.store.get(id(1))?.claimedBy).toBe(stale);
 });
 
+test('runEngine takes a blocked ticket once its blocker is done, without writing to it before', async () => {
+  const saved: Ticket[] = [];
+  const ran: Ticket[] = [];
+  // Ticket 1 comes first in the order of the Source, so it would be taken first if
+  // it were Eligible while ticket 2 is open. Its stored status does not gate it.
+  const dependent = Ticket.create({
+    id: id(1),
+    title: 'Dependent ticket',
+    project,
+    kind: 'implementation',
+    status: 'blocked',
+    blockedBy: [id(2)],
+    blocks: [],
+    body: '',
+  });
+  const blocker = sampleTicket(2);
+  const source = fakeSource([dependent, blocker], {
+    save: (ticket) =>
+      Effect.sync(() => {
+        saved.push(ticket);
+      }),
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  expect(await Effect.runPromise(runEngine({ project, limit: 2 }).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(ran).toEqual([blocker.claim({ by: claiming }), dependent.claim({ by: claiming })]);
+  expect(saved).toEqual([
+    blocker.markClaiming(),
+    blocker.claim({ by: claiming }),
+    blocker.claim({ by: claiming }).done(),
+    dependent.markClaiming(),
+    dependent.claim({ by: claiming }),
+    dependent.claim({ by: claiming }).done(),
+  ]);
+});
+
+test('runEngine does not take a ticket while its blocker is open, and takes it once the blocker is done', async () => {
+  const ran: Ticket[] = [];
+  const saved: Ticket[] = [];
+  const attendedBlocker = Ticket.create({
+    id: id(2),
+    title: 'Attended blocker',
+    project,
+    kind: 'task',
+    hitl: 'yes',
+    status: 'ready-for-agent',
+    blockedBy: [],
+    blocks: [],
+    body: '',
+  });
+  const dependent = blockedTicket(1, 2);
+  const source = fakeSource([dependent, attendedBlocker], {
+    save: (ticket) =>
+      Effect.sync(() => {
+        saved.push(ticket);
+      }),
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine({ project }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust('0 millis');
+      expect(ran).toEqual([]);
+      expect(saved).toEqual([]);
+      source.add(attendedBlocker.done());
+      yield* TestClock.adjust('10 seconds');
+      expect(ran).toEqual([dependent.claim({ by: claiming })]);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(TestClock.layer()))
+  );
+
+  expect(saved.filter((ticket) => ticket.id === dependent.id)[0]).toEqual(dependent.markClaiming());
+});
+
+test('runEngine keeps a ticket blocked by a blocker that exists neither open nor done', async () => {
+  const ran: Ticket[] = [];
+  const source = fakeSource([blockedTicket(1, 99), sampleTicket(2).done()]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine().pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust('0 millis');
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(TestClock.layer()))
+  );
+
+  expect(ran).toEqual([]);
+});
+
+test('runEngine resolves a blocker of another Project against every ticket of the Source', async () => {
+  const ran: Ticket[] = [];
+  const otherProject = Schema.decodeSync(Project)('other');
+  const elsewhere = (value: number) =>
+    Ticket.create({
+      id: id(value),
+      title: 'Ticket of another project',
+      project: otherProject,
+      kind: 'implementation',
+      status: 'ready-for-agent',
+      blockedBy: [],
+      blocks: [],
+      body: '',
+    });
+  const doneElsewhere = elsewhere(2).done();
+  const openElsewhere = elsewhere(4);
+  const source = fakeSource([blockedTicket(1, 2), blockedTicket(3, 4), doneElsewhere, openElsewhere]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine({ project }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
+      yield* TestClock.adjust('0 millis');
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(TestClock.layer()))
+  );
+
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(1)]);
+});
+
 test('runEngine fails when the claim cannot be saved', () => {
   const ran: Ticket[] = [];
   const layer = Layer.mergeAll(

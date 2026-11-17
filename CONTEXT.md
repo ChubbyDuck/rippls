@@ -144,7 +144,7 @@ _Avoid_: Ticket, task
 ## Eligibility
 
 **Unblocked**:
-A Ticket with no remaining blockers.
+A Ticket whose blockers are all done. A blocker that cannot be found blocks.
 _Avoid_: Ready, free
 
 **Unclaimed**:
@@ -156,6 +156,7 @@ A Ticket whose HITL is no, allowing it to proceed without a human.
 _Avoid_: AFK, automated, no-HITL
 
 **Eligible**:
-An Unblocked, Unclaimed, Unattended Ticket that the Engine may take next.
+An Unblocked, Unclaimed, Unattended Ticket that is not done, which the Engine may take
+next.
 Eligibility is distinct from the ready-for-agent Ticket Status.
 _Avoid_: Ready, next, pollable

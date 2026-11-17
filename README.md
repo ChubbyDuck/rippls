@@ -139,12 +139,13 @@ branch. Review that branch and merge it into your main branch when ready.
 
 A ticket is **Eligible** when all three conditions hold:
 
-- **Unblocked**: `blockedBy` is empty.
+- **Unblocked**: every ticket in `blockedBy` is done. An empty `blockedBy` is Unblocked.
 - **Unclaimed**: it has no Runner and is not currently being claimed.
 - **Unattended**: `hitl` is `no`.
 
-Eligibility does not mean “every ticket with `status: ready-for-agent`.” The Source
-status is still used for lifecycle updates, but polling applies the conditions above.
+A done ticket is never Eligible. Eligibility does not mean “every ticket with
+`status: ready-for-agent`.” The Source status is still used for lifecycle updates, but
+polling applies the conditions above.
 
 Folder tickets are ordered by the numeric filename prefix, lowest first. Linear tickets
 are ordered by creation time, oldest first. `--project` narrows the poll to one project.
@@ -376,8 +377,10 @@ blocks: []
 Update the public API guide to use `makeClient`.
 ```
 
-When ticket 12 completes, Rippls removes `12` from ticket 13's `blockedBy`; when no
-blockers remain, ticket 13 becomes `ready-for-agent`.
+When ticket 12 completes, its file moves to `ticketsDir/done/` and ticket 13 becomes
+Unblocked. Rippls does not edit ticket 13: it reads the tickets in `done/` as done and
+derives Unblocked on every poll. The stored `status: blocked` does not gate ticket 13.
+A blocker that Rippls finds neither open nor in `done/` keeps its ticket blocked.
 
 Completed files move to `ticketsDir/done/`. Invalid files and files without valid front
 matter are skipped.

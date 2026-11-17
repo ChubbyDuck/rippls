@@ -18,7 +18,6 @@ import { toLinearId } from '~/Infrastructure/Tickets/LinearApi/codec';
 import { TicketSourceLinearLive } from './linear';
 
 const uuid = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
-const blockedUuid = 'b2c3d4e5-f6a7-8901-bcde-f12345678901';
 const runner = Schema.decodeSync(RunnerId)('runner-1');
 
 const metadata: LinearMetadata = {
@@ -263,26 +262,10 @@ test('save of an escalated ticket unassigns, unstarts, and edits grouped labels 
   ]);
 });
 
-test('saveMany applies writes and unblock performs no write', async () => {
-  const api = fakeLinear([
-    issue({ stateType: 'started', assigneeId: 'viewer-1' }),
-    issue({
-      id: blockedUuid,
-      inverse: [{ issueId: uuid }],
-    }),
-  ]);
-  const blocked = Ticket.create({
-    id: toLinearId(blockedUuid),
-    title: 'Linear writes',
-    project: 'chubby-engine',
-    kind: 'implementation',
-    status: 'blocked',
-    blockedBy: [toLinearId(uuid)],
-    blocks: [],
-    body: 'Claim and complete.',
-  });
+test('saveMany applies the writes of each ticket', async () => {
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 
-  await Effect.runPromise(saveManyIn(api, [readyTicket.claim({ by: runner }).done(), blocked.unblockedBy(toLinearId(uuid))]));
+  await Effect.runPromise(saveManyIn(api, [readyTicket.claim({ by: runner }).done()]));
 
   expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
 });

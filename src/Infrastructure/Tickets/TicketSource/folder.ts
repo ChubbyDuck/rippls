@@ -128,12 +128,14 @@ export const TicketSourceFolderLive = Layer.effect(
     dir: Config.schema(TicketsDir, 'ticketsDir'),
   }).pipe(
     Effect.map(({ fs, path, dir }) => {
-      const readHead = (file: string): Effect.Effect<Option.Option<Ticket>> => {
+      const doneDir = path.join(dir, 'done');
+
+      const readHeadIn = (folder: string) => (file: string): Effect.Effect<Option.Option<Ticket>> => {
         const fileId = idFromFilename(file);
         if (fileId === undefined) {
           return Effect.succeedNone;
         }
-        return fs.stream(path.join(dir, file), { chunkSize: 4096 }).pipe(
+        return fs.stream(path.join(folder, file), { chunkSize: 4096 }).pipe(
           Stream.decodeText(),
           Stream.scan('', (accumulated, chunk) => accumulated + chunk),
           Stream.takeUntil(hasClosingDelimiter),
@@ -142,6 +144,12 @@ export const TicketSourceFolderLive = Layer.effect(
           Effect.catchCause(() => Effect.succeedNone)
         );
       };
+
+      const readHead = readHeadIn(dir);
+
+      // A ticket in `done/` is done, whatever its front matter says.
+      const readDoneHead = (file: string): Effect.Effect<Option.Option<Ticket>> =>
+        readHeadIn(doneDir)(file).pipe(Effect.map(Option.map((ticket) => ticket.done())));
 
       const getOneBy = (query: TicketQuery): Effect.Effect<Ticket, TicketNotFound> =>
         fs.readDirectory(dir).pipe(
@@ -174,12 +182,16 @@ export const TicketSourceFolderLive = Layer.effect(
           )
         );
 
-      const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
-        fs.readDirectory(dir).pipe(
+      const readManyIn = (
+        folder: string,
+        read: (file: string) => Effect.Effect<Option.Option<Ticket>>,
+        query: TicketQuery
+      ): Effect.Effect<readonly Ticket[]> =>
+        fs.readDirectory(folder).pipe(
           Effect.map(sortByIdName(query)),
           Effect.flatMap((files) =>
             Stream.fromIterable(files).pipe(
-              Stream.mapEffect(readHead, { concurrency: 1 }),
+              Stream.mapEffect(read, { concurrency: 1 }),
               Stream.filter(
                 (option): option is Option.Some<Ticket> => Option.isSome(option) && matchesQuery(query)(option.value)
               ),
@@ -188,6 +200,13 @@ export const TicketSourceFolderLive = Layer.effect(
             )
           ),
           Effect.catchCause(() => Effect.succeed<readonly Ticket[]>([]))
+        );
+
+      // The open tickets in processing order, then the done tickets of `done/`,
+      // so the core eligibility rule can tell which blockers are done.
+      const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
+        Effect.all([readManyIn(dir, readHead, query), readManyIn(doneDir, readDoneHead, query)]).pipe(
+          Effect.map(([open, done]) => [...open, ...done])
         );
 
       const save = (ticket: Ticket): Effect.Effect<void, TicketNotSaved> => {

@@ -2,12 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
-import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 
-import { isEligible, isUnattended, isUnblocked, isUnclaimed } from './eligibility';
+import { doneTickets, isDone, isEligible, isUnattended, isUnblocked, isUnclaimed } from './eligibility';
 
 const id = (value: number) => formatTicketId('folder', String(value));
 const runner = 'runner-1' as RunnerId;
+const none: ReadonlySet<TicketId> = new Set();
 
 const ticket = (fields: Record<string, unknown> = {}) =>
   Ticket.create({
@@ -30,13 +31,44 @@ const claiming = ticket().markClaiming();
 const claimed = ticket().claim({ by: runner });
 const attended = ticket({ hitl: 'yes' });
 
-describe('isUnblocked', () => {
-  it('holds for a ticket with no blockers', () => {
-    expect(isUnblocked(ticket())).toBe(true);
+describe('isDone', () => {
+  it('holds for a done ticket', () => {
+    expect(isDone(ticket().done())).toBe(true);
   });
 
-  it('fails for a ticket with a remaining blocker', () => {
-    expect(isUnblocked(blocked)).toBe(false);
+  it('fails for an open ticket', () => {
+    expect(isDone(ticket())).toBe(false);
+  });
+});
+
+describe('doneTickets', () => {
+  it('collects the identities of the done tickets only', () => {
+    const done = ticket({ id: id(2) }).done();
+    expect(doneTickets([ticket(), done, blocked])).toEqual(new Set([id(2)]));
+  });
+});
+
+describe('isUnblocked', () => {
+  it('holds for a ticket with no blockers', () => {
+    expect(isUnblocked(ticket(), none)).toBe(true);
+  });
+
+  it('fails while a blocker is open', () => {
+    expect(isUnblocked(blocked, none)).toBe(false);
+  });
+
+  it('holds once every blocker is done', () => {
+    const twoBlockers = ticket({ blockedBy: [id(8), id(9)] });
+    expect(isUnblocked(twoBlockers, new Set([id(8), id(9)]))).toBe(true);
+  });
+
+  it('fails while one of several blockers is not done', () => {
+    const twoBlockers = ticket({ blockedBy: [id(8), id(9)] });
+    expect(isUnblocked(twoBlockers, new Set([id(8)]))).toBe(false);
+  });
+
+  it('fails for a blocker that exists neither open nor done', () => {
+    expect(isUnblocked(blocked, doneTickets([ticket().done()]))).toBe(false);
   });
 });
 
@@ -79,7 +111,20 @@ describe('isUnattended', () => {
 
 describe('isEligible', () => {
   it('holds for an Unblocked, Unclaimed, Unattended ticket', () => {
-    expect(isEligible(ticket())).toBe(true);
+    expect(isEligible(ticket(), none)).toBe(true);
+  });
+
+  it('holds for a ticket whose blockers are all done', () => {
+    expect(isEligible(blocked, new Set([id(9)]))).toBe(true);
+  });
+
+  it('fails for a done ticket', () => {
+    expect(isEligible(ticket().done(), none)).toBe(false);
+    expect(isEligible(ticket({ status: 'done' }), none)).toBe(false);
+  });
+
+  it('does not depend on a stored blocked status', () => {
+    expect(isEligible(ticket({ status: 'blocked', blockedBy: [id(9)] }), new Set([id(9)]))).toBe(true);
   });
 
   it.each([
@@ -88,19 +133,19 @@ describe('isEligible', () => {
     ['claimed', claimed],
     ['attended', attended],
   ])('fails for a ticket that is %s', (_, candidate) => {
-    expect(isEligible(candidate)).toBe(false);
+    expect(isEligible(candidate, none)).toBe(false);
   });
 
   it('fails for a ticket that misses every condition', () => {
-    expect(isEligible(ticket({ hitl: 'yes', blockedBy: [id(9)] }).markClaiming())).toBe(false);
+    expect(isEligible(ticket({ hitl: 'yes', blockedBy: [id(9)] }).markClaiming(), none)).toBe(false);
   });
 
   it('fails for a ticket that misses two conditions', () => {
-    expect(isEligible(ticket({ hitl: 'yes', blockedBy: [id(9)] }))).toBe(false);
-    expect(isEligible(ticket({ blockedBy: [id(9)] }).claim({ by: runner }))).toBe(false);
+    expect(isEligible(ticket({ hitl: 'yes', blockedBy: [id(9)] }), none)).toBe(false);
+    expect(isEligible(ticket({ blockedBy: [id(9)] }).claim({ by: runner }), none)).toBe(false);
   });
 
   it('does not depend on the stored ready-for-agent status', () => {
-    expect(isEligible(ticket({ status: 'open' }))).toBe(true);
+    expect(isEligible(ticket({ status: 'open' }), none)).toBe(true);
   });
 });

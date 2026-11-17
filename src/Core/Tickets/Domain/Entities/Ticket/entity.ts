@@ -105,7 +105,7 @@ export class Ticket extends Schema.Class<Ticket>('Ticket')({
       status: 'done',
       blockedBy: this.blockedBy,
       blocks: this.blocks,
-      claimedBy: this.claimedBy,
+      ...(this.claimedBy !== undefined ? { claimedBy: this.claimedBy } : {}),
       kind: this.kind,
       hitl: this.hitl,
       body: this.body,
@@ -128,21 +128,6 @@ export class Ticket extends Schema.Class<Ticket>('Ticket')({
 
   isBlockedBy(id: TicketId): boolean {
     return this.blockedBy.includes(id);
-  }
-
-  unblockedBy(id: TicketId): Ticket {
-    const blockedBy = this.blockedBy.filter((other) => other !== id);
-    return new Ticket({
-      id: this.id,
-      title: this.title,
-      project: this.project,
-      status: blockedBy.length === 0 ? 'ready-for-agent' : this.status,
-      blockedBy,
-      blocks: this.blocks,
-      kind: this.kind,
-      hitl: this.hitl,
-      body: this.body,
-    });
   }
 }
 

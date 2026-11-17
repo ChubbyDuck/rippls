@@ -8,6 +8,7 @@ import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
+import { completeTicket } from '~/Core/Tickets/Application/UseCases/CompleteTicket/completeTicket';
 import { TicketSourceFolderLive } from './folder';
 
 const NodeFs = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
@@ -285,6 +286,73 @@ test('getManyBy narrows by Project and keeps the processing order', async () => 
   );
 
   expect(tickets.map((ticket) => ticket.id)).toEqual(['folder:3', 'folder:5']);
+});
+
+test('completing a ticket leaves its dependent byte for byte unchanged and reads it as done from done/', async () => {
+  const common = { project: 'demo', kind: 'implementation', blocks: [] };
+  const dependent =
+    frontMatter({ id: 2, title: 'dependent', status: 'blocked', blockedBy: [1], ...common }) + '# Dependent\n\nKeep me.\n';
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* setup([
+        ['1-blocker.md', frontMatter({ id: 1, title: 'blocker', status: 'claimed', claimedBy: 'runner-1', blockedBy: [], ...common })],
+        ['2-dependent.md', dependent],
+      ]);
+      yield* completeTicket({ ticketId: formatTicketId('folder', '1') }).pipe(Effect.provide(withDir(dir)));
+      const after = yield* fs.readFileString(path.join(dir, '2-dependent.md'));
+      const tickets = yield* getManyIn(dir, TicketQuery.build());
+      return { after, tickets };
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(result.after).toBe(dependent);
+  expect(result.tickets.map((ticket) => [ticket.id, ticket.status])).toEqual([
+    ['folder:2', 'blocked'],
+    ['folder:1', 'done'],
+  ]);
+  expect(result.tickets[0]?.blockedBy).toEqual(['folder:1']);
+});
+
+test('getManyBy reads a ticket in done/ as done whatever its front matter says', async () => {
+  const common = { project: 'demo', kind: 'implementation', blocks: [], blockedBy: [] };
+  const tickets = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* setup([['3.md', frontMatter({ id: 3, title: 'open', status: 'ready-for-agent', ...common })]]);
+      yield* fs.makeDirectory(path.join(dir, 'done'));
+      yield* fs.writeFileString(
+        path.join(dir, 'done', '1-moved-by-hand.md'),
+        frontMatter({ id: 1, title: 'moved by hand', status: 'ready-for-agent', ...common })
+      );
+      yield* fs.writeFileString(path.join(dir, 'done', 'notes.md'), 'Not a ticket.\n');
+      return yield* getManyIn(dir, TicketQuery.build());
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(tickets.map((ticket) => [ticket.id, ticket.status])).toEqual([
+    ['folder:3', 'ready-for-agent'],
+    ['folder:1', 'done'],
+  ]);
+});
+
+test('getManyBy narrows the done tickets by Project too', async () => {
+  const common = { kind: 'implementation', status: 'done', blocks: [], blockedBy: [] };
+  const tickets = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* setup([]);
+      yield* fs.makeDirectory(path.join(dir, 'done'));
+      yield* fs.writeFileString(path.join(dir, 'done', '1.md'), frontMatter({ id: 1, title: 'wanted', project: 'wanted', ...common }));
+      yield* fs.writeFileString(path.join(dir, 'done', '2.md'), frontMatter({ id: 2, title: 'other', project: 'other', ...common }));
+      return yield* getManyIn(dir, TicketQuery.byProject('wanted' as never).build());
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(tickets.map((ticket) => ticket.id)).toEqual(['folder:1']);
 });
 
 test('getOneBy follows the id sort', async () => {

@@ -22,9 +22,9 @@ rippls ──► RunEngine ─────────────────�
         ┌───────┴────────┐                                        │
      success           failure                                    │
      merge + close     keep worktree, rewrite ticket as           │
-     mark `done`,      kind:task + hitl:yes,                      │
-     unblock           HALT THE WHOLE ENGINE                      │
-     dependents                                                   │
+     mark `done`       kind:task + hitl:yes,                      │
+     (dependents       HALT THE WHOLE ENGINE                      │
+     not edited)                                                  │
                                                                   │
    on exit: every claiming/claimed ticket → `ready-for-agent` ◄───┘
 ```
@@ -48,7 +48,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 2. [src/index.ts](src/index.ts) defines the CLI flags and wires all the layers together.
 3. [runEngine.ts](src/Core/Tickets/Application/UseCases/RunEngine/runEngine.ts) holds the runner pool, the stream, the idle timeout and the release on exit.
 4. [processTicket.ts](src/Core/Tickets/Application/UseCases/ProcessTicket/processTicket.ts) is the lifecycle in the diagram above.
-5. [entity.ts](src/Core/Tickets/Domain/Entities/Ticket/entity.ts) is the Ticket and its transitions (`markClaiming`, `claim`, `done`, `escalate`, `release`, `unblockedBy`).
+5. [entity.ts](src/Core/Tickets/Domain/Entities/Ticket/entity.ts) is the Ticket and its transitions (`markClaiming`, `claim`, `done`, `escalate`, `release`).
 6. [implementation.ts](src/Infrastructure/Tickets/StrategySelector/implementation.ts) is the only real Strategy: implement, then gate (10 minutes, one retry), then commit.
 
 After that, read whichever adapter you need. The tests sit next to the source and show the style: fake each port with `Layer.succeed`, as in [processTicket.test.ts](src/Core/Tickets/Application/UseCases/ProcessTicket/processTicket.test.ts).
@@ -56,7 +56,7 @@ After that, read whichever adapter you need. The tests sit next to the source an
 ## Things that will surprise you
 
 - **Your local `rippls.config.ts` is silently ignored.** It exports `harnessFileConfig` with an `agents` key, but [load.ts:26-31](src/config/load.ts#L26-L31) only reads `engineFileConfig` or `default`. Runs in this repo therefore use the defaults: all four Harnesses in rotation and no tracing, not Cursor only with OTLP.
-- **Eligibility ignores status.** The poll query is unblocked + unclaimed + `hitl: no`, so a folder ticket with `status: open` and no blockers gets picked up.
+- **Eligibility ignores status.** The poll query is unblocked + unclaimed + `hitl: no`, so a folder ticket with `status: open` and no blockers gets picked up. Unblocked means every blocker is done, so a `status: blocked` ticket whose blockers are in `done/` is taken too.
 - **One Strategy failure stops the run.** `EngineHalted` propagates out of the stream, and a worktree create or merge failure does the same after one retry.
 - **Only `implementation` is real.** `research` and `task` are a single Harness call via `named()` in [noop.ts](src/Infrastructure/Tickets/StrategySelector/noop.ts); `prototype` and `grilling` imply `hitl: yes`, so they are never taken.
 - **The implementation Strategy depends on things outside this repo.** It sends `/implement-bare`, `/acceptance-gate` and `/commit`, which must exist as slash commands in the target repo's Harness. [circumstances.ts](src/Infrastructure/Tickets/StrategySelector/circumstances.ts) also tells agents to use `pnx chubby <alias> <script>`, a leftover from the monorepo this was extracted from.

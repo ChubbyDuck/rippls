@@ -58,34 +58,17 @@ const repoFrom = (seed: readonly Ticket[], saved: Ticket[]) => {
   });
 };
 
-test('completeTicket marks the ticket done and unblocks only its dependents', () => {
+test('completeTicket marks the ticket done and writes no other ticket', () => {
   const completed = claimed(1, [2, 3]);
   const two = blocked(2, [1]);
   const three = blocked(3, [1, 4]);
-  const five = blocked(5, [4]);
 
   const saved: Ticket[] = [];
-  const source = repoFrom([completed, two, three, five], saved);
+  const source = repoFrom([completed, two, three], saved);
 
   Effect.runSync(completeTicket({ ticketId: completed.id }).pipe(Effect.provide(source)));
 
-  expect(saved.map((ticket) => [ticket.id, ticket.status])).toEqual([
-    [id(1), 'done'],
-    [id(2), 'ready-for-agent'],
-    [id(3), 'blocked'],
-  ]);
-  expect(saved[2]?.blockedBy).toEqual([id(4)]);
-});
-
-test('completeTicket saves only the done ticket when nothing is blocked by it', () => {
-  const completed = claimed(1, []);
-
-  const saved: Ticket[] = [];
-  const source = repoFrom([completed], saved);
-
-  Effect.runSync(completeTicket({ ticketId: completed.id }).pipe(Effect.provide(source)));
-
-  expect(saved.map((ticket) => [ticket.id, ticket.status])).toEqual([[id(1), 'done']]);
+  expect(saved).toEqual([completed.done()]);
 });
 
 test('completeTicket fails when the ticket id is not found', () => {

@@ -2,29 +2,49 @@ import { Console, Effect, Option, Result } from 'effect';
 
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
+import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
-import { isEligible } from '~/Core/Tickets/Domain/Services/eligibility';
+import { doneTickets, isDone, isEligible } from '~/Core/Tickets/Domain/Services/eligibility';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 const scopeQuery = (project?: Project) =>
   (project === undefined ? TicketQuery : TicketQuery.byProject(project)).build();
 
-const eligibleById = (candidate: Ticket) =>
+const hasBlockerOutside = (tickets: readonly Ticket[]): boolean => {
+  const read = new Set(tickets.map((ticket) => ticket.id));
+  return tickets.some((ticket) => !isDone(ticket) && ticket.blockedBy.some((blocker) => !read.has(blocker)));
+};
+
+// Blockers resolve against the tickets in scope. A blocker of another Project is
+// not in a read narrowed by Project, so only then does the Engine read every
+// ticket of the Source to find out whether that blocker is done.
+const doneFor = (tickets: readonly Ticket[], project?: Project) =>
+  project === undefined || !hasBlockerOutside(tickets)
+    ? Effect.succeed(doneTickets(tickets))
+    : TicketSource.pipe(
+        Effect.flatMap((source) => source.getManyBy(TicketQuery.build())),
+        Effect.map(doneTickets)
+      );
+
+const eligibleById = (done: ReadonlySet<TicketId>) => (candidate: Ticket) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.getOneBy(TicketQuery.byId(candidate.id).build())),
     Effect.option,
-    Effect.map(Option.filter(isEligible)),
+    Effect.map(Option.filter((ticket) => isEligible(ticket, done))),
     Effect.map(Result.fromOption(() => candidate))
   );
 
-// The Source returns every ticket in scope in its processing order, and the core
-// rule picks the Eligible ones. Each candidate is read again by identity, so the
-// ticket taken carries its full content and is still Eligible when it is taken.
+// The Source returns every ticket in scope in its processing order, done ones
+// included, and the core rule picks the Eligible ones. Each candidate is read
+// again by identity, so the ticket taken carries its full content and is still
+// Eligible when it is taken.
 const nextEligibleTicket = (project?: Project) =>
   Effect.gen(function* () {
     const source = yield* TicketSource;
     const tickets = yield* source.getManyBy(scopeQuery(project));
-    return yield* Effect.findFirstFilter(tickets.filter(isEligible), eligibleById);
+    const done = yield* doneFor(tickets, project);
+    const eligible = tickets.filter((ticket) => isEligible(ticket, done));
+    return yield* Effect.findFirstFilter(eligible, eligibleById(done));
   });
 
 export const pollTicket = (project?: Project) =>

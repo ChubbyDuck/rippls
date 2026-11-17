@@ -75,6 +75,13 @@ describe('Ticket', () => {
     expect(done.claimedBy).toBe('runner');
   });
 
+  it('marks an unclaimed ticket as done', () => {
+    const done = Ticket.create(validImplementation).done();
+
+    expect(done.status).toBe('done');
+    expect(done.claimedBy).toBeUndefined();
+  });
+
   it('marks a ticket as claiming without a runner', () => {
     const ticket = Ticket.create(validImplementation);
     const claiming = ticket.markClaiming();
@@ -172,29 +179,5 @@ describe('Ticket', () => {
 
     expect(ticket.isBlockedBy(id(1))).toBe(true);
     expect(ticket.isBlockedBy(id(3))).toBe(false);
-  });
-
-  it('becomes ready-for-agent when the last blocker is removed', () => {
-    const ticket = Ticket.create({ ...validImplementation, status: 'blocked', blockedBy: [id(1)] });
-    const unblocked = ticket.unblockedBy(id(1));
-
-    expect(unblocked.status).toBe('ready-for-agent');
-    expect(unblocked.blockedBy).toEqual([]);
-  });
-
-  it('stays blocked when other blockers remain', () => {
-    const ticket = Ticket.create({ ...validImplementation, status: 'blocked', blockedBy: [id(1), id(2)] });
-    const unblocked = ticket.unblockedBy(id(1));
-
-    expect(unblocked.status).toBe('blocked');
-    expect(unblocked.blockedBy).toEqual([id(2)]);
-  });
-
-  it('leaves the blocker list unchanged when the id is not a blocker', () => {
-    const ticket = Ticket.create({ ...validImplementation, status: 'blocked', blockedBy: [id(2)] });
-    const unblocked = ticket.unblockedBy(id(1));
-
-    expect(unblocked.status).toBe('blocked');
-    expect(unblocked.blockedBy).toEqual([id(2)]);
   });
 });
