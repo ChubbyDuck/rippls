@@ -1,12 +1,13 @@
 import { createWorktree } from '@ai-hero/sandcastle';
-import { Console, Effect, FileSystem, Layer, Path } from 'effect';
+import { Console, Effect, FileSystem, Layer, Option, Path, Stream } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
+import { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCommandError';
 import { WorktreeCreationError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCreationError';
-import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
+import { type CommandRun, type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
 import { ensureDependencies } from './ensureDependencies';
 
@@ -133,6 +134,30 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
             ticketMemo.delete(worktree.branch);
             yield* Console.log(`Worktree ${worktree.branch} is closed`);
           }),
+        // The command runs through `sh -c` with no input. Its output is kept as it
+        // arrives, so a command ended by the time limit still returns what it wrote.
+        // Closing the scope ends the process group of the shell, with every process
+        // the command started.
+        runCommand: ({ worktree, command, timeLimit }) =>
+          Effect.scoped(
+            Effect.gen(function* () {
+              const chunks: string[] = [];
+              const handle = yield* spawner.spawn(
+                ChildProcess.make('sh', ['-c', command], { cwd: worktree.path, stdin: 'ignore' })
+              );
+              const exited = yield* handle.all.pipe(
+                Stream.decodeText(),
+                Stream.runForEach((chunk) => Effect.sync(() => chunks.push(chunk))),
+                Effect.andThen(handle.exitCode),
+                Effect.timeoutOption(timeLimit)
+              );
+              const output = chunks.join('');
+              return Option.match(exited, {
+                onNone: (): CommandRun => ({ _tag: 'TimedOut', output }),
+                onSome: (exitCode): CommandRun => ({ _tag: 'Exited', exitCode, output }),
+              });
+            })
+          ).pipe(Effect.mapError(() => new WorktreeCommandError())),
       };
     })
   );

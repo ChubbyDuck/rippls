@@ -1,6 +1,7 @@
 import { Config, ConfigProvider, Context, DateTime, Duration, Effect, Option, Schema, SchemaGetter } from 'effect';
 
 import { Hitl } from '../../Tickets/Domain/Entities/Ticket/properties/Hitl.ts';
+import { Project } from '../../Tickets/Domain/Entities/Ticket/properties/Project.ts';
 import { defaultTicketKind, TicketKind } from '../../Tickets/Domain/Entities/Ticket/properties/TicketKind.ts';
 
 import { HarnessName } from './Properties/HarnessName.ts';
@@ -164,6 +165,55 @@ export const TicketSourceConfig = Schema.TaggedUnion({
 
 export type TicketSourceConfig = typeof TicketSourceConfig.Type;
 
+// The repository's own check command, which the Engine runs in the Ticket Worktree
+// after the Strategy succeeds and before the merge. Its exit code is the verdict.
+// A Project may override the command; a ticket without a Project, or of a Project
+// without an override, uses `command`. With no command the check is skipped.
+const CheckCommand = Schema.NonEmptyString.check(Schema.isTrimmed());
+
+const FixAttempts = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+export const CheckFileConfig = Schema.Struct({
+  command: Schema.optionalKey(CheckCommand),
+  projects: Schema.optionalKey(Schema.Record(Project, CheckCommand)),
+  timeLimit: Schema.optionalKey(Schema.DurationFromString),
+  fixAttempts: Schema.optionalKey(FixAttempts),
+  fixPrompt: Schema.optionalKey(Schema.NonEmptyString),
+});
+
+export interface CheckConfig {
+  readonly command?: string;
+  readonly projects: Readonly<Record<string, string>>;
+  readonly timeLimit: Duration.Duration;
+  readonly fixAttempts: number;
+  readonly fixPrompt: string;
+}
+
+export const defaultCheckTimeLimit = Duration.minutes(10);
+
+export const defaultFixAttempts = 1;
+
+export const defaultFixPrompt =
+  "The repository's check command failed on the work in this worktree. " +
+  'Read its output below, find the cause, and fix the work so that the command passes. ' +
+  'Leave the fix in this worktree.';
+
+export const defaultCheckConfig: CheckConfig = {
+  projects: {},
+  timeLimit: defaultCheckTimeLimit,
+  fixAttempts: defaultFixAttempts,
+  fixPrompt: defaultFixPrompt,
+};
+
+export const checkConfig: Config.Config<CheckConfig> = Config.schema(CheckFileConfig, 'check').pipe(
+  Config.map((check) => ({ ...defaultCheckConfig, ...check })),
+  Config.withDefault(defaultCheckConfig)
+);
+
+// The check command for a ticket: the override of its Project, or the default.
+export const checkCommandOf = (check: CheckConfig, project: Project | undefined): string | undefined =>
+  (project === undefined ? undefined : check.projects[project]) ?? check.command;
+
 export const EngineConfigSchema = Schema.Struct({
   harnesses: ConfiguredHarnesses,
   schedule: Schema.optionalKey(ScheduledConfigs),
@@ -172,6 +222,7 @@ export const EngineConfigSchema = Schema.Struct({
   pollInterval: Schema.optionalKey(Schema.DurationFromString),
   defaultKind: Schema.optionalKey(TicketKind),
   source: Schema.optionalKey(TicketSourceConfig),
+  check: Schema.optionalKey(CheckFileConfig),
 });
 
 export type EngineConfigValue = typeof EngineConfigSchema.Type;

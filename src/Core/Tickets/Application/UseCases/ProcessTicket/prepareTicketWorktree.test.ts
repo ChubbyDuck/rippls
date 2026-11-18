@@ -12,6 +12,7 @@ const ticketId = Schema.decodeSync(TicketId)('folder:1');
 const unusedProject = Layer.succeed(WorktreeManager, {
   prepareProject: () => Effect.die('prepareProject should not be called'),
   prepareTicket: ({ id }) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/ticket-${id}`, branch: `ticket-${id}` }),
+  runCommand: () => Effect.die('runCommand should not be called'),
   mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
 });
 
@@ -24,6 +25,7 @@ test('a ticket with no project resolves to a ticket worktree', () => {
         requested.push(id);
         return { path: `/repo/.sandcastle/worktrees/ticket-${id}`, branch: `ticket-${id}` };
       }),
+    runCommand: () => Effect.die('runCommand should not be called'),
     mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
   });
 
@@ -49,6 +51,7 @@ test('a ticket with a project creates the project worktree then the ticket workt
         expect(named).toBe(project);
         return { path: `/repo/.sandcastle/worktrees/ticket-${id}`, branch: `ticket-${id}` };
       }),
+    runCommand: () => Effect.die('runCommand should not be called'),
     mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
   });
 

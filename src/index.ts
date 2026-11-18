@@ -6,6 +6,7 @@ import { Argument, Command, Flag } from 'effect/unstable/cli';
 
 import { EngineFileConfigLive } from '~/config/layer';
 import {
+  checkConfig,
   EngineConfig,
   engineConfig,
   idleTimeoutConfig,
@@ -76,12 +77,14 @@ const engine = Command.make(
   Command.withHandler(({ source, project, limit, concurrency, idleTimeout, pollInterval }) =>
     Effect.gen(function* () {
       const ticketSource = yield* ticketSourceFor(source);
+      const check = yield* checkConfig;
       return yield* runEngine({
         project: Option.getOrUndefined(project),
         limit: Option.getOrUndefined(limit),
         concurrency,
         idleTimeout,
         pollInterval,
+        check,
       }).pipe(Effect.provide(ticketSource));
     })
   )

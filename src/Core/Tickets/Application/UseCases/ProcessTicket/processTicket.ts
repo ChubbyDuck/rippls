@@ -1,5 +1,6 @@
 import { Console, Effect, Result } from 'effect';
 
+import { defaultCheckConfig } from '~/Core/Shared/Domain/EngineConfig';
 import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
@@ -8,6 +9,7 @@ import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
+import { checkTicketWorktree } from './checkTicketWorktree';
 import { harnessInWorktree } from './harnessInWorktree';
 import type { ProcessTicketCommand } from './command';
 import { prepareTicketWorktree } from './prepareTicketWorktree';
@@ -64,7 +66,7 @@ const landDone = (ticket: Ticket, worktree: Worktree) =>
     yield* ledger.release(ticket.id);
   });
 
-export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
+export const processTicket = ({ ticket, runnerId, check = defaultCheckConfig }: ProcessTicketCommand) =>
   Effect.gen(function* () {
     const harnessSelector = yield* HarnessSelector;
     const harness = yield* harnessSelector.select;
@@ -89,13 +91,27 @@ export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
       )
     );
     yield* Console.log(`${ticket.label} is opening worktree ${worktree.branch} at ${worktree.path}`);
+    const inWorktree = harnessInWorktree(harness, worktree.path);
     const outcome = yield* strategy
-      .run(ticket, harnessInWorktree(harness, worktree.path))
+      .run(ticket, inWorktree)
       .pipe(Effect.withSpan('strategy.run', { attributes: { harness: harness.name, strategy: strategy.name } }));
-    yield* Result.match(outcome, {
-      onSuccess: () => landDone(ticket, worktree),
-      onFailure: () => escalate(ticket, worktree, 'strategy failure'),
-    });
+    if (Result.isFailure(outcome)) {
+      return yield* escalate(ticket, worktree, 'strategy failure');
+    }
+    // A check command that cannot run, or a fix the Harness cannot carry out, fails
+    // the check as a failing command does.
+    const passed = yield* checkTicketWorktree(ticket, worktree, inWorktree, check).pipe(
+      Effect.catchTags({
+        WorktreeCommandError: () =>
+          Console.error(`${ticket.label} could not run its check command`).pipe(Effect.as(false)),
+        HarnessRuntimeError: () =>
+          Console.error(`${ticket.label} could not send the fix prompt to the Harness`).pipe(Effect.as(false)),
+      })
+    );
+    if (!passed) {
+      return yield* escalate(ticket, worktree, 'check failure');
+    }
+    yield* landDone(ticket, worktree);
   }).pipe(
     Effect.withSpan('runner.run', {
       attributes: {

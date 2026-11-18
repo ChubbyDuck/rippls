@@ -1,6 +1,6 @@
 import { createWorktree, run as runSandcastle } from '@ai-hero/sandcastle';
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
+import { Clock, Console, type Duration, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { beforeEach, expect, test, vi } from 'vitest';
 
@@ -342,4 +342,53 @@ test('a Ticket Worktree on disk is reused by a new manager, and a Harness run, m
   expect(runMock.mock.calls[0]?.[0]).toMatchObject({ prompt: 'continue the work', cwd: result.reused.path });
   expect(result.merged).toEqual({ earlier: 'earlier work', fix: 'fixed by a human', agent: 'from the agent' });
   expect(result.exists).toBe(false);
+});
+
+// Prepares the Ticket Worktree of `folder:17` in a new repository, and runs a
+// command in it with the given time limit.
+const runInTicketWorktree = (command: string, timeLimit: Duration.Input = '10 seconds') =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const root = yield* initRepo;
+    return yield* Effect.gen(function* () {
+      const manager = yield* WorktreeManager;
+      const worktree = yield* manager.prepareTicket({ id: ticketId });
+      const outcome = yield* manager.runCommand({ worktree, command, timeLimit });
+      return { worktree: { ...worktree, path: yield* fs.realPath(worktree.path) }, outcome };
+    }).pipe(Effect.provide(WorktreeManagerLive(root)));
+  });
+
+test('runCommand runs a compound shell command in the worktree directory and returns its exit code and output', async () => {
+  const { worktree, outcome } = await run(
+    runInTicketWorktree('pwd && cat base.txt && echo " to stdout" && echo to stderr >&2; exit 3')
+  );
+
+  expect(outcome).toEqual({
+    _tag: 'Exited',
+    exitCode: 3,
+    output: `${worktree.path}\nfrom main to stdout\nto stderr\n`,
+  });
+});
+
+test('runCommand returns exit code zero for a passing command', async () => {
+  const { outcome } = await run(runInTicketWorktree('true'));
+
+  expect(outcome).toEqual({ _tag: 'Exited', exitCode: 0, output: '' });
+});
+
+test('runCommand ends a command at its time limit, with every process it started, and returns the output so far', async () => {
+  const { elapsed, outcome, lateFileWritten } = await run(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const started = yield* Clock.currentTimeMillis;
+      const { worktree, outcome } = yield* runInTicketWorktree('echo started; sleep 1 && touch late.txt', '300 millis');
+      const elapsed = (yield* Clock.currentTimeMillis) - started;
+      yield* Effect.sleep('1500 millis');
+      return { elapsed, outcome, lateFileWritten: yield* fs.exists(`${worktree.path}/late.txt`) };
+    })
+  );
+
+  expect(elapsed).toBeLessThan(1000);
+  expect(outcome).toEqual({ _tag: 'TimedOut', output: 'started\n' });
+  expect(lateFileWritten).toBe(false);
 });

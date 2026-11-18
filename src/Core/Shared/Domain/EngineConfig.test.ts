@@ -1,8 +1,14 @@
-import { ConfigProvider, DateTime, Duration, Effect } from 'effect';
+import { ConfigProvider, DateTime, Duration, Effect, Schema } from 'effect';
 import { expect, test } from 'vitest';
 
+import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
+
 import {
+  checkCommandOf,
+  checkConfig,
+  defaultCheckConfig,
   defaultEngineConfig,
+  defaultFixPrompt,
   defaultIdleTimeout,
   defaultPollInterval,
   engineConfig,
@@ -450,4 +456,75 @@ test('resolveTicketSource fails when the source is missing', () => {
   expect(Effect.runSync(resolveTicketSource(undefined).pipe(Effect.flip)).cause.message).toBe(
     'Expected object\n  at ["source"]\nExpected object\n  at ["source"]'
   );
+});
+
+const loadCheck = (entries: Record<string, unknown>) => checkConfig.parse(engineConfigProvider(entries));
+
+test('checkConfig has no command, a ten-minute time limit, one fix attempt, and a prose fix prompt unless set', () => {
+  expect(Effect.runSync(loadCheck({}))).toEqual(defaultCheckConfig);
+  expect(Effect.runSync(loadCheck({ check: {} }))).toEqual(defaultCheckConfig);
+  expect(defaultCheckConfig).toEqual({
+    projects: {},
+    timeLimit: Duration.minutes(10),
+    fixAttempts: 1,
+    fixPrompt: defaultFixPrompt,
+  });
+  expect(defaultFixPrompt).not.toMatch(/\//);
+});
+
+test('checkConfig reads the command, the overrides per Project, the time limit, the attempts, and the fix prompt', () => {
+  expect(
+    Effect.runSync(
+      loadCheck({
+        check: {
+          command: 'pnpm typecheck && pnpm lint && pnpm test',
+          projects: { web: 'pnpm --filter web check', api: 'pnpm --filter api check' },
+          timeLimit: '15 minutes',
+          fixAttempts: 3,
+          fixPrompt: 'Run /fix-check.',
+        },
+      })
+    )
+  ).toEqual({
+    command: 'pnpm typecheck && pnpm lint && pnpm test',
+    projects: { web: 'pnpm --filter web check', api: 'pnpm --filter api check' },
+    timeLimit: Duration.minutes(15),
+    fixAttempts: 3,
+    fixPrompt: 'Run /fix-check.',
+  });
+});
+
+test('checkConfig reads zero fix attempts', () => {
+  expect(Effect.runSync(loadCheck({ check: { command: 'make check', fixAttempts: 0 } })).fixAttempts).toBe(0);
+});
+
+test('checkConfig rejects negative fix attempts, a command with surrounding spaces, and a time limit that is not a duration', () => {
+  expect(Effect.runSync(loadCheck({ check: { fixAttempts: -1 } }).pipe(Effect.flip)).cause.message).toBe(
+    'Expected a value greater than or equal to 0\n  at ["check"]["fixAttempts"]'
+  );
+  expect(Effect.runSync(loadCheck({ check: { command: ' make check' } }).pipe(Effect.flip)).cause.message).toContain(
+    'at ["check"]["command"]'
+  );
+  expect(Effect.runSync(loadCheck({ check: { projects: { web: 'make ' } } }).pipe(Effect.flip)).cause.message).toContain(
+    'at ["check"]["projects"]["web"]'
+  );
+  expect(Effect.runSync(loadCheck({ check: { timeLimit: 'soon' } }).pipe(Effect.flip)).cause.message).toContain(
+    'at ["check"]["timeLimit"]'
+  );
+});
+
+test('checkConfig reads an empty command as no command', () => {
+  expect(Effect.runSync(loadCheck({ check: { command: '', projects: { web: '' } } }))).toEqual(defaultCheckConfig);
+});
+
+test('checkCommandOf takes the override of the ticket Project, and the default command otherwise', () => {
+  const check = { ...defaultCheckConfig, command: 'pnpm check', projects: { web: 'pnpm --filter web check' } };
+  const web = Schema.decodeSync(Project)('web');
+  const api = Schema.decodeSync(Project)('api');
+
+  expect(checkCommandOf(check, web)).toBe('pnpm --filter web check');
+  expect(checkCommandOf(check, api)).toBe('pnpm check');
+  expect(checkCommandOf(check, undefined)).toBe('pnpm check');
+  expect(checkCommandOf({ ...check, command: undefined }, api)).toBeUndefined();
+  expect(checkCommandOf(defaultCheckConfig, undefined)).toBeUndefined();
 });

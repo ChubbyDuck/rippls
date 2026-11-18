@@ -59,15 +59,18 @@ successful Ticket Worktrees.
 4. Creates a `ticket-<source>-<id>` branch and **Ticket Worktree**.
 5. Installs workspace dependencies with `corepack pnpm install` when needed.
 6. Runs the selected **Strategy**, which invokes the **Harness** to create Agents for its steps.
-7. On success, reports done to the Source, merges the ticket branch, records done in the
-  Ledger, and releases its Claim (see [Completion and `done/`](#completion-and-done)).
-8. On Strategy failure, retains the worktree, records an **Escalation** in the Ledger,
-  releases the Claim, and reports the escalation to the Source. The ticket keeps its
-  kind and `hitl`.
+7. On success, runs the configured check command in the Ticket Worktree, and sends a fix
+  prompt to the Harness when it fails (see [Check command](#check-command)).
+8. Once the check passes, or when none is configured, reports done to the Source, merges
+  the ticket branch, records done in the Ledger, and releases its Claim (see
+  [Completion and `done/`](#completion-and-done)).
+9. On Strategy failure, or a check that still fails after its fix attempts, retains the
+  worktree, records an **Escalation** in the Ledger, releases the Claim, and reports the
+  escalation to the Source. The ticket keeps its kind and `hitl`.
 
 The **Limit** caps Tickets taken from the stream, rather than successful completions.
 The Engine finishes processing the Tickets it has taken, or stops after the configured
-idle timeout. A Strategy failure escalates the Ticket and halts the run.
+idle timeout. A Strategy failure or a failed check escalates the Ticket and halts the run.
 
 ## Before you start
 
@@ -369,9 +372,11 @@ becomes Eligible again.
 
 ## Escalation
 
-When a Strategy fails, the Engine escalates the ticket and halts the run:
+When a Strategy fails, or the check command still fails after its fix attempts, the
+Engine escalates the ticket and halts the run:
 
-1. It records an **Escalation** in the Ledger with the reason, the attempt count, and
+1. It records an **Escalation** in the Ledger with the reason (`strategy failure` or
+   `check failure`), the attempt count, and
    the path of the retained Ticket Worktree.
 2. It releases the Claim.
 3. It reports the escalation to the Source.
@@ -508,6 +513,42 @@ schedule: [
 ```
 
 See `src/config/examples/schedule.ts` for a complete short-form example.
+
+### Check command
+
+Rippls runs your repository's own check command to judge the work of a ticket. The
+exit code is the verdict: zero passes. No skill has to print anything special.
+
+```ts
+check: {
+  command: 'pnpm typecheck && pnpm lint && pnpm test',
+  projects: {
+    web: 'pnpm --filter web check',
+  },
+  timeLimit: '10 minutes', // the default
+  fixAttempts: 1, // the default
+  fixPrompt: 'Fix the work so that the check command passes.', // a default in plain prose
+},
+```
+
+- **When.** The Engine runs the command in the Ticket Worktree after the Strategy
+  succeeds and before the merge.
+- **Command.** `command` runs for a ticket without a Project. A ticket of a Project that
+  `projects` names runs that override; a ticket of any other Project runs `command`.
+  The command runs through `sh -c`, so `&&`, pipes, and quoting work as in a terminal.
+- **Time limit.** A command that runs longer than `timeLimit` is ended, with every
+  process it started, and counts as a failed check.
+- **Fix attempts.** On a non-zero exit code or the time limit, the Engine sends the fix
+  prompt to the Harness, in the same Ticket Worktree, with the command, how it ended,
+  and the last 200 lines of its output. Then it runs the command again. After
+  `fixAttempts` fixes, a check that still fails escalates the ticket (see
+  [Escalation](#escalation)) and nothing is merged. With `fixAttempts: 0` the first
+  failure escalates.
+- **Not configured.** With no command for the ticket, the check is skipped and the
+  Engine logs that it was skipped. An empty string is no command.
+
+The gate step of the [Implementation Strategy](#implementation-strategy) still runs as
+before; the check runs after it.
 
 ### Runtime defaults and tracing
 

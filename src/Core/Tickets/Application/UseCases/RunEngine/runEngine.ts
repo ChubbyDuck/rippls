@@ -38,6 +38,7 @@ export const runEngine = Effect.fn('engine.run')(function* ({
   concurrency = 1,
   idleTimeout = defaultIdleTimeout,
   pollInterval = defaultPollInterval,
+  check,
 }: RunEngineCommand) {
   const root = yield* RepositoryRoot;
   yield* ensureWorktreesWritable(root);
@@ -64,7 +65,7 @@ export const runEngine = Effect.fn('engine.run')(function* ({
           (runner) =>
             Effect.gen(function* () {
               yield* Console.log(`${ticket.label} is taken into the runner ${runner.id}`);
-              yield* processTicket({ ticket, runnerId: runner.id, repositoryRoot: root });
+              yield* processTicket({ ticket, runnerId: runner.id, repositoryRoot: root, check });
             }).pipe(Effect.ensuring(clock.onDone)),
           (runner) => Queue.offer(availableRunners, runner).pipe(Effect.asVoid)
         ),
