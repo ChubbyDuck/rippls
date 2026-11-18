@@ -13,7 +13,8 @@ We added Linear as a second Source behind the existing `TicketSource` port, so t
 
 - The pull is team-scoped (config `teamId`). The `--project` flag narrows it to one Linear project by slug. The source offers only `unstarted` issues for processing, so a human moves an issue to Todo to make it ready — the readiness gate needs no extra label. An issue in a `started` state is already claimed on Linear, so it is not offered; a read by identity still finds it, so the Engine can complete the issue it claimed.
 - The Claim lives in the local Ledger (ADR-0004), not on Linear. The Engine reports it to the source: claimed sets assignee = viewer and the first `started` state, then re-reads to confirm. A lost race fails the report, and the Engine releases the Claim in the Ledger and takes another ticket. Released unassigns the issue and moves it to the first `unstarted` state.
-- Complete → `completed` state; escalate → unassign + `unstarted` + labels `hitl:yes` and `kind:task`. Unblock needs no write, because Linear derives blockers from live relations.
+- Complete → `completed` state. Unblock needs no write, because Linear derives blockers from live relations.
+- The Escalation lives in the local Ledger (ADR-0004). The Engine reports escalated to the source, which unassigns the issue, moves it to the first `unstarted` state, and adds the `needs-human` label. It no longer changes the `kind` or `hitl` labels, so the issue still describes the work. The source reads an issue with `needs-human` as HITL yes, so it is not Eligible while the label stays. When the team has no `needs-human` label, the source logs a warning and the report still succeeds, because the Ledger holds the Escalation.
 
 ## Consequences
 

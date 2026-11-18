@@ -6,6 +6,7 @@ import type { LinearIssue, LinearLabel, LinearMetadata } from '~/Core/Tickets/Po
 
 import {
   claimWrites,
+  escalateWrites,
   issueToTicket,
   labelsToHitl,
   labelsToKind,
@@ -177,18 +178,21 @@ test('releaseWrites unassign the Issue and move it to the first unstarted state'
   ]);
 });
 
-test('ticketToWrites covers done and escalate', () => {
+test('ticketToWrites moves a done ticket to the first completed state', () => {
   expect(ticketToWrites(readyTicket.done(), metadata)).toEqual([
     { op: 'setState', issueId: uuid, stateId: 'state-completed' },
   ]);
-  expect(ticketToWrites(readyTicket.escalate(), metadata)).toEqual([
+});
+
+test('escalateWrites unassign, unstart, and add needs-human, leaving the kind and hitl labels', () => {
+  const withLabel = { ...metadata, labels: [...metadata.labels, { id: 'label-needs-human', name: 'needs-human' }] };
+  expect(escalateWrites(uuid, withLabel)).toEqual([
     { op: 'setAssignee', issueId: uuid, assigneeId: null },
     { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
-    {
-      op: 'setLabels',
-      issueId: uuid,
-      addedLabelIds: ['label-task', 'label-hitl-yes'],
-      removedLabelIds: ['label-impl'],
-    },
+    { op: 'setLabels', issueId: uuid, addedLabelIds: ['label-needs-human'], removedLabelIds: [] },
+  ]);
+  expect(escalateWrites(uuid, metadata)).toEqual([
+    { op: 'setAssignee', issueId: uuid, assigneeId: null },
+    { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
   ]);
 });

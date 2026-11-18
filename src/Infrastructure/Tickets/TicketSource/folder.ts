@@ -249,7 +249,7 @@ export const TicketSourceFolderLive = Layer.effect(
       const saveMany = (tickets: readonly Ticket[]): Effect.Effect<void, TicketNotSaved> =>
         Effect.forEach(tickets, save, { discard: true });
 
-      // The folder Source keeps no trace of a Claim: the Ledger holds it.
+      // The folder Source keeps no trace of a Claim or an escalation: the Ledger holds them.
       const report = (_ticket: TicketId, _event: TicketEvent): Effect.Effect<void> => Effect.void;
 
       return { getOneBy, getManyBy, save, saveMany, report };

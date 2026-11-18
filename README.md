@@ -29,8 +29,8 @@ you want it to process. No clone of this project is required.
 | --- | --- |
 | **Engine** | Coordinates the Runners processing Tickets. |
 | **Runner** | A named worker reused across successive Tickets. |
-| **Ticket Source** | Reads external records, converts them into Tickets, saves Ticket changes, and receives reports of each Claim and release. |
-| **Ledger** | The Engine's own local record of Ticket Processing, where each Claim lives. |
+| **Ticket Source** | Reads external records, converts them into Tickets, saves Ticket changes, and receives reports of each Claim, release, and escalation. |
+| **Ledger** | The Engine's own local record of Ticket Processing, where each Claim and Escalation lives. |
 | **Ticket Stream** | The ongoing sequence of uniform Tickets supplied for processing. |
 | **Ticket Processing** | The shared lifecycle: claim, apply a Strategy, then complete or escalate. |
 | **Strategy** | A reusable procedure for performing a Ticket's work through a Harness. |
@@ -60,8 +60,9 @@ successful Ticket Worktrees.
 5. Installs workspace dependencies with `corepack pnpm install` when needed.
 6. Runs the selected **Strategy**, which invokes the **Harness** to create Agents for its steps.
 7. On success, merges the ticket branch, marks the ticket `done`, and releases its Claim.
-8. On Strategy failure, retains the worktree and raises the ticket to a human as
-  `kind: task`, `hitl: yes`.
+8. On Strategy failure, retains the worktree, records an **Escalation** in the Ledger,
+  releases the Claim, and reports the escalation to the Source. The ticket keeps its
+  kind and `hitl`.
 
 The **Limit** caps Tickets taken from the stream, rather than successful completions.
 The Engine finishes processing the Tickets it has taken, or stops after the configured
@@ -146,7 +147,8 @@ A ticket is **Eligible** when all three conditions hold:
   `claiming`/`claimed` status that an earlier Rippls wrote into a ticket is ignored.
 - **Unattended**: `hitl` is `no`.
 
-A done ticket is never Eligible. Eligibility does not mean “every ticket with
+A done ticket is never Eligible, and neither is an escalated ticket (see
+[Escalation](#escalation)). Eligibility does not mean “every ticket with
 `status: ready-for-agent`.” The Source status is still used for lifecycle updates, but
 polling applies the conditions above.
 
@@ -229,6 +231,31 @@ Ticket Stream, and releases the Claim when the ticket is done or when the Engine
 
 A Claim left by an Engine that stopped without releasing it keeps its ticket
 unclaimable. Remove that ticket's record from the Ledger folder to free it.
+
+## Escalation
+
+When a Strategy fails, the Engine escalates the ticket and halts the run:
+
+1. It records an **Escalation** in the Ledger with the reason, the attempt count, and
+   the path of the retained Ticket Worktree.
+2. It releases the Claim.
+3. It reports the escalation to the Source.
+
+The ticket itself is not changed: it keeps its kind and `hitl`. An escalated ticket is
+not Eligible, in this run or a later one. Each Escalation is a record in
+`rippls/ledger/escalations/` inside the Git common directory (usually
+`.git/rippls/ledger/escalations/`). Another escalation of the same ticket raises its
+attempt count.
+
+- **Folder Source:** nothing else happens. The ticket file stays byte-for-byte as it
+  was.
+- **Linear Source:** the issue is unassigned, moved to an `unstarted` state, and given
+  the `needs-human` label. Its `kind` and `hitl` labels stay. See
+  [Linear Source](#linear-source).
+
+There is no command yet to clear an Escalation. To return an escalated ticket to
+unattended processing, remove its record from the `escalations` folder (and, on
+Linear, the `needs-human` label).
 
 ## Configuration
 
@@ -449,6 +476,9 @@ hitl:no
 hitl:yes
 ```
 
+Create a `needs-human` label in the team as well. Rippls adds it to an escalated issue,
+and reads an issue that has it as `hitl: yes`, whatever its `kind`. Without the label,
+an escalation still works: it is recorded in the Ledger, and Rippls logs a warning.
 Issue data maps into tickets as follows:
 
 - The Linear issue ID becomes the Source-scoped ticket ID.
@@ -465,8 +495,9 @@ it to a `started` state, and reads it back to confirm. If someone else took the 
 between, the Engine releases its Claim and takes another ticket. A release unassigns the
 issue and returns it to an `unstarted` state. Completion moves it to a `completed` state.
 
-If a Strategy fails, Rippls unassigns the issue, returns it to an `unstarted` state,
-and changes its grouped labels to `kind:task` and `hitl:yes` when those labels exist.
+If a Strategy fails, Rippls records the Escalation in its Ledger, unassigns the issue,
+returns it to an `unstarted` state, and adds the `needs-human` label. It does not change
+the `kind` or `hitl` labels. While the issue has `needs-human`, Rippls does not take it.
 
 ## Projects and worktrees
 
@@ -480,7 +511,7 @@ into the project branch.
 
 Worktrees live under `.sandcastle/worktrees/` and are ignored by Git. Project Worktrees
 remain for later tickets and are not merged into the Repository Root automatically.
-Ticket Worktrees are closed after success and retained after a HITL raise.
+Ticket Worktrees are closed after success and retained after an escalation.
 
 Before a run, keep the branch receiving merges in a reviewable state. Merge or otherwise
 integrate a completed project branch yourself.
@@ -580,8 +611,10 @@ Investigate a Harness failure:
 
 1. Read the Engine error and `.sandcastle/logs/ticket-<source>-<id>-*.log`.
 2. Inspect the retained Ticket Worktree under `.sandcastle/worktrees/`.
-3. Resolve the raised `task` with `hitl: yes`.
-4. Return it to unattended processing only after the problem is addressed.
+3. Read the Escalation in `.git/rippls/ledger/escalations/` for the reason and the
+   retained worktree.
+4. Return it to unattended processing only after the problem is addressed: remove its
+   Escalation record (and, on Linear, the `needs-human` label).
 
 
 

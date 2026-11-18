@@ -80,9 +80,17 @@ never stale. The Engine replaces a Stale Claim when it takes the ticket, which
 counts as a release for the Source.
 _Avoid_: Dead lock, orphan, abandoned Claim
 
+**Escalation**:
+The Ledger's record that a Ticket needs a human because its Ticket Processing
+failed. It holds the reason, the attempt count, and the path of the retained Ticket
+Worktree. The Ticket keeps its Ticket Kind and HITL. An escalated Ticket is not
+Eligible.
+_Avoid_: HITL raise, failure, human task
+
 **Ledger**:
-The Engine's own record of Ticket Processing, keyed by ticket identity. It is local
-to the Repository Root for every Source; a Source is never the Ledger.
+The Engine's own record of Ticket Processing, keyed by ticket identity: Claims and
+Escalations. It is local to the Repository Root for every Source; a Source is never
+the Ledger.
 _Avoid_: Database, store, registry
 
 **Strategy**:
@@ -170,7 +178,7 @@ A Ticket whose HITL is no, allowing it to proceed without a human.
 _Avoid_: AFK, automated, no-HITL
 
 **Eligible**:
-An Unblocked, Unclaimed, Unattended Ticket that is not done, which the Engine may take
-next.
+An Unblocked, Unclaimed, Unattended Ticket that is neither done nor escalated, which
+the Engine may take next.
 Eligibility is distinct from the ready-for-agent Ticket Status.
 _Avoid_: Ready, next, pollable

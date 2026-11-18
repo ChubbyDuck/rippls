@@ -95,16 +95,18 @@ const claimIfStillEligible =
   );
 
 // The Source returns every ticket in scope in its processing order, done ones
-// included, the Ledger holds the Claims, and the core rule picks the Eligible
-// tickets. A ticket whose only Claim is a Stale Claim is Unclaimed, and the Engine
-// replaces that Claim when it takes the ticket. The Engine claims the first one it
-// can.
+// included, the Ledger holds the Claims and Escalations, and the core rule picks
+// the Eligible tickets. A ticket whose only Claim is a Stale Claim is Unclaimed,
+// and the Engine replaces that Claim when it takes the ticket. The Engine claims
+// the first one it can.
 const claimNextEligibleTicket = (engine: EngineId, project?: Project) =>
   Effect.gen(function* () {
     const source = yield* TicketSource;
     const tickets = yield* source.getManyBy(scopeQuery(project));
     const { claimed, stale } = yield* claimsIn(tickets);
-    const facts = { done: yield* doneFor(tickets, project), claimed };
+    const ledger = yield* Ledger;
+    const escalations = yield* ledger.escalations(tickets.map((ticket) => ticket.id));
+    const facts = { done: yield* doneFor(tickets, project), claimed, escalated: new Set(escalations.keys()) };
     const eligible = tickets.filter((ticket) => isEligible(ticket, facts));
     return yield* Effect.findFirstFilter(eligible, claimIfStillEligible(engine, facts, stale));
   });

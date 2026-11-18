@@ -53,12 +53,13 @@ test('folder source namespaces ids in memory and writes numbers on disk', async 
     id: formatTicketId('folder', '6'),
     title: 'Namespaced',
     project: 'demo',
-    kind: 'implementation',
+    kind: 'task',
+    hitl: 'yes',
     status: 'ready-for-agent',
     blockedBy: [formatTicketId('folder', '5')],
     blocks: [],
     body: '',
-  }).escalate();
+  });
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
@@ -198,7 +199,7 @@ test('getOneBy accepts a leading-id slug filename and ignores names that do not 
 });
 
 test('save updates a slugged filename in place and moves it to done with the same name', async () => {
-  const created = Ticket.create({
+  const createdFields = {
     id: formatTicketId('folder', '9'),
     title: 'Slugged save',
     project: 'demo',
@@ -207,7 +208,8 @@ test('save updates a slugged filename in place and moves it to done with the sam
     blockedBy: [],
     blocks: [],
     body: '',
-  });
+  } as const;
+  const created = Ticket.create(createdFields);
   const done = created.done();
 
   const result = await Effect.runPromise(
@@ -230,7 +232,7 @@ test('save updates a slugged filename in place and moves it to done with the sam
       ]);
 
       yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(created.escalate())),
+        Effect.flatMap((source) => source.save(Ticket.create({ ...createdFields, kind: 'task', hitl: 'yes' }))),
         Effect.provide(withDir(dir))
       );
       const escalated = yield* fs.readFileString(path.join(dir, '9-slugged-save.md'));
@@ -460,12 +462,13 @@ test('save writes the front matter back and keeps the body', async () => {
     id: formatTicketId('folder', '5'),
     title: 'Save me',
     project: 'demo',
-    kind: 'implementation',
+    kind: 'task',
+    hitl: 'yes',
     status: 'ready-for-agent',
     blockedBy: [],
     blocks: [],
     body: '',
-  }).escalate();
+  });
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
@@ -671,6 +674,26 @@ test('after claimed and after released the ticket file is byte-for-byte unchange
   expect(result.afterClaimed).toBe(content);
   expect(result.afterReleased).toBe(content);
   expect(result.files).toEqual(['1-reported.md']);
+});
+
+test('after escalated the ticket file is byte-for-byte unchanged', async () => {
+  const content =
+    frontMatter({ id: 1, title: 'escalated', project: 'demo', kind: 'implementation', status: 'ready-for-agent', blockedBy: [], blocks: [] }) +
+    '# Escalated\n\n- [x] Keep me.\n';
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* setup([['1-escalated.md', content]]);
+      yield* reportIn(dir, 'escalated');
+      const after = yield* fs.readFileString(path.join(dir, '1-escalated.md'));
+      const files = yield* fs.readDirectory(dir);
+      return { after, files };
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(result.after).toBe(content);
+  expect(result.files).toEqual(['1-escalated.md']);
 });
 
 test('a file with claimedBy or a claim status is read and those values are ignored', async () => {

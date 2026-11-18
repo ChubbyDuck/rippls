@@ -7,6 +7,7 @@ import { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
+import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
@@ -146,6 +147,70 @@ test('a second Ledger on the same Git common directory sees the Claims of the fi
   );
 
   expect([...claims.keys()]).toEqual([ticket(1)]);
+});
+
+test('an escalation records the reason, the attempt count, and the retained Ticket Worktree', async () => {
+  const { escalated, escalations } = await run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      return yield* inLedger(
+        dir,
+        Effect.gen(function* () {
+          const ledger = yield* Ledger;
+          const escalated = yield* ledger.escalate(ticket(1), { reason: 'strategy failure', worktree: '/wt/ticket-1' });
+          const escalations = yield* ledger.escalations([ticket(1), ticket(2)]);
+          return { escalated, escalations };
+        })
+      );
+    })
+  );
+  const expected = new Escalation({ ticket: ticket(1), reason: 'strategy failure', attempts: 1, worktree: '/wt/ticket-1' });
+  expect(escalated).toEqual(expected);
+  expect([...escalations.entries()]).toEqual([[ticket(1), expected]]);
+});
+
+test('a second failure of the same ticket raises its attempt count', async () => {
+  const escalations = await run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      yield* inLedger(
+        dir,
+        Ledger.pipe(Effect.flatMap((ledger) => ledger.escalate(ticket(1), { reason: 'first', worktree: '/wt/1' })))
+      );
+      return yield* inLedger(
+        dir,
+        Ledger.pipe(
+          Effect.tap((ledger) => ledger.escalate(ticket(1), { reason: 'second', worktree: '/wt/1' })),
+          Effect.flatMap((ledger) => ledger.escalations([ticket(1)]))
+        )
+      );
+    })
+  );
+  expect(escalations.get(ticket(1))).toEqual(
+    new Escalation({ ticket: ticket(1), reason: 'second', attempts: 2, worktree: '/wt/1' })
+  );
+});
+
+test('an escalation leaves the Claims in place, and a Claim leaves the ticket not escalated', async () => {
+  const { claims, escalations } = await run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      return yield* inLedger(
+        dir,
+        Effect.gen(function* () {
+          const ledger = yield* Ledger;
+          yield* ledger.claim(ticket(1), first);
+          yield* ledger.claim(ticket(2), first);
+          yield* ledger.escalate(ticket(1), { reason: 'strategy failure', worktree: '/wt/1' });
+          const claims = yield* ledger.read([ticket(1), ticket(2)]);
+          const escalations = yield* ledger.escalations([ticket(1), ticket(2)]);
+          return { claims, escalations };
+        })
+      );
+    })
+  );
+  expect([...claims.keys()]).toEqual([ticket(1), ticket(2)]);
+  expect([...escalations.keys()]).toEqual([ticket(1)]);
 });
 
 // A process that ran on this host and has exited.

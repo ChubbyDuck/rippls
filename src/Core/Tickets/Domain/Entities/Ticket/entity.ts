@@ -65,20 +65,6 @@ export class Ticket extends Schema.Class<Ticket>('Ticket')({
     });
   }
 
-  escalate(): Ticket {
-    return new Ticket({
-      id: this.id,
-      title: this.title,
-      project: this.project,
-      status: 'ready-for-agent',
-      blockedBy: this.blockedBy,
-      blocks: this.blocks,
-      kind: 'task',
-      hitl: 'yes',
-      body: this.body,
-    });
-  }
-
   isBlockedBy(id: TicketId): boolean {
     return this.blockedBy.includes(id);
   }

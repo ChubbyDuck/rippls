@@ -9,6 +9,7 @@ import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import type { Harness } from '~/Core/Shared/Ports/Harness';
 import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
+import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
@@ -585,29 +586,63 @@ test('runEngine releases a Claim the Source cannot confirm and takes another tic
   expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
 
-test('runEngine escalates the ticket and halts when the strategy reports a failure', () => {
-  const saved: Ticket[] = [];
-  const layer = Layer.mergeAll(
-    fakeSource([sampleTicket(1), sampleTicket(2)], {
-      save: (ticket) =>
-        Effect.sync(() => {
-          saved.push(ticket);
-        }),
-    }).layer,
-    HarnessSelectorNoop,
-    Layer.succeed(StrategySelector, {
-      select: () =>
-        Effect.succeed({
-          name: 'implementation',
-          run: () => Effect.succeed(Result.fail(new StrategyRuntimeError())),
-        }),
-    })
-  );
+const failingStrategy = Layer.succeed(StrategySelector, {
+  select: () =>
+    Effect.succeed({
+      name: 'implementation',
+      run: () => Effect.succeed(Result.fail(new StrategyRuntimeError())),
+    }),
+});
 
-  expect(Effect.runSync(runEngine({ project }).pipe(Effect.provide(layer), Effect.flip))).toBeInstanceOf(
-    EngineHalted
+test('runEngine records an escalation in the Ledger, saves nothing to the Source, and halts when the strategy fails', () => {
+  const saved: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    save: (ticket) =>
+      Effect.sync(() => {
+        saved.push(ticket);
+      }),
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, failingStrategy);
+
+  expect(Effect.runSync(runEngine({ project }, ledger).pipe(Effect.provide(layer), Effect.flip))).toEqual(
+    new EngineHalted({ ticketId: id(1), reason: 'strategy failure' })
   );
-  expect(saved).toEqual([sampleTicket(1).escalate()]);
+  expect([...ledger.escalated.values()]).toEqual([
+    new Escalation({
+      ticket: id(1),
+      reason: 'strategy failure',
+      attempts: 1,
+      worktree: '/repo/.sandcastle/worktrees/ticket-folder:1',
+    }),
+  ]);
+  expect(saved).toEqual([]);
+  expect(source.store.get(id(1))).toEqual(sampleTicket(1));
+  expect(ledger.claims.size).toBe(0);
+  expect(source.reports).toEqual([
+    { ticket: id(1), event: 'claimed' },
+    { ticket: id(1), event: 'escalated' },
+  ]);
+});
+
+test('runEngine does not take a ticket that an earlier Engine run escalated', async () => {
+  const ran: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+
+  expect(
+    Effect.runSync(
+      runEngine({ project }, ledger).pipe(
+        Effect.provide(Layer.mergeAll(source.layer, HarnessSelectorNoop, failingStrategy)),
+        Effect.flip
+      )
+    )
+  ).toBeInstanceOf(EngineHalted);
+  const later = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(later)))).toBeUndefined();
+
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
+  expect(ledger.escalated.has(id(1))).toBe(true);
 });
 
 test('runEngine fails when the done write cannot be saved, and releases its Claim on exit', () => {
@@ -821,23 +856,23 @@ test('runEngine does not take a ticket whose Claim another running Engine holds'
 test('runEngine releases only its own Claims on exit and reports each release', async () => {
   const ledger = makeLedgerMemory();
   const source = fakeSource([sampleTicket(1), sampleTicket(2), blockedTicket(3, 1)]);
-  const failingStrategy = Layer.succeed(StrategySelector, {
-    select: () =>
-      Effect.succeed({
-        name: 'implementation',
-        run: () => Effect.succeed(Result.fail(new StrategyRuntimeError())),
-      }),
+  const hangingImplementation = Layer.succeed(StrategySelector, {
+    select: () => Effect.succeed({ name: 'implementation', run: () => Effect.never }),
   });
   ledger.claims.set(id(2), heldByOther(id(2)));
-  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, failingStrategy);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, hangingImplementation);
 
-  const outcome = await Effect.runPromise(
-    runEngine({ project, concurrency: 1 }, ledger).pipe(Effect.provide(layer), Effect.flip)
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine({ project, concurrency: 1 }, ledger).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true })
+      );
+      yield* until(() => ledger.claims.has(id(1)));
+      yield* Fiber.interrupt(fiber);
+    })
   );
 
-  expect(outcome).toBeInstanceOf(EngineHalted);
-  // The failed ticket 1 is escalated to a human, and its Claim is released.
-  expect(source.store.get(id(1))?.kind).toBe('task');
   expect(ledger.claims.has(id(1))).toBe(false);
   expect([...ledger.claims.values()]).toEqual([heldByOther(id(2))]);
   expect(source.reports).toEqual([

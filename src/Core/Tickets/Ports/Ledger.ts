@@ -3,6 +3,7 @@ import { Context, type Effect } from 'effect';
 import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import type { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import type { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
+import type { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import type { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
@@ -34,5 +35,18 @@ export class Ledger extends Context.Service<
     readonly releaseAllOf: (engine: EngineId) => Effect.Effect<readonly TicketId[], LedgerError>;
     /** The Claims held on the given tickets. A ticket with no Claim is absent. */
     readonly read: (tickets: readonly TicketId[]) => Effect.Effect<ReadonlyMap<TicketId, Claim>, LedgerError>;
+    /**
+     * Records that the ticket is escalated, with the reason and the path of the
+     * retained Ticket Worktree. Each escalation of the same ticket raises its
+     * attempt count by one.
+     */
+    readonly escalate: (
+      ticket: TicketId,
+      failure: { readonly reason: string; readonly worktree: string }
+    ) => Effect.Effect<Escalation, LedgerError>;
+    /** The escalations of the given tickets. A ticket that is not escalated is absent. */
+    readonly escalations: (
+      tickets: readonly TicketId[]
+    ) => Effect.Effect<ReadonlyMap<TicketId, Escalation>, LedgerError>;
   }
 >()('Ledger') {}

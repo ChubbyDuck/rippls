@@ -1,4 +1,4 @@
-import { Effect, Layer, Result, Schema } from 'effect';
+import { Console, Effect, Layer, Result, Schema } from 'effect';
 import { expect, test } from 'vitest';
 
 import { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
@@ -6,11 +6,14 @@ import { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import type { Harness } from '~/Core/Shared/Ports/Harness';
 import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
+import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
-import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
 import { StrategyNotFound } from '~/Core/Tickets/Domain/Exceptions/StrategyNotFound';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
+import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
 import { WorktreeCreationError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCreationError';
@@ -172,16 +175,17 @@ test('processTicket runs a ticket that omits project', () => {
   expect(saved.map((value) => value.project)).toEqual([undefined]);
 });
 
-test('processTicket escalates the ticket and halts the run when the strategy fails', () => {
-  const saved: Ticket[] = [];
-  const harness: Harness = {
-    name: 'test-harness',
-    model: 'test-model',
-    run: () => Effect.succeed({ completionSignal: undefined }),
-  };
-  const services = Layer.mergeAll(
+const failingServices = (
+  saved: Ticket[],
+  report: (ticket: TicketId, event: TicketEvent) => Effect.Effect<void, TicketEventNotReported> = () => Effect.void
+) =>
+  Layer.mergeAll(
     Layer.succeed(HarnessSelector, {
-      select: Effect.succeed(harness),
+      select: Effect.succeed({
+        name: 'test-harness',
+        model: 'test-model',
+        run: () => Effect.succeed({ completionSignal: undefined }),
+      }),
     }),
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(ticket),
@@ -194,7 +198,7 @@ test('processTicket escalates the ticket and halts the run when the strategy fai
         Effect.sync(() => {
           saved.push(...values);
         }),
-      report: () => Effect.void,
+      report,
     }),
     Layer.succeed(StrategySelector, {
       select: () =>
@@ -206,12 +210,55 @@ test('processTicket escalates the ticket and halts the run when the strategy fai
     WorktreeManagerNoop
   );
 
+test('processTicket escalates the ticket in the Ledger and halts the run when the strategy fails', () => {
+  const saved: Ticket[] = [];
+  const reported: TicketEvent[] = [];
+  const ledger = ledgerClaiming(ticket);
+  const services = failingServices(saved, (_, event) =>
+    Effect.sync(() => {
+      reported.push(event);
+    })
+  );
+
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip)
+    processTicket({ ticket, runnerId, repositoryRoot }).pipe(
+      Effect.provide(Layer.merge(services, ledger.layer)),
+      Effect.flip
+    )
+  );
+
+  expect(halt).toEqual(new EngineHalted({ ticketId: ticket.id, reason: 'strategy failure' }));
+  expect(saved).toEqual([]);
+  expect(reported).toEqual(['escalated']);
+  expect(ledger.claims.size).toBe(0);
+  expect(ledger.escalated.get(ticket.id)).toEqual(
+    new Escalation({ ticket: ticket.id, reason: 'strategy failure', attempts: 1, worktree: ticketWorktreeOf(ticket.id).path })
+  );
+});
+
+test('processTicket keeps the escalation, logs the failed report, and halts when the Source cannot report it', () => {
+  const ledger = ledgerClaiming(ticket);
+  const errors: string[] = [];
+  const capturing: Console.Console = Object.assign(Object.create(console), {
+    error: (...args: ReadonlyArray<unknown>) => {
+      errors.push(args.map(String).join(' '));
+    },
+  });
+  const services = failingServices([], (failed, event) =>
+    Effect.fail(new TicketEventNotReported({ ticketId: failed, event }))
+  );
+
+  const halt = Effect.runSync(
+    processTicket({ ticket, runnerId, repositoryRoot }).pipe(
+      Effect.provide(Layer.mergeAll(services, ledger.layer, Layer.succeed(Console.Console, capturing))),
+      Effect.flip
+    )
   );
 
   expect(halt).toBeInstanceOf(EngineHalted);
-  expect(saved).toEqual([ticket.escalate()]);
+  expect(ledger.escalated.has(ticket.id)).toBe(true);
+  expect(ledger.claims.size).toBe(0);
+  expect(errors).toContain(`Failed to report the escalation of ticket ${ticket.id} TicketEventNotReported`);
 });
 
 test('processTicket propagates a missing strategy and does not mark the ticket done', () => {
@@ -571,15 +618,4 @@ test('processTicket names its Runner in the Claim and releases the Claim once th
 
   expect(seen).toEqual([new Claim({ ticket: ticket.id, engine, process: 1, host: 'memory', runner: runnerId })]);
   expect(ledger.claims.has(ticket.id)).toBe(false);
-});
-
-test('processTicket keeps the Claim when the strategy fails, for the Engine to release on exit', () => {
-  const ledger = ledgerClaiming(ticket);
-  const services = succeedingServices(() => Effect.succeed(Result.fail(new StrategyRuntimeError())));
-
-  Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(Layer.merge(services, ledger.layer)), Effect.flip)
-  );
-
-  expect(ledger.claims.get(ticket.id)?.runner).toBe(runnerId);
 });

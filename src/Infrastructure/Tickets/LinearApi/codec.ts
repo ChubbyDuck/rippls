@@ -1,6 +1,6 @@
 import { Option, Schema } from 'effect';
 
-import { type Ticket, TicketFromInput } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
+import { Ticket, TicketFromInput } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { formatTicketId, parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
@@ -56,6 +56,24 @@ export const labelsToKind = (labels: readonly LinearLabel[]): Option.Option<Tick
 export const labelsToHitl = (labels: readonly LinearLabel[]): Option.Option<Hitl> =>
   Option.flatMap(singleGrouped(labels, 'hitl'), (value) => Schema.decodeUnknownOption(Hitl)(value));
 
+/** The label that the Linear Source adds to an escalated Issue. */
+export const NEEDS_HUMAN_LABEL = 'needs-human';
+
+const needsHuman = (labels: readonly LinearLabel[]): boolean => labels.some((label) => label.name === NEEDS_HUMAN_LABEL);
+
+// An Issue that needs a human keeps its Ticket Kind and reads as HITL yes.
+const attended = (ticket: Ticket): Ticket =>
+  new Ticket({
+    id: ticket.id,
+    title: ticket.title,
+    project: ticket.project,
+    status: ticket.status,
+    blockedBy: ticket.blockedBy,
+    blocks: ticket.blocks,
+    kind: ticket.kind,
+    hitl: 'yes',
+    body: ticket.body,
+  });
 const relatedIds = (relations: LinearIssue['relations'], type: 'blocks'): readonly TicketId[] =>
   relations.filter((relation) => relation.type === type).map((relation) => toLinearId(relation.issueId));
 
@@ -74,7 +92,7 @@ export const issueToTicket = (issue: LinearIssue, _metadata: LinearMetadata) => 
   const project = issue.project === null ? '' : slugify(issue.project.name);
   const hitl = labelsToHitl(issue.labels);
 
-  return Schema.decodeUnknownOption(TicketFromInput)({
+  const ticket = Schema.decodeUnknownOption(TicketFromInput)({
     id: toLinearId(issue.id),
     title: issue.title,
     ...(project === '' ? {} : { project }),
@@ -85,6 +103,7 @@ export const issueToTicket = (issue: LinearIssue, _metadata: LinearMetadata) => 
     ...(kind.value === 'task' ? { hitl: Option.getOrUndefined(hitl) } : {}),
     body: issue.description ?? '',
   });
+  return needsHuman(issue.labels) ? Option.map(ticket, attended) : ticket;
 };
 
 export type LinearWrite =
@@ -103,27 +122,9 @@ const firstStateId = (metadata: LinearMetadata, type: string): string | undefine
 const labelIdNamed = (metadata: LinearMetadata, name: string): string | undefined =>
   metadata.labels.find((label) => label.name === name)?.id;
 
-const groupedKeep = new Set(['kind:task', 'hitl:yes']);
-
-const escalateLabelWrites = (
-  issueId: string,
-  metadata: LinearMetadata
-): readonly Extract<LinearWrite, { readonly op: 'setLabels' }>[] => {
-  const addedLabelIds = [...groupedKeep].flatMap((name) => {
-    const id = labelIdNamed(metadata, name);
-    return id === undefined ? [] : [id];
-  });
-  const removedLabelIds = metadata.labels.flatMap((label) => {
-    if ((!label.name.startsWith('kind:') && !label.name.startsWith('hitl:')) || groupedKeep.has(label.name)) {
-      return [];
-    }
-    return [label.id];
-  });
-  return addedLabelIds.length === 0 && removedLabelIds.length === 0
-    ? []
-    : [{ op: 'setLabels', issueId, addedLabelIds, removedLabelIds }];
-};
-
+/** The team's `needs-human` label, when the team has one. */
+export const needsHumanLabelId = (metadata: LinearMetadata): string | undefined =>
+  labelIdNamed(metadata, NEEDS_HUMAN_LABEL);
 /** A Claim on Linear: assign the Issue to the API-key user and move it to the first `started` state. */
 export const claimWrites = (issueId: string, metadata: LinearMetadata): readonly LinearWrite[] => {
   const stateId = firstStateId(metadata, 'started');
@@ -142,10 +143,23 @@ export const releaseWrites = (issueId: string, metadata: LinearMetadata): readon
   ];
 };
 
+/**
+ * An escalation on Linear: unassign the Issue, move it to the first `unstarted`
+ * state, and add the `needs-human` label when the team has one. The `kind` and
+ * `hitl` labels stay as they are.
+ */
+export const escalateWrites = (issueId: string, metadata: LinearMetadata): readonly LinearWrite[] => {
+  const labelId = needsHumanLabelId(metadata);
+  return [
+    ...releaseWrites(issueId, metadata),
+    ...(labelId === undefined
+      ? []
+      : [{ op: 'setLabels' as const, issueId, addedLabelIds: [labelId], removedLabelIds: [] }]),
+  ];
+};
+
 export const ticketToWrites = (ticket: Ticket, metadata: LinearMetadata): readonly LinearWrite[] => {
   const issueId = parseTicketId(ticket.id).native;
-  const escalate = ticket.status === 'ready-for-agent' && ticket.kind === 'task' && ticket.hitl === 'yes';
-
   if (ticket.status === 'done') {
     const stateId = firstStateId(metadata, 'completed');
     return stateId === undefined ? [] : [{ op: 'setState', issueId, stateId }];
@@ -155,6 +169,5 @@ export const ticketToWrites = (ticket: Ticket, metadata: LinearMetadata): readon
     return [];
   }
 
-  const writes = releaseWrites(issueId, metadata);
-  return escalate ? [...writes, ...escalateLabelWrites(issueId, metadata)] : writes;
+  return releaseWrites(issueId, metadata);
 };

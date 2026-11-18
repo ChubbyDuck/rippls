@@ -1,4 +1,4 @@
-import { Config, Effect, Layer, Option } from 'effect';
+import { Config, Console, Effect, Layer, Option } from 'effect';
 
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
@@ -12,7 +12,10 @@ import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import {
   claimWrites,
+  escalateWrites,
   issueToTicket,
+  NEEDS_HUMAN_LABEL,
+  needsHumanLabelId,
   type LinearWrite,
   releaseWrites,
   ticketToWrites,
@@ -154,13 +157,26 @@ export const TicketSourceLinearLive = Layer.effect(
       Effect.gen(function* () {
         const metadata = yield* api.metadata(teamId);
         const issueId = parseTicketId(ticket).native;
-        if (event === 'claimed') {
-          yield* ensureNotStarted(issueId);
-          yield* applyNeeded(issueId, claimWrites(issueId, metadata));
-          yield* confirmClaim(issueId, metadata);
-          return;
+        switch (event) {
+          case 'claimed':
+            yield* ensureNotStarted(issueId);
+            yield* applyNeeded(issueId, claimWrites(issueId, metadata));
+            yield* confirmClaim(issueId, metadata);
+            return;
+          case 'released':
+            yield* applyNeeded(issueId, releaseWrites(issueId, metadata));
+            return;
+          case 'escalated':
+            // The Ledger holds the escalation, so a team without the label only
+            // loses the sign of it on Linear.
+            if (needsHumanLabelId(metadata) === undefined) {
+              yield* Console.warn(
+                `The Linear team has no ${NEEDS_HUMAN_LABEL} label, so the escalation of ticket ${ticket} shows only in the Ledger`
+              );
+            }
+            yield* applyNeeded(issueId, escalateWrites(issueId, metadata));
+            return;
         }
-        yield* applyNeeded(issueId, releaseWrites(issueId, metadata));
       }).pipe(Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event })));
 
     const saveMany = (tickets: readonly Ticket[]): Effect.Effect<void, TicketNotSaved> =>

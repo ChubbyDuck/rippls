@@ -111,16 +111,6 @@ describe('Ticket', () => {
     expect(ticket.done().body).toBe('Do the work.');
   });
 
-  it('escalates a ticket to a human task', () => {
-    const ticket = Ticket.create({ ...validImplementation, body: 'Do the work.' });
-    const escalated = ticket.escalate();
-
-    expect(escalated.kind).toBe('task');
-    expect(escalated.hitl).toBe('yes');
-    expect(escalated.status).toBe('ready-for-agent');
-    expect(escalated.body).toBe('Do the work.');
-  });
-
   it('reports whether a ticket is blocked by a given id', () => {
     const ticket = Ticket.create({ ...validImplementation, status: 'blocked', blockedBy: [id(1), id(2)] });
 

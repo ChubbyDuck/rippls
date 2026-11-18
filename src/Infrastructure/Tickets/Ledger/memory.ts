@@ -1,6 +1,7 @@
 import { Effect, Layer } from 'effect';
 
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
+import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
@@ -9,13 +10,21 @@ import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { type ClaimHolder, isStaleFor } from './holder';
 
 /**
- * A Ledger held in memory. Every Engine given its layer shares one set of Claims,
- * so several Engines can run against one Ledger. The processes in `running` run
- * on the holder's host; the holder's own process is one of them.
+ * A Ledger held in memory. Every Engine given its layer shares one set of Claims
+ * and escalations, so several Engines can run against one Ledger. The processes
+ * in `running` run on the holder's host; the holder's own process is one of them.
  */
 export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memory' }) => {
   const claims = new Map<TicketId, Claim>();
   const running = new Set([holder.process]);
+  const escalated = new Map<TicketId, Escalation>();
+  const pick = <A>(records: ReadonlyMap<TicketId, A>, tickets: readonly TicketId[]): ReadonlyMap<TicketId, A> =>
+    new Map(
+      tickets.flatMap((ticket) => {
+        const record = records.get(ticket);
+        return record === undefined ? [] : [[ticket, record] as const];
+      })
+    );
   const layer = Layer.succeed(Ledger, {
     claim: (ticket, engine) =>
       Effect.suspend(() => {
@@ -55,16 +64,15 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
         }
         return released;
       }),
-    read: (tickets) =>
-      Effect.sync(
-        () =>
-          new Map(
-            tickets.flatMap((ticket) => {
-              const held = claims.get(ticket);
-              return held === undefined ? [] : [[ticket, held] as const];
-            })
-          )
-      ),
+    read: (tickets) => Effect.sync(() => pick(claims, tickets)),
+    escalate: (ticket, { reason, worktree }) =>
+      Effect.sync(() => {
+        const attempts = (escalated.get(ticket)?.attempts ?? 0) + 1;
+        const escalation = new Escalation({ ticket, reason, attempts, worktree });
+        escalated.set(ticket, escalation);
+        return escalation;
+      }),
+    escalations: (tickets) => Effect.sync(() => pick(escalated, tickets)),
   });
-  return { layer, claims, running };
+  return { layer, claims, running, escalated };
 };

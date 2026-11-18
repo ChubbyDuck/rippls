@@ -3,13 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 
-import { doneTicketIds, isDone, isEligible, isUnattended, isUnblocked, isUnclaimed } from './eligibility';
+import { doneTicketIds, isDone, isEligible, isEscalated, isUnattended, isUnblocked, isUnclaimed } from './eligibility';
 
 const id = (value: number) => formatTicketId('folder', String(value));
 const none: ReadonlySet<TicketId> = new Set();
-const nothing = { done: none, claimed: none };
-const doneWith = (...ids: TicketId[]) => ({ done: new Set(ids), claimed: none });
-const claimedOne = { done: none, claimed: new Set([id(1)]) };
+const nothing = { done: none, claimed: none, escalated: none };
+const doneWith = (...ids: TicketId[]) => ({ ...nothing, done: new Set(ids) });
+const claimedOne = { ...nothing, claimed: new Set([id(1)]) };
+const escalatedOne = { ...nothing, escalated: new Set([id(1)]) };
 
 const ticket = (fields: Record<string, unknown> = {}) =>
   Ticket.create({
@@ -104,6 +105,16 @@ describe('isUnattended', () => {
   });
 });
 
+describe('isEscalated', () => {
+  it('holds for a ticket that the Ledger records as escalated', () => {
+    expect(isEscalated(ticket(), new Set([id(1)]))).toBe(true);
+  });
+
+  it('fails for a ticket with no escalation', () => {
+    expect(isEscalated(ticket(), none)).toBe(false);
+  });
+});
+
 describe('isEligible', () => {
   it('holds for an Unblocked, Unclaimed, Unattended ticket', () => {
     expect(isEligible(ticket(), nothing)).toBe(true);
@@ -125,6 +136,7 @@ describe('isEligible', () => {
   it.each([
     ['blocked', blocked, nothing],
     ['claimed in the Ledger', ticket(), claimedOne],
+    ['escalated in the Ledger', ticket(), escalatedOne],
     ['attended', attended, nothing],
   ])('fails for a ticket that is %s', (_, candidate, facts) => {
     expect(isEligible(candidate, facts)).toBe(false);

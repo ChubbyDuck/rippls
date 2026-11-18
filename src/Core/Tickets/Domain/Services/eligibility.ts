@@ -18,20 +18,32 @@ export const isUnblocked = (ticket: Ticket, done: ReadonlySet<TicketId>): boolea
 /** A Ticket with no Claim in the Ledger other than a Stale Claim. */
 export const isUnclaimed = (ticket: Ticket, claimed: ReadonlySet<TicketId>): boolean => !claimed.has(ticket.id);
 
+/** A Ticket that the Ledger records as escalated to a human. */
+export const isEscalated = (ticket: Ticket, escalated: ReadonlySet<TicketId>): boolean => escalated.has(ticket.id);
+
 /** A Ticket whose HITL is no, allowing it to proceed without a human. */
 export const isUnattended = (ticket: Ticket): boolean => ticket.hitl === 'no';
 
-/** What the Engine knows of other tickets: which are done, and which hold a Claim in the Ledger that is not a Stale Claim. */
+/**
+ * What the Engine knows of other tickets: which are done, which hold a Claim in
+ * the Ledger that is not a Stale Claim, and which the Ledger records as escalated.
+ */
 export type EligibilityFacts = {
   readonly done: ReadonlySet<TicketId>;
   readonly claimed: ReadonlySet<TicketId>;
+  readonly escalated: ReadonlySet<TicketId>;
 };
 
 /**
  * The one eligibility rule of the Engine: an Unblocked, Unclaimed, Unattended
- * Ticket that is not done, which the Engine may take next. A Ticket Source
- * returns every ticket in scope, done ones included, and the Ledger holds the
- * Claims; this rule decides which of the tickets the Engine may take.
+ * Ticket that is not done or escalated, which the Engine may take next. A Ticket
+ * Source returns every ticket in scope, done ones included, and the Ledger holds
+ * the Claims and escalations; this rule decides which of the tickets the Engine
+ * may take.
  */
-export const isEligible = (ticket: Ticket, { done, claimed }: EligibilityFacts): boolean =>
-  !isDone(ticket) && isUnblocked(ticket, done) && isUnclaimed(ticket, claimed) && isUnattended(ticket);
+export const isEligible = (ticket: Ticket, { done, claimed, escalated }: EligibilityFacts): boolean =>
+  !isDone(ticket) &&
+  !isEscalated(ticket, escalated) &&
+  isUnblocked(ticket, done) &&
+  isUnclaimed(ticket, claimed) &&
+  isUnattended(ticket);

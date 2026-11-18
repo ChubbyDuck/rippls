@@ -1,4 +1,4 @@
-import { ConfigProvider, Effect, Layer } from 'effect';
+import { ConfigProvider, Console, Effect, Layer } from 'effect';
 import { expect, test } from 'vitest';
 
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
@@ -32,6 +32,7 @@ const metadata: LinearMetadata = {
     { id: 'label-hitl-yes', name: 'hitl:yes' },
     { id: 'label-hitl-no', name: 'hitl:no' },
     { id: 'label-priority', name: 'priority:high' },
+    { id: 'label-needs-human', name: 'needs-human' },
   ],
   projects: [{ id: 'proj-1', name: 'Chubby Engine', slugId: 'abc123' }],
 };
@@ -90,13 +91,18 @@ type Mutation =
   | { readonly op: 'createRelation'; readonly issueId: string; readonly relatedIssueId: string }
   | { readonly op: 'deleteRelation'; readonly relationId: string };
 
-const fakeLinear = (seed: readonly LinearIssue[], options: { readonly steal?: boolean } = {}) => {
+// A fake Linear API. `labels` replaces the labels of the team.
+const fakeLinear = (
+  seed: readonly LinearIssue[],
+  options: { readonly steal?: boolean; readonly labels?: readonly LinearLabel[] } = {}
+) => {
   const issues = new Map(seed.map((item) => [item.id, item]));
   const calls: Mutation[] = [];
-  const labelById = new Map(metadata.labels.map((label) => [label.id, label]));
+  const team = { ...metadata, labels: options.labels ?? metadata.labels };
+  const labelById = new Map(team.labels.map((label) => [label.id, label]));
 
   const layer = Layer.succeed(LinearApi, {
-    metadata: () => Effect.succeed(metadata),
+    metadata: () => Effect.succeed(team),
     issues: () => Effect.succeed([...issues.values()]),
     issue: (id) => {
       const found = issues.get(id);
@@ -254,7 +260,7 @@ test('save of a done ticket moves it to the completed state', async () => {
   expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
 });
 
-test('save of an escalated ticket unassigns, unstarts, and edits grouped labels without dropping human labels', async () => {
+test('report of escalated unassigns, moves to the first unstarted state, and adds needs-human, leaving the kind label', async () => {
   const api = fakeLinear([
     issue({
       stateType: 'started',
@@ -266,22 +272,55 @@ test('save of an escalated ticket unassigns, unstarts, and edits grouped labels 
     }),
   ]);
 
-  await Effect.runPromise(saveIn(api, readyTicket.escalate()));
+  await Effect.runPromise(reportIn(api, 'escalated'));
 
   expect(api.calls).toEqual([
     { op: 'setAssignee', issueId: uuid, assigneeId: null },
     { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
-    {
-      op: 'setLabels',
-      issueId: uuid,
-      addedLabelIds: ['label-task', 'label-hitl-yes'],
-      removedLabelIds: ['label-impl', 'label-hitl-no'],
-    },
+    { op: 'setLabels', issueId: uuid, addedLabelIds: ['label-needs-human'], removedLabelIds: [] },
   ]);
   expect(api.issues.get(uuid)?.labels.map((label) => label.name)).toEqual([
+    'kind:implementation',
     'priority:high',
-    'kind:task',
-    'hitl:yes',
+    'needs-human',
+  ]);
+});
+
+test('an Issue with the needs-human label is read as HITL yes, and keeps its kind', async () => {
+  const api = fakeLinear([
+    issue({
+      labels: [
+        { id: 'label-impl', name: 'kind:implementation' },
+        { id: 'label-needs-human', name: 'needs-human' },
+      ],
+    }),
+  ]);
+
+  const [read] = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+
+  expect(read?.kind).toBe('implementation');
+  expect(read?.hitl).toBe('yes');
+});
+
+test('report of escalated in a team without a needs-human label warns and succeeds', async () => {
+  const warnings: string[] = [];
+  const capturing: Console.Console = Object.assign(Object.create(console), {
+    warn: (...args: ReadonlyArray<unknown>) => {
+      warnings.push(args.map(String).join(' '));
+    },
+  });
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })], {
+    labels: metadata.labels.filter((label) => label.name !== 'needs-human'),
+  });
+
+  await Effect.runPromise(reportIn(api, 'escalated').pipe(Effect.provide(Layer.succeed(Console.Console, capturing))));
+
+  expect(api.calls).toEqual([
+    { op: 'setAssignee', issueId: uuid, assigneeId: null },
+    { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
+  ]);
+  expect(warnings).toEqual([
+    `The Linear team has no needs-human label, so the escalation of ticket ${toLinearId(uuid)} shows only in the Ledger`,
   ]);
 });
 

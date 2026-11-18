@@ -1,11 +1,12 @@
 import { Console, Effect, Result } from 'effect';
 
 import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
+import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
-import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
+import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
 import { completeTicket } from '../CompleteTicket/completeTicket';
 
@@ -13,12 +14,31 @@ import { harnessInWorktree } from './harnessInWorktree';
 import type { ProcessTicketCommand } from './command';
 import { prepareTicketWorktree } from './prepareTicketWorktree';
 
+// A failed ticket keeps its content. The Ledger records the escalation with the
+// retained Ticket Worktree, the Claim is released, and the Source hears escalated.
+// A report that fails is only logged, since the Ledger holds the escalation. The
+// Engine then halts.
+const escalate = (ticket: Ticket, worktree: Worktree, reason: string) =>
+  Effect.gen(function* () {
+    const ledger = yield* Ledger;
+    const source = yield* TicketSource;
+    yield* Console.error(`${ticket.label} failed and is raised to a human`);
+    const escalation = yield* ledger.escalate(ticket.id, { reason, worktree: worktree.path });
+    yield* Console.error(
+      `${ticket.label} is escalated after ${escalation.attempts} attempt(s), its worktree is retained at ${worktree.path}`
+    );
+    yield* ledger.release(ticket.id);
+    yield* source
+      .report(ticket.id, 'escalated')
+      .pipe(Effect.catch((error) => Console.error(`Failed to report the escalation of ticket ${ticket.id}`, error)));
+    return yield* new EngineHalted({ ticketId: ticket.id, reason });
+  });
+
 export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
   Effect.gen(function* () {
     const harnessSelector = yield* HarnessSelector;
     const harness = yield* harnessSelector.select;
     yield* Effect.annotateCurrentSpan('harness', harness.name);
-    const source = yield* TicketSource;
     const ledger = yield* Ledger;
     const strategies = yield* StrategySelector;
     const worktrees = yield* WorktreeManager;
@@ -58,11 +78,7 @@ export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
           Effect.andThen(completeTicket({ ticketId: ticket.id })),
           Effect.andThen(ledger.release(ticket.id))
         ),
-      onFailure: () =>
-        Console.error(`${ticket.label} failed and is raised to a human`).pipe(
-          Effect.andThen(source.save(ticket.escalate())),
-          Effect.andThen(Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'strategy failure' })))
-        ),
+      onFailure: () => escalate(ticket, worktree, 'strategy failure'),
     });
   }).pipe(
     Effect.withSpan('runner.run', {

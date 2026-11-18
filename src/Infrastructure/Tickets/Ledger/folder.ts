@@ -5,6 +5,7 @@ import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import type { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
+import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
@@ -17,7 +18,9 @@ const RECORD_SUFFIX = '.json';
 const ClaimJson = Schema.fromJsonString(Claim);
 const encodeClaim = Schema.encodeSync(ClaimJson);
 const decodeClaim = Schema.decodeUnknownOption(ClaimJson);
-
+const EscalationJson = Schema.fromJsonString(Escalation);
+const encodeEscalation = Schema.encodeSync(EscalationJson);
+const decodeEscalation = Schema.decodeUnknownOption(EscalationJson);
 const isReason = (tag: PlatformError.SystemErrorTag) => (error: PlatformError.PlatformError) =>
   error.reason._tag === tag;
 
@@ -37,7 +40,9 @@ const processRuns = (pid: number): Effect.Effect<boolean> =>
 /**
  * The Ledger as one record per ticket in a folder for Rippls inside the Git common
  * directory. Every worktree of the repository shares that directory, it never
- * appears in a merge, and it needs no ignore rule.
+ * appears in a merge, and it needs no ignore rule. A Claim is the record in the
+ * folder itself; an escalation is a record in its `escalations` folder, so it
+ * outlives the Claim that is released when the ticket is escalated.
  */
 export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
   Layer.effect(
@@ -46,24 +51,31 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const dir = path.join(gitCommonDir, 'rippls', 'ledger');
-      const recordOf = (ticket: TicketId) => path.join(dir, `${encodeURIComponent(ticket)}${RECORD_SUFFIX}`);
+      const escalationsDir = path.join(dir, 'escalations');
+      const fileName = (ticket: TicketId) => `${encodeURIComponent(ticket)}${RECORD_SUFFIX}`;
+      const recordOf = (ticket: TicketId) => path.join(dir, fileName(ticket));
+      const escalationOf = (ticket: TicketId) => path.join(escalationsDir, fileName(ticket));
 
       // A record is written whole in a scratch folder next to the records, so a
       // reader never sees a partial record.
-      const writeScratch = (claim: Claim) =>
+      const writeScratch = (content: string) =>
         fs.makeDirectory(dir, { recursive: true }).pipe(
           Effect.andThen(fs.makeTempDirectoryScoped({ directory: dir, prefix: '.scratch-' })),
           Effect.map((scratch) => path.join(scratch, 'record.json')),
-          Effect.tap((file) => fs.writeFileString(file, encodeClaim(claim))),
+          Effect.tap((file) => fs.writeFileString(file, content)),
           Effect.mapError(toLedgerError)
         );
 
-      const readRecord = (file: string): Effect.Effect<Option.Option<Claim>, LedgerError> =>
-        fs.readFileString(file).pipe(
-          Effect.map(decodeClaim),
-          Effect.catchIf(isNotFound, () => Effect.succeedNone),
-          Effect.mapError(toLedgerError)
-        );
+      const readWith =
+        <A>(decode: (text: string) => Option.Option<A>) =>
+        (file: string): Effect.Effect<Option.Option<A>, LedgerError> =>
+          fs.readFileString(file).pipe(
+            Effect.map(decode),
+            Effect.catchIf(isNotFound, () => Effect.succeedNone),
+            Effect.mapError(toLedgerError)
+          );
+      const readRecord = readWith(decodeClaim);
+      const readEscalation = readWith(decodeEscalation);
 
       const removeRecord = (file: string) =>
         fs.remove(file).pipe(Effect.catchIf(isNotFound, () => Effect.void), Effect.mapError(toLedgerError));
@@ -79,7 +91,7 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
                 isAlreadyExists(error) ? new TicketAlreadyClaimed({ ticketId: ticket }) : toLedgerError(error)
               )
             );
-        return writeScratch(made).pipe(Effect.flatMap(link), Effect.scoped, Effect.as(made));
+        return writeScratch(encodeClaim(made)).pipe(Effect.flatMap(link), Effect.scoped, Effect.as(made));
       };
 
       const assignRunner = (ticket: TicketId, runner: RunnerId) =>
@@ -88,7 +100,7 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
           if (Option.isNone(held)) {
             return yield* toLedgerError(`The Ledger holds no Claim on ${ticket}`);
           }
-          const scratch = yield* writeScratch(held.value.withRunner(runner));
+          const scratch = yield* writeScratch(encodeClaim(held.value.withRunner(runner)));
           yield* fs.rename(scratch, recordOf(ticket)).pipe(Effect.mapError(toLedgerError));
         }).pipe(Effect.scoped);
 
@@ -146,7 +158,27 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
           )
         );
 
-      return { claim, assignRunner, release, isStale, releaseStale, releaseAllOf, read };
+      // Only the Engine that holds the Claim escalates a ticket, so the attempt
+      // count is read and raised without a race.
+      const escalate = (ticket: TicketId, { reason, worktree }: { readonly reason: string; readonly worktree: string }) =>
+        Effect.gen(function* () {
+          const previous = yield* readEscalation(escalationOf(ticket));
+          const attempts = Option.match(previous, { onNone: () => 0, onSome: (held) => held.attempts }) + 1;
+          const escalation = new Escalation({ ticket, reason, attempts, worktree });
+          const scratch = yield* writeScratch(encodeEscalation(escalation));
+          yield* fs.makeDirectory(escalationsDir, { recursive: true }).pipe(
+            Effect.andThen(fs.rename(scratch, escalationOf(ticket))),
+            Effect.mapError(toLedgerError)
+          );
+          return escalation;
+        }).pipe(Effect.scoped);
+
+      const escalations = (tickets: readonly TicketId[]) =>
+        Effect.forEach(tickets, (ticket) => readEscalation(escalationOf(ticket))).pipe(
+          Effect.map((found) => new Map(found.flatMap(Option.toArray).map((held) => [held.ticket, held] as const)))
+        );
+
+      return { claim, assignRunner, release, isStale, releaseStale, releaseAllOf, read, escalate, escalations };
     })
   );
 
