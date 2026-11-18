@@ -16,52 +16,52 @@ import type { GenerateOptions } from './plan';
 const defaults: GenerateOptions = { count: 36, kinds: [], statuses: [], hitls: [], projects: [], chain: false };
 
 const runGenerate = (options: Partial<GenerateOptions>) => {
-  const saved: Ticket[] = [];
+  const written: Ticket[] = [];
   const writer = Layer.succeed(FixtureWriter, {
     write: (tickets) =>
       Effect.sync(() => {
-        saved.push(...tickets);
+        written.push(...tickets);
       }),
   });
   return Effect.runPromise(
     generateTickets({ ...defaults, ...options }).pipe(
-      Effect.map((created) => ({ created, saved })),
+      Effect.map((created) => ({ created, written })),
       Effect.provide(writer)
     )
   );
 };
 
-test('generateTickets saves the requested amount with sequential ids', async () => {
-  const { created, saved } = await runGenerate({ count: 20 });
+test('generateTickets writes the requested amount with sequential ids', async () => {
+  const { created, written } = await runGenerate({ count: 20 });
 
   expect(created).toBe(20);
-  expect(saved.length).toBe(20);
-  expect(saved.map((ticket) => ticket.id)).toEqual(
+  expect(written.length).toBe(20);
+  expect(written.map((ticket) => ticket.id)).toEqual(
     Array.from({ length: 20 }, (_unused, index) => `folder:${index + 1}`)
   );
-  expect(saved[0]?.body).toBe('Reply with hello.');
-  for (const ticket of saved) {
+  expect(written[0]?.body).toBe('Reply with hello.');
+  for (const ticket of written) {
     expect(ticket.body.length).toBeGreaterThan(0);
   }
 });
 
 test('generateTickets spreads every kind, hitl and status by default', async () => {
-  const { saved } = await runGenerate({ count: 36 });
+  const { written } = await runGenerate({ count: 36 });
 
-  expect(new Set(saved.map((ticket) => ticket.kind))).toEqual(new Set(TicketKind.literals));
-  expect(new Set(saved.map((ticket) => ticket.hitl))).toEqual(new Set(Hitl.literals));
-  expect(new Set(saved.map((ticket) => ticket.status))).toEqual(new Set(TicketStatus.literals));
+  expect(new Set(written.map((ticket) => ticket.kind))).toEqual(new Set(TicketKind.literals));
+  expect(new Set(written.map((ticket) => ticket.hitl))).toEqual(new Set(Hitl.literals));
+  expect(new Set(written.map((ticket) => ticket.status))).toEqual(new Set(TicketStatus.literals));
 });
 
 test('generateTickets honors the app rules when it derives hitl from kind', async () => {
-  const { saved } = await runGenerate({ count: 12, kinds: ['prototype'] });
+  const { written } = await runGenerate({ count: 12, kinds: ['prototype'] });
 
-  expect(new Set(saved.map((ticket) => ticket.kind))).toEqual(new Set(['prototype']));
-  expect(new Set(saved.map((ticket) => ticket.hitl))).toEqual(new Set(['yes']));
+  expect(new Set(written.map((ticket) => ticket.kind))).toEqual(new Set(['prototype']));
+  expect(new Set(written.map((ticket) => ticket.hitl))).toEqual(new Set(['yes']));
 });
 
 test('generateTickets limits attributes to the given subsets', async () => {
-  const { saved } = await runGenerate({
+  const { written } = await runGenerate({
     count: 10,
     kinds: ['task'],
     statuses: ['open'],
@@ -69,7 +69,7 @@ test('generateTickets limits attributes to the given subsets', async () => {
     projects: ['alpha'],
   });
 
-  for (const ticket of saved) {
+  for (const ticket of written) {
     expect(ticket.kind).toBe('task');
     expect(ticket.status).toBe('open');
     expect(ticket.hitl).toBe('no');
@@ -78,19 +78,19 @@ test('generateTickets limits attributes to the given subsets', async () => {
 });
 
 test('generateTickets leaves tickets unlinked by default', async () => {
-  const { saved } = await runGenerate({ count: 3 });
+  const { written } = await runGenerate({ count: 3 });
 
-  for (const ticket of saved) {
+  for (const ticket of written) {
     expect(ticket.blockedBy).toEqual([]);
     expect(ticket.blocks).toEqual([]);
   }
 });
 
 test('generateTickets chains each ticket to the next when chain is true', async () => {
-  const { saved } = await runGenerate({ count: 4, chain: true });
+  const { written } = await runGenerate({ count: 4, chain: true });
 
   expect(
-    saved.map((ticket) => ({
+    written.map((ticket) => ({
       id: ticket.id,
       blockedBy: [...ticket.blockedBy],
       blocks: [...ticket.blocks],

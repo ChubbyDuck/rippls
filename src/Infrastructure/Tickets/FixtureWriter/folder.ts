@@ -23,8 +23,8 @@ const toFileContent = (ticket: Ticket): string => `---\n${stringify(toFrontMatte
 
 /**
  * Writes each fixture ticket to `<id>.md` in the tickets folder, or in its `done/`
- * subfolder when the ticket is done. A done ticket replaces a file of the same name
- * in the tickets folder, so the folder holds one fixture file per number.
+ * subfolder when the ticket is done. A done ticket removes `<id>.md` from the tickets
+ * folder. Other files of the same number, such as `<id>-slug.md`, stay untouched.
  */
 export const fixtureWriterFolderLive = (ticketsDir: string) =>
   Layer.effect(
