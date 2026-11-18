@@ -6,7 +6,7 @@ import type { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import type { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
-import { type DerivedTicketStatus, deriveTicketStatus } from '~/Core/Tickets/Domain/Services/ticketStatus';
+import { type TicketStatus, deriveTicketStatus } from '~/Core/Tickets/Domain/Services/ticketStatus';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import type { ShowStatusCommand } from './command';
@@ -18,7 +18,7 @@ import type { ShowStatusCommand } from './command';
  */
 export type TicketStatusLine = {
   readonly ticket: Ticket;
-  readonly status: Exclude<DerivedTicketStatus, 'unreadable'>;
+  readonly status: Exclude<TicketStatus, 'unreadable'>;
   readonly claim?: Claim;
   readonly escalation?: Escalation;
   readonly blockers?: OutstandingBlockers;

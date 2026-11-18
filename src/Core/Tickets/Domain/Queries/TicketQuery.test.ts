@@ -2,16 +2,18 @@ import { Schema } from 'effect';
 import { describe, expect, it } from 'vitest';
 
 import { Project } from '../Entities/Ticket/properties/Project';
+import { TicketId } from '../Entities/Ticket/properties/TicketId';
 
 import { TicketQuery } from './TicketQuery';
 
 const project = Schema.decodeSync(Project)('0003-sandboxed-local-ticket-loop.md');
+const id = Schema.decodeSync(TicketId)('folder:1');
 
 describe('TicketQuery', () => {
   it('builds a frozen object from the chosen chain', () => {
-    const query = TicketQuery.byProject(project).sort('ASC').limit(1).build();
+    const query = TicketQuery.byProject(project).byId(id).build();
 
-    expect(query).toEqual({ project, sort: 'ASC', limit: 1 });
+    expect(query).toEqual({ project, id });
     expect(Object.isFrozen(query)).toBe(true);
   });
 
@@ -24,11 +26,7 @@ describe('TicketQuery', () => {
     const inProject = TicketQuery.byProject(project);
 
     expect(inProject.build()).toEqual({ project });
-    expect(inProject.sort('DESC').build()).toEqual({ project, sort: 'DESC' });
+    expect(inProject.byId(id).build()).toEqual({ project, id });
     expect(inProject.build()).toEqual({ project });
-  });
-
-  it('rejects a non-positive limit', () => {
-    expect(() => TicketQuery.limit(0).build()).toThrow(Schema.SchemaError);
   });
 });

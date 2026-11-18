@@ -7,7 +7,7 @@ import { type EligibilityFacts, isDone, isEscalated, isUnattended, isUnblocked, 
  * to one ticket, the first one is its Ticket Status. Unreadable is the Ticket
  * Status of a ticket its Source cannot read; no other value applies to it.
  */
-export const derivedTicketStatuses = [
+export const ticketStatuses = [
   'unreadable',
   'done',
   'escalated',
@@ -19,9 +19,9 @@ export const derivedTicketStatuses = [
 
 /**
  * A Ticket's Ticket Status: its position in its lifecycle, derived from the
- * ticket, the Ledger, and done. It is not the `status` that a Ticket stores.
+ * ticket, the Ledger, and done.
  */
-export type DerivedTicketStatus = (typeof derivedTicketStatuses)[number];
+export type TicketStatus = (typeof ticketStatuses)[number];
 
 /**
  * The Ticket Status of a ticket its Source read, so never unreadable. When several
@@ -32,7 +32,7 @@ export type DerivedTicketStatus = (typeof derivedTicketStatuses)[number];
 export const deriveTicketStatus = (
   ticket: Ticket,
   facts: EligibilityFacts
-): Exclude<DerivedTicketStatus, 'unreadable'> => {
+): Exclude<TicketStatus, 'unreadable'> => {
   if (isDone(ticket, facts.done)) {
     return 'done';
   }

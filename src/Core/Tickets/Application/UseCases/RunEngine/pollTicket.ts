@@ -83,25 +83,3 @@ export const pollTicket = (engine: EngineId, project?: Project) =>
   claimNextEligibleTicket(engine, project).pipe(
     Effect.tap((found) => (Option.isNone(found) ? Console.log('No tickets are found, continuing') : Effect.void))
   );
-
-const _pollTicketTraced = (engine: EngineId, project?: Project) =>
-  Effect.gen(function* () {
-    const ticket = yield* claimNextEligibleTicket(engine, project).pipe(
-      Effect.tap(
-        Option.match({
-          onNone: () => Effect.annotateCurrentSpan('ticket.read.outcome', 'empty'),
-          onSome: (found) => Effect.annotateCurrentSpan({ 'ticket.read.outcome': 'ticket', 'ticket.id': found.id }),
-        })
-      ),
-      Effect.withSpan('ticket.read')
-    );
-
-    if (Option.isNone(ticket)) {
-      yield* Console.log('No tickets are found, continuing');
-      yield* Effect.sleep('1 second').pipe(
-        Effect.withSpan('ticket.retry.wait', { attributes: { 'ticket.retry.reason': 'empty' } })
-      );
-    }
-
-    return ticket;
-  });

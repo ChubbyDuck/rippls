@@ -296,19 +296,19 @@ test('getManyBy narrows the done tickets by Project too', async () => {
   expect(tickets.map((ticket) => ticket.id)).toEqual(['folder:1']);
 });
 
-test('getOneBy follows the id sort', async () => {
+test('getOneBy returns the ticket with the lowest number', async () => {
   const common = { project: 'demo', kind: 'implementation', status: 'ready-for-agent', blockedBy: [], blocks: [] };
-  const build = (query: TicketQuery) =>
+  const ticket = await Effect.runPromise(
     Effect.gen(function* () {
       const dir = yield* setup([
-        ['3.md', frontMatter({ id: 3, title: 'low', ...common })],
         ['4.md', frontMatter({ id: 4, title: 'high', ...common })],
+        ['3.md', frontMatter({ id: 3, title: 'low', ...common })],
       ]);
-      return yield* getOneIn(dir, query);
-    }).pipe(Effect.provide(NodeFs));
+      return yield* getOneIn(dir, TicketQuery.build());
+    }).pipe(Effect.provide(NodeFs))
+  );
 
-  expect(Option.getOrThrow(await Effect.runPromise(build(TicketQuery.sort('ASC').build()))).id).toBe('folder:3');
-  expect(Option.getOrThrow(await Effect.runPromise(build(TicketQuery.sort('DESC').build()))).id).toBe('folder:4');
+  expect(Option.getOrThrow(ticket).id).toBe('folder:3');
 });
 
 test('getOneBy filters by project', async () => {

@@ -1,5 +1,10 @@
-import { Data } from 'effect';
+import { Data, Duration } from 'effect';
 
-export class EngineIdleTimeout extends Data.TaggedError('EngineIdleTimeout') {
-  override readonly message = 'The Engine was Idle for five minutes. Engine is shutting down.';
+// The Engine stayed Idle for the idle timeout it ran with.
+export class EngineIdleTimeout extends Data.TaggedError('EngineIdleTimeout')<{
+  readonly idleTimeout: Duration.Duration;
+}> {
+  override get message() {
+    return `The Engine was Idle for ${Duration.format(this.idleTimeout)}. Engine is shutting down.`;
+  }
 }

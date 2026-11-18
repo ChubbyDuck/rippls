@@ -103,10 +103,9 @@ const fakeSource = (
     Array.from(store.values()).filter(
       (ticket) =>
         (query.id === undefined || ticket.id === query.id) &&
-        (query.blockedBy === undefined || ticket.isBlockedBy(query.blockedBy)) &&
         (query.project === undefined || ticket.project === query.project)
     );
-  const isScopeRead = (query: TicketQuery) => query.id === undefined && query.blockedBy === undefined;
+  const isScopeRead = (query: TicketQuery) => query.id === undefined;
   const layer = Layer.succeed(TicketSource, {
     getOneBy: (query) =>
       Effect.suspend(() => {
@@ -311,7 +310,7 @@ test('runEngine claims each ticket and reports the Claim before a Runner takes i
     'Ticket folder:1 -- implementation is claimed',
     `Ticket folder:1 -- implementation is taken into the runner ${claiming}`,
     "Ticket folder:1 -- implementation is processed by 'implementation' strategy and 'default' harness using 'default-model'",
-    'Ticket folder:1 -- implementation is preparing worktree ticket-folder:1 from 0003-sandboxed-local-ticket-loop.md',
+    'Ticket folder:1 -- implementation prepared worktree ticket-folder:1 from 0003-sandboxed-local-ticket-loop.md',
     'Ticket folder:1 -- implementation is opening worktree ticket-folder:1 at /repo/.sandcastle/worktrees/ticket-folder:1',
     '',
     'Ticket folder:1 -- implementation has no check command configured, so the check is skipped',
@@ -321,7 +320,7 @@ test('runEngine claims each ticket and reports the Claim before a Runner takes i
     'Ticket folder:2 -- implementation is claimed',
     `Ticket folder:2 -- implementation is taken into the runner ${claiming}`,
     "Ticket folder:2 -- implementation is processed by 'implementation' strategy and 'default' harness using 'default-model'",
-    'Ticket folder:2 -- implementation is preparing worktree ticket-folder:2 from 0003-sandboxed-local-ticket-loop.md',
+    'Ticket folder:2 -- implementation prepared worktree ticket-folder:2 from 0003-sandboxed-local-ticket-loop.md',
     'Ticket folder:2 -- implementation is opening worktree ticket-folder:2 at /repo/.sandcastle/worktrees/ticket-folder:2',
     '',
     'Ticket folder:2 -- implementation has no check command configured, so the check is skipped',
@@ -452,7 +451,7 @@ test('runEngine takes the chosen ticket as the Source reads it by identity', asy
   const headOnly = Layer.succeed(TicketSource, {
     ...Effect.runSync(TicketSource.pipe(Effect.provide(source.layer))),
     getManyBy: (query) =>
-      query.id === undefined && query.blockedBy === undefined
+      query.id === undefined
         ? Effect.succeed([head])
         : Effect.succeed([]),
   });
@@ -470,7 +469,7 @@ test('runEngine takes the next Eligible ticket when the chosen one is no longer 
   const staleList = Layer.succeed(TicketSource, {
     ...Effect.runSync(TicketSource.pipe(Effect.provide(source.layer))),
     getManyBy: (query) =>
-      query.id === undefined && query.blockedBy === undefined
+      query.id === undefined
         ? Effect.succeed([sampleTicket(1), sampleTicket(2)])
         : Effect.succeed([]),
   });
@@ -1342,7 +1341,7 @@ test('the exit of one Engine leaves the Claim of another Engine on the same Ledg
   );
 });
 
-test('runEngine stops the run when Idle for five minutes', async () => {
+test('runEngine stops the run when Idle for the default five minutes', async () => {
   const source = fakeSource();
   let stopped = false;
   const messages: string[] = [];
@@ -1369,18 +1368,21 @@ test('runEngine stops the run when Idle for five minutes', async () => {
       yield* Fiber.join(fiber);
       expect(stopped).toBe(true);
       expect(source.scopeReads.length).toBeGreaterThan(0);
-      expect(messages).toContain('The Engine was Idle for five minutes. Engine is shutting down.');
+      expect(messages).toContain('The Engine was Idle for 5m. Engine is shutting down.');
     }).pipe(Effect.provide(TestClock.layer()))
   );
 });
 
-test('runEngine stops the run when Idle for the given idleTimeout', async () => {
+test('runEngine stops the run when Idle for the given idleTimeout, and names that timeout', async () => {
+  const messages: string[] = [];
+
   await Effect.runPromise(
     Effect.gen(function* () {
       const layer = Layer.mergeAll(
         fakeSource().layer,
         HarnessSelectorNoop,
-        StrategySelectorNoop
+        StrategySelectorNoop,
+        Layer.succeed(Console.Console, capturingConsole(messages))
       );
       const fiber = yield* runEngine({ project, idleTimeout: '30 seconds' }).pipe(
         Effect.provide(layer),
@@ -1391,6 +1393,7 @@ test('runEngine stops the run when Idle for the given idleTimeout', async () => 
       expect(fiber.pollUnsafe()).toBeUndefined();
       yield* TestClock.adjust('1 second');
       yield* Fiber.join(fiber);
+      expect(messages).toContain('The Engine was Idle for 30s. Engine is shutting down.');
     }).pipe(Effect.provide(TestClock.layer()))
   );
 });

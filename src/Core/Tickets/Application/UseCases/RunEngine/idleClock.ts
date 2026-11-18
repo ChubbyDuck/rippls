@@ -1,4 +1,4 @@
-import { Deferred, type Duration, Effect, Fiber, Ref } from 'effect';
+import { Deferred, Duration, Effect, Fiber, Ref } from 'effect';
 
 import { defaultIdleTimeout } from '~/Core/Shared/Domain/EngineConfig';
 import { EngineIdleTimeout } from '~/Core/Tickets/Domain/Exceptions/EngineIdleTimeout';
@@ -27,7 +27,7 @@ export const makeIdleClock = (idleTimeout: Duration.Input = defaultIdleTimeout):
         return;
       }
       const fiber = yield* Effect.sleep(idleTimeout).pipe(
-        Effect.andThen(Deferred.fail(halted, new EngineIdleTimeout())),
+        Effect.andThen(Deferred.fail(halted, new EngineIdleTimeout({ idleTimeout: Duration.fromInputUnsafe(idleTimeout) }))),
         Effect.forkChild
       );
       yield* Ref.set(timeout, fiber);

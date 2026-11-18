@@ -42,7 +42,6 @@ const fakeSource = (tickets: readonly Ticket[], unreadable: readonly UnreadableT
     tickets.filter(
       (candidate) =>
         (query.id === undefined || candidate.id === query.id) &&
-        (query.blockedBy === undefined || candidate.isBlockedBy(query.blockedBy)) &&
         (query.project === undefined || candidate.project === query.project)
     );
   return Layer.succeed(TicketSource, {

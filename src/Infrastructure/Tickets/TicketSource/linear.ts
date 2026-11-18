@@ -54,9 +54,6 @@ const matchesQuery =
     if (query.id !== undefined && ticket.id !== query.id) {
       return false;
     }
-    if (query.blockedBy !== undefined && !ticket.isBlockedBy(query.blockedBy)) {
-      return false;
-    }
     if (query.project !== undefined && ticket.project !== query.project) {
       return false;
     }
@@ -78,13 +75,9 @@ const toTickets = (
       onSome: (ticket) => (matchesQuery(query)(ticket) ? [{ ticket, createdAt: issue.createdAt }] : []),
     });
   });
-  const descending = query.sort === 'DESC';
-  const ordered = ranked.toSorted((left, right) => {
-    const cmp = left.createdAt.localeCompare(right.createdAt);
-    return descending ? -cmp : cmp;
-  });
-  const tickets = ordered.map((entry) => entry.ticket);
-  return query.limit === undefined ? tickets : tickets.slice(0, query.limit);
+  return ranked
+    .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+    .map((entry) => entry.ticket);
 };
 
 export const TicketSourceLinearLive = Layer.effect(

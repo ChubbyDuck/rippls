@@ -170,6 +170,56 @@ test('processTicket runs a ticket that omits project', () => {
   expect(doneReported).toEqual([withoutProject.id]);
 });
 
+// The Worktree Manager names the branch of a Ticket Worktree, and it is not the
+// ticket identity: the identity of a ticket in a feature folder holds `:` and `/`.
+test('processTicket logs the preparation of a Ticket Worktree with the branch the Worktree Manager returns', () => {
+  const inFeatureFolder = Ticket.create({ ...ticketFields, id: formatTicketId('folder', 'auth/1'), project: 'auth' });
+  const prepared = { path: '/repo/.sandcastle/worktrees/ticket-folder-auth-1', branch: 'ticket-folder-auth-1' };
+  const logged: string[] = [];
+  const capturing: Console.Console = Object.assign(Object.create(console), {
+    log: (...args: ReadonlyArray<unknown>) => {
+      logged.push(args.map(String).join(' '));
+    },
+  });
+  const services = Layer.mergeAll(
+    Layer.succeed(HarnessSelector, {
+      select: Effect.succeed({
+        name: 'test-harness',
+        model: 'test-model',
+        run: () => Effect.succeed({ completionSignal: undefined }),
+      }),
+    }),
+    Layer.succeed(TicketSource, {
+      getOneBy: () => Effect.succeed(inFeatureFolder),
+      getUnreadable: Effect.succeed([]),
+      getManyBy: () => Effect.succeed([]),
+      reportDone: () => Effect.succeed(Effect.void),
+      report: () => Effect.void,
+    }),
+    Layer.succeed(StrategySelector, {
+      select: () =>
+        Effect.succeed({
+          name: 'implementation',
+          run: () => Effect.succeed(Result.succeed(undefined)),
+        }),
+    }),
+    Layer.succeed(WorktreeManager, {
+      prepareProject: (project) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${project}`, branch: project }),
+      prepareTicket: () => Effect.succeed(prepared),
+      runCommand: () => Effect.die('runCommand should not be called'),
+      isClean: () => Effect.succeed(true),
+      mergeAndClose: () => Effect.void,
+    }),
+    ledgerClaiming(inFeatureFolder).layer,
+    Layer.succeed(Console.Console, capturing)
+  );
+
+  Effect.runSync(processTicket({ ticket: inFeatureFolder, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
+
+  expect(logged).toContain('Ticket folder:auth/1 -- implementation prepared worktree ticket-folder-auth-1 from auth');
+  expect(logged.filter((line) => line.includes('ticket-folder:auth/1'))).toEqual([]);
+});
+
 const failingServices = (
   doneReported: TicketId[],
   report: (ticket: TicketId, event: ReportedEvent) => Effect.Effect<void, TicketEventNotReported> = () => Effect.void

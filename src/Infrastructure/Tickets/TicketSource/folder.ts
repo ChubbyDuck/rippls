@@ -17,7 +17,7 @@ import { detailOf, UnreadableTicket } from '~/Core/Tickets/Domain/Entities/Unrea
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import type { Worktree } from '~/Core/Tickets/Ports/WorktreeManager';
 
@@ -310,9 +310,6 @@ const matchesQuery =
     if (query.id !== undefined && ticket.id !== query.id) {
       return false;
     }
-    if (query.blockedBy !== undefined && !ticket.isBlockedBy(query.blockedBy)) {
-      return false;
-    }
     if (query.project !== undefined && ticket.project !== query.project) {
       return false;
     }
@@ -320,18 +317,14 @@ const matchesQuery =
   };
 
 // The processing order: the tickets that are not done, then those in a `done/`,
-// each by folder, then by number, lowest first. A descending sort reverses the
-// order within each.
-const sortByFolderAndNumber =
-  (query: TicketQuery) =>
-  (files: readonly TicketFile[]): TicketFile[] => {
-    const direction = query.sort === 'DESC' ? -1 : 1;
-    return [...files].sort(
-      (left, right) =>
-        Number(left.inDone) - Number(right.inDone) ||
-        direction * (compareFolders(left.folder, right.folder) || left.number - right.number)
-    );
-  };
+// each by folder, then by number, lowest first.
+const sortByFolderAndNumber = (files: readonly TicketFile[]): TicketFile[] =>
+  [...files].sort(
+    (left, right) =>
+      Number(left.inDone) - Number(right.inDone) ||
+      compareFolders(left.folder, right.folder) ||
+      left.number - right.number
+  );
 
 // A ticket file named by its folder path below the tickets folder.
 type FileInFolder = { readonly folder: string; readonly name: string };
@@ -370,7 +363,7 @@ export const TicketSourceFolderLive = Layer.effect(
       const readTickets = (query: TicketQuery, withDone: boolean): Stream.Stream<Ticket> =>
         Stream.fromEffect(
           ticketFiles.pipe(
-            Effect.map((files) => sortByFolderAndNumber(query)(files.filter((file) => withDone || !file.inDone)))
+            Effect.map((files) => sortByFolderAndNumber(files.filter((file) => withDone || !file.inDone)))
           )
         ).pipe(
           Stream.flatMap(Stream.fromIterable),
@@ -404,7 +397,7 @@ export const TicketSourceFolderLive = Layer.effect(
       const getUnreadable: Effect.Effect<readonly UnreadableTicket[]> = Effect.gen(function* () {
         const found = yield* entries;
         const withoutNumbers = found.flatMap((entry) => withoutNumber(entry) ?? []);
-        const files = sortByFolderAndNumber(TicketQuery.build())(found.flatMap((entry) => ticketFileOf(entry) ?? []));
+        const files = sortByFolderAndNumber(found.flatMap((entry) => ticketFileOf(entry) ?? []));
         const reads = yield* Effect.forEach(files, readTicket);
         const unreadable = reads.flatMap((read) =>
           Option.isSome(read) && Result.isFailure(read.value) ? [read.value.failure] : []

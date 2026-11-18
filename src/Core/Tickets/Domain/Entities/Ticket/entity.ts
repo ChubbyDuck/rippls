@@ -26,10 +26,6 @@ export class Ticket extends Schema.Class<Ticket>('Ticket')({
   get label(): string {
     return `Ticket ${this.id} -- ${this.kind}`;
   }
-
-  isBlockedBy(id: TicketId): boolean {
-    return this.blockedBy.includes(id);
-  }
 }
 
 /**

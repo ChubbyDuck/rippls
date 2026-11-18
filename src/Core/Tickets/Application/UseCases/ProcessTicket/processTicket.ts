@@ -99,11 +99,6 @@ export const processTicket = ({
     yield* Console.log(
       `${ticket.label} is processed by '${strategy.name}' strategy and '${harness.name}' harness using '${harness.model}'`
     );
-    yield* Console.log(
-      ticket.project === undefined
-        ? `${ticket.label} is preparing worktree ticket-${ticket.id} from HEAD`
-        : `${ticket.label} is preparing worktree ticket-${ticket.id} from ${ticket.project}`
-    );
     // A directory that is not the expected worktree stays so: it gets no second
     // try, no Agent runs in it, and the halt names what was found.
     const worktree = yield* prepareTicketWorktree({ ticket }).pipe(
@@ -114,6 +109,8 @@ export const processTicket = ({
         WorktreeNotExpected: (error) => Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: error.message })),
       })
     );
+    // Only the Worktree Manager knows the branch, so the preparation is logged once it returns.
+    yield* Console.log(`${ticket.label} prepared worktree ${worktree.branch} from ${ticket.project ?? 'HEAD'}`);
     yield* Console.log(`${ticket.label} is opening worktree ${worktree.branch} at ${worktree.path}`);
     const worktreeHarness = harnessInWorktree(harness, worktree.path);
     const outcome = yield* strategy

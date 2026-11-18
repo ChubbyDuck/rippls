@@ -81,13 +81,6 @@ describe('Ticket', () => {
     const { body: _body, ...withoutBody } = validImplementation;
     expect(() => Ticket.create(withoutBody)).toThrow(Schema.SchemaError);
   });
-
-  it('reports whether a ticket is blocked by a given id', () => {
-    const ticket = Ticket.create({ ...validImplementation, blockedBy: [id(1), id(2)] });
-
-    expect(ticket.isBlockedBy(id(1))).toBe(true);
-    expect(ticket.isBlockedBy(id(3))).toBe(false);
-  });
 });
 
 describe('the HITL of a Ticket', () => {
