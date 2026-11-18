@@ -296,14 +296,16 @@ attempt count.
 ### Retry an escalated ticket
 
 ```text
-rippls retry <ticket> [--source folder|linear]
+rippls retry <ticket>
 ```
 
 `rippls retry` returns an escalated ticket to unattended processing, without editing
-any file. Give it the identity that `rippls status` shows, such as `folder:4`:
+any file. Give it the identity that `rippls status` shows, such as `folder:4`. The
+retry goes to the Source that the identity names; a `--source` that names another
+Source is an error. The retry:
 
-1. It reports the retry to the Source.
-2. It clears the Escalation in the Ledger: its record moves to
+1. Reports retried to the Source.
+2. Clears the Escalation in the Ledger: its record moves to
    `.git/rippls/ledger/cleared/`. The attempt count is kept, so another escalation of
    the ticket raises it.
 

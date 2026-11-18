@@ -11,8 +11,8 @@ import type { RetryTicketCommand } from './command';
  * then the Ledger clears the Escalation and keeps its attempt count. The next
  * Engine run takes the ticket and continues in its retained Ticket Worktree.
  *
- * The Source hears first: a Linear Issue that keeps its `needs-human` label is not
- * ready, so a report that fails leaves the Escalation in place for another retry.
+ * The Source hears first: a Source may show the ticket as not ready until it hears
+ * retried, so a report that fails leaves the Escalation in place for another retry.
  */
 export const retryTicket = Effect.fn('ticket.retry')(function* ({ ticket }: RetryTicketCommand) {
   const ledger = yield* Ledger;

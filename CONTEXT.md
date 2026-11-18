@@ -87,8 +87,14 @@ _Avoid_: Dead lock, orphan, abandoned Claim
 The Ledger's record that a Ticket needs a human because its Ticket Processing
 failed. It holds the reason, the attempt count, and the path of the retained Ticket
 Worktree. The Engine does not change the Ticket's Kind or HITL. An escalated Ticket
-is not Eligible.
+is not Eligible until a human clears its Escalation with a Retry.
 _Avoid_: HITL raise, failure, human task
+
+**Retry**:
+A human's return of an escalated Ticket to unattended processing. It clears the
+Escalation in the Ledger, keeps its attempt count, and is reported to the Source as
+retried. The Ticket's next Ticket Processing continues in its retained Ticket Worktree.
+_Avoid_: Reset, requeue, resume
 
 **Ledger**:
 The Engine's own record of Ticket Processing, keyed by ticket identity: Claims and
@@ -140,7 +146,8 @@ _Avoid_: Ticket Worktree, checkout, branch
 
 **Ticket Worktree**:
 The temporary worktree in which all Agents for one Ticket perform their work.
-It is merged and closed after success and retained after escalation to a human.
+It is merged and closed after success, retained after escalation to a human, and
+reused after a Retry.
 _Avoid_: Project Worktree, per-prompt worktree
 
 **Worktree Manager**:

@@ -113,12 +113,17 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
             yield* Console.log(`Worktree ${worktree.branch} is merging into ${record.parentPath}`);
             yield* git(['merge', '--no-ff', '--no-edit', worktree.branch], record.parentPath);
             yield* Console.log(`Worktree ${worktree.branch} is closing at ${worktree.path}`);
-            // As a Sandcastle handle closes it: a worktree with uncommitted
-            // changes stays on disk.
-            const changes = yield* git(['status', '--porcelain'], worktree.path);
-            if (changes.trim().length === 0) {
-              yield* git(['worktree', 'remove', '--force', worktree.path], repositoryRoot);
-            }
+            // As a Sandcastle handle closes it, once the work is merged: a
+            // worktree with uncommitted changes stays on disk, and a failure to
+            // remove a worktree is ignored.
+            yield* git(['status', '--porcelain'], worktree.path).pipe(
+              Effect.flatMap((changes) =>
+                changes.trim().length === 0
+                  ? git(['worktree', 'remove', '--force', worktree.path], repositoryRoot)
+                  : Effect.void
+              ),
+              Effect.ignore
+            );
             ticketMemo.delete(worktree.branch);
             yield* Console.log(`Worktree ${worktree.branch} is closed`);
           }),

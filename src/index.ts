@@ -15,12 +15,14 @@ import {
 } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { retryTicket } from '~/Core/Tickets/Application/UseCases/RetryTicket/retryTicket';
+import { retrySourceOf } from '~/Core/Tickets/Application/UseCases/RetryTicket/retrySource';
 import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngine/repositoryRoot';
 import { runEngine } from '~/Core/Tickets/Application/UseCases/RunEngine/runEngine';
 import { showStatus } from '~/Core/Tickets/Application/UseCases/ShowStatus/showStatus';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketNotEscalated } from '~/Core/Tickets/Domain/Exceptions/TicketNotEscalated';
+import { TicketNotOfSource } from '~/Core/Tickets/Domain/Exceptions/TicketNotOfSource';
 import { ConfiguredHarnessesLive } from '~/Infrastructure/Shared/HarnessSelector/configured';
 import { makeTracingLayer } from '~/Infrastructure/Shared/Tracing/otlp';
 import { LedgerFolderLive } from '~/Infrastructure/Tickets/Ledger/folder';
@@ -64,9 +66,9 @@ const engine = Command.make(
     ),
   }
 ).pipe(
-  // The Project and Source flags scope the Engine and `rippls status`, and the
-  // Source flag names the Source of `rippls retry`. They may stand before or
-  // after the subcommand.
+  // The Project and Source flags scope the Engine and `rippls status`, and may
+  // stand before or after the subcommand. `rippls retry` reports to the Source
+  // its ticket identity names; a Source flag there must name the same one.
   Command.withSharedFlags({
     source: Flag.choice('source', TicketSourceTag.literals).pipe(Flag.optional),
     project: Flag.string('project').pipe(Flag.withSchema(Project), Flag.optional),
@@ -104,7 +106,8 @@ const retry = Command.make(
   ({ ticket }) =>
     Effect.gen(function* () {
       const { source } = yield* engine;
-      const ticketSource = yield* ticketSourceFor(source);
+      const named = yield* retrySourceOf(ticket, Option.getOrUndefined(source));
+      const ticketSource = yield* ticketSourceFor(Option.some(named));
       return yield* retryTicket({ ticket }).pipe(Effect.provide(ticketSource));
     })
 ).pipe(Command.withDescription('Return an escalated ticket to unattended processing'));
@@ -115,12 +118,12 @@ export const program = Command.run(command, { version: '0.0.2' }).pipe(
   Effect.provide(AppLive.pipe(Layer.provideMerge(NodeServices.layer)))
 );
 
+// Errors whose message is written for the person who ran the command.
+const isExplained = (error: unknown): error is Error =>
+  error instanceof TicketNotEscalated || error instanceof TicketNotOfSource;
+
 const describeError = (error: unknown) =>
-  error instanceof Config.ConfigError
-    ? error.cause.message
-    : error instanceof TicketNotEscalated
-      ? error.message
-      : error;
+  error instanceof Config.ConfigError ? error.cause.message : isExplained(error) ? error.message : error;
 
 export const run = () =>
   program.pipe(
