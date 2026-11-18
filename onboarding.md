@@ -66,7 +66,7 @@ After that, read whichever adapter you need. The tests sit next to the source an
 - **Ticket IDs are namespaced strings** (`folder:42`, `linear:<uuid>`), and the domain never branches on the source ([ADR 0002](docs/adr/0002-source-namespaced-string-ticket-id.md)). On disk the folder Source still uses plain numbers.
 - **Loose ends:**
   - `TicketQuery.afk()` uses a term CONTEXT.md says to avoid (it should be "Unattended").
-  - `_pollTicketTraced`, `StrategySelectorNoop` and [random.ts](src/Infrastructure/Tickets/TicketSource/random.ts) are not referenced by any non-test source file.
+  - `StrategySelectorNoop` is not referenced by any non-test source file.
   - `ProcessTicketCommand.repositoryRoot` is passed but never read.
   - The version `0.0.2` is duplicated in four places.
 

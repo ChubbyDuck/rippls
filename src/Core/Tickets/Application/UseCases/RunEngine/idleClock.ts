@@ -12,6 +12,7 @@ export type IdleClock = {
 
 export const makeIdleClock = (idleTimeout: Duration.Input = defaultIdleTimeout): Effect.Effect<IdleClock> =>
   Effect.gen(function* () {
+    const idleFor = Duration.fromInputUnsafe(idleTimeout);
     const occupied = yield* Ref.make(0);
     const timeout = yield* Ref.make<Fiber.Fiber<boolean> | undefined>(undefined);
     const halted = yield* Deferred.make<never, EngineIdleTimeout>();
@@ -26,8 +27,8 @@ export const makeIdleClock = (idleTimeout: Duration.Input = defaultIdleTimeout):
       if (existing !== undefined) {
         return;
       }
-      const fiber = yield* Effect.sleep(idleTimeout).pipe(
-        Effect.andThen(Deferred.fail(halted, new EngineIdleTimeout({ idleTimeout: Duration.fromInputUnsafe(idleTimeout) }))),
+      const fiber = yield* Effect.sleep(idleFor).pipe(
+        Effect.andThen(Deferred.fail(halted, new EngineIdleTimeout({ idleTimeout: idleFor }))),
         Effect.forkChild
       );
       yield* Ref.set(timeout, fiber);

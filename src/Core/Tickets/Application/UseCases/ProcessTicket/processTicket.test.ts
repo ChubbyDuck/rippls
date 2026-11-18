@@ -38,10 +38,12 @@ const engine = Schema.decodeSync(EngineId)('standalone');
 const runnerId = Schema.decodeSync(RunnerId)('standalone:0');
 const repositoryRoot = '/repo';
 const projectWorktree = { path: '/repo/.sandcastle/worktrees/test', branch: 'test' };
-const ticketWorktreeOf = (id: string) => ({
-  path: `/repo/.sandcastle/worktrees/ticket-${id}`,
-  branch: `ticket-${id}`,
-});
+// As the Worktree Manager does, the fake names the branch of a Ticket Worktree
+// from the ticket identity with the characters unsafe in a branch name replaced.
+const ticketWorktreeOf = (id: string) => {
+  const branch = `ticket-${id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+  return { path: `/repo/.sandcastle/worktrees/${branch}`, branch };
+};
 const recordingWorktrees = (closed: string[] = []) =>
   Layer.succeed(WorktreeManager, {
     prepareProject: () => Effect.succeed(projectWorktree),
@@ -168,56 +170,6 @@ test('processTicket runs a ticket that omits project', () => {
     Effect.runSync(processTicket({ ticket: withoutProject, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))))
   ).toBeUndefined();
   expect(doneReported).toEqual([withoutProject.id]);
-});
-
-// The Worktree Manager names the branch of a Ticket Worktree, and it is not the
-// ticket identity: the identity of a ticket in a feature folder holds `:` and `/`.
-test('processTicket logs the preparation of a Ticket Worktree with the branch the Worktree Manager returns', () => {
-  const inFeatureFolder = Ticket.create({ ...ticketFields, id: formatTicketId('folder', 'auth/1'), project: 'auth' });
-  const prepared = { path: '/repo/.sandcastle/worktrees/ticket-folder-auth-1', branch: 'ticket-folder-auth-1' };
-  const logged: string[] = [];
-  const capturing: Console.Console = Object.assign(Object.create(console), {
-    log: (...args: ReadonlyArray<unknown>) => {
-      logged.push(args.map(String).join(' '));
-    },
-  });
-  const services = Layer.mergeAll(
-    Layer.succeed(HarnessSelector, {
-      select: Effect.succeed({
-        name: 'test-harness',
-        model: 'test-model',
-        run: () => Effect.succeed({ completionSignal: undefined }),
-      }),
-    }),
-    Layer.succeed(TicketSource, {
-      getOneBy: () => Effect.succeed(inFeatureFolder),
-      getUnreadable: Effect.succeed([]),
-      getManyBy: () => Effect.succeed([]),
-      reportDone: () => Effect.succeed(Effect.void),
-      report: () => Effect.void,
-    }),
-    Layer.succeed(StrategySelector, {
-      select: () =>
-        Effect.succeed({
-          name: 'implementation',
-          run: () => Effect.succeed(Result.succeed(undefined)),
-        }),
-    }),
-    Layer.succeed(WorktreeManager, {
-      prepareProject: (project) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${project}`, branch: project }),
-      prepareTicket: () => Effect.succeed(prepared),
-      runCommand: () => Effect.die('runCommand should not be called'),
-      isClean: () => Effect.succeed(true),
-      mergeAndClose: () => Effect.void,
-    }),
-    ledgerClaiming(inFeatureFolder).layer,
-    Layer.succeed(Console.Console, capturing)
-  );
-
-  Effect.runSync(processTicket({ ticket: inFeatureFolder, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
-
-  expect(logged).toContain('Ticket folder:auth/1 -- implementation prepared worktree ticket-folder-auth-1 from auth');
-  expect(logged.filter((line) => line.includes('ticket-folder:auth/1'))).toEqual([]);
 });
 
 const failingServices = (
@@ -393,7 +345,7 @@ test('processTicket hands the strategy a harness bound to the ticket worktree', 
 
   Effect.runSync(processTicket({ ticket: withoutProject, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
-  expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1']);
+  expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1']);
 });
 
 test('processTicket hands the strategy a harness bound to the ticket worktree of a project ticket', () => {
@@ -410,7 +362,7 @@ test('processTicket hands the strategy a harness bound to the ticket worktree of
 
   Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
-  expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1']);
+  expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1']);
 });
 
 test('two tickets that name the same project run in distinct ticket worktrees', () => {
@@ -447,7 +399,7 @@ test('two tickets that name the same project run in distinct ticket worktrees', 
   Effect.runSync(processTicket({ ticket: first, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
   Effect.runSync(processTicket({ ticket: second, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
-  expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1', '/repo/.sandcastle/worktrees/ticket-folder:2']);
+  expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1', '/repo/.sandcastle/worktrees/ticket-folder-2']);
 });
 
 test('processTicket closes the ticket worktree after a successful strategy', () => {
@@ -473,7 +425,7 @@ test('processTicket closes the ticket worktree after a successful strategy', () 
 
   Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
-  expect(closed).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1']);
+  expect(closed).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1']);
 });
 
 test('processTicket retains the ticket worktree when the strategy fails', () => {
@@ -621,7 +573,7 @@ test('a project-worktree create failure that succeeds on retry processes the tic
   Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
   expect(attempts).toBe(2);
-  expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1']);
+  expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1']);
 });
 
 test('a ticket-worktree close failure is retried once and then halts with no done in the Ledger and no escalation', () => {
@@ -692,6 +644,26 @@ const succeedingServices = (strategyRun: () => Effect.Effect<Result.Result<void,
     }),
     WorktreeManagerNoop
   );
+
+test('processTicket logs the preparation of a Ticket Worktree with the branch the Worktree Manager returns', () => {
+  const inFeatureFolder = Ticket.create({ ...ticketFields, id: formatTicketId('folder', 'auth/1'), project: 'auth' });
+  const logged: string[] = [];
+  const capturing: Console.Console = Object.assign(Object.create(console), {
+    log: (...args: ReadonlyArray<unknown>) => {
+      logged.push(args.map(String).join(' '));
+    },
+  });
+  const services = Layer.mergeAll(
+    succeedingServices(() => Effect.succeed(Result.succeed(undefined))),
+    ledgerClaiming(inFeatureFolder).layer,
+    Layer.succeed(Console.Console, capturing)
+  );
+
+  Effect.runSync(processTicket({ ticket: inFeatureFolder, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
+
+  expect(logged).toContain('Ticket folder:auth/1 -- implementation prepared worktree ticket-folder-auth-1 from auth');
+  expect(logged.filter((line) => line.includes('ticket-folder:auth/1'))).toEqual([]);
+});
 
 test('processTicket names its Runner in the Claim and releases the Claim once the ticket is done', () => {
   const ledger = ledgerClaiming(ticket);

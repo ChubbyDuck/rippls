@@ -66,7 +66,7 @@ const toTickets = (
   query: TicketQuery,
   stateTypes: ReadonlySet<string>
 ): readonly Ticket[] => {
-  const ranked = issues.flatMap((issue) => {
+  const dated = issues.flatMap((issue) => {
     if (!stateTypes.has(issue.state.type)) {
       return [];
     }
@@ -75,7 +75,7 @@ const toTickets = (
       onSome: (ticket) => (matchesQuery(query)(ticket) ? [{ ticket, createdAt: issue.createdAt }] : []),
     });
   });
-  return ranked
+  return dated
     .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
     .map((entry) => entry.ticket);
 };

@@ -49,10 +49,16 @@ import type { RunEngineCommand } from './command';
 import { createEngine } from './createEngine';
 import { runEngine as executeEngine } from './runEngine';
 
+// As the real Worktree Manager does, the fake names the branch of a Ticket Worktree
+// from the ticket identity with the characters unsafe in a branch name replaced.
+const ticketWorktreeOf = (ticket: TicketId) => {
+  const branch = `ticket-${ticket.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+  return { path: `/repo/.sandcastle/worktrees/${branch}`, branch };
+};
+
 const WorktreeManagerNoop = Layer.succeed(WorktreeManager, {
   prepareProject: (project) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${project}`, branch: project }),
-  prepareTicket: ({ id }) =>
-    Effect.succeed({ path: `/repo/.sandcastle/worktrees/ticket-${id}`, branch: `ticket-${id}` }),
+  prepareTicket: ({ id }) => Effect.succeed(ticketWorktreeOf(id)),
   runCommand: () => Effect.die('runCommand should not be called'),
   isClean: () => Effect.succeed(true),
   mergeAndClose: () => Effect.void,
@@ -310,22 +316,22 @@ test('runEngine claims each ticket and reports the Claim before a Runner takes i
     'Ticket folder:1 -- implementation is claimed',
     `Ticket folder:1 -- implementation is taken into the runner ${claiming}`,
     "Ticket folder:1 -- implementation is processed by 'implementation' strategy and 'default' harness using 'default-model'",
-    'Ticket folder:1 -- implementation prepared worktree ticket-folder:1 from 0003-sandboxed-local-ticket-loop.md',
-    'Ticket folder:1 -- implementation is opening worktree ticket-folder:1 at /repo/.sandcastle/worktrees/ticket-folder:1',
+    'Ticket folder:1 -- implementation prepared worktree ticket-folder-1 from 0003-sandboxed-local-ticket-loop.md',
+    'Ticket folder:1 -- implementation is opening worktree ticket-folder-1 at /repo/.sandcastle/worktrees/ticket-folder-1',
     '',
     'Ticket folder:1 -- implementation has no check command configured, so the check is skipped',
-    'Ticket folder:1 -- implementation has its work committed in worktree ticket-folder:1',
-    'Ticket folder:1 -- implementation is merging worktree ticket-folder:1',
+    'Ticket folder:1 -- implementation has its work committed in worktree ticket-folder-1',
+    'Ticket folder:1 -- implementation is merging worktree ticket-folder-1',
     'Ticket folder:1 -- implementation is done',
     'Ticket folder:2 -- implementation is claimed',
     `Ticket folder:2 -- implementation is taken into the runner ${claiming}`,
     "Ticket folder:2 -- implementation is processed by 'implementation' strategy and 'default' harness using 'default-model'",
-    'Ticket folder:2 -- implementation prepared worktree ticket-folder:2 from 0003-sandboxed-local-ticket-loop.md',
-    'Ticket folder:2 -- implementation is opening worktree ticket-folder:2 at /repo/.sandcastle/worktrees/ticket-folder:2',
+    'Ticket folder:2 -- implementation prepared worktree ticket-folder-2 from 0003-sandboxed-local-ticket-loop.md',
+    'Ticket folder:2 -- implementation is opening worktree ticket-folder-2 at /repo/.sandcastle/worktrees/ticket-folder-2',
     '',
     'Ticket folder:2 -- implementation has no check command configured, so the check is skipped',
-    'Ticket folder:2 -- implementation has its work committed in worktree ticket-folder:2',
-    'Ticket folder:2 -- implementation is merging worktree ticket-folder:2',
+    'Ticket folder:2 -- implementation has its work committed in worktree ticket-folder-2',
+    'Ticket folder:2 -- implementation is merging worktree ticket-folder-2',
     'Ticket folder:2 -- implementation is done',
   ]);
 });
@@ -760,7 +766,7 @@ test('runEngine records an escalation in the Ledger, reports no done to the Sour
       ticket: id(1),
       reason: 'strategy failure',
       attempts: 1,
-      worktree: '/repo/.sandcastle/worktrees/ticket-folder:1',
+      worktree: '/repo/.sandcastle/worktrees/ticket-folder-1',
     }),
   ]);
   expect(source.doneReported).toEqual([]);
@@ -802,9 +808,9 @@ test('runEngine takes a retried ticket again, in its retained Ticket Worktree', 
     prepareProject: (value) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${value}`, branch: value }),
     prepareTicket: ({ id: ticket }) =>
       Effect.sync(() => {
-        const path = `/repo/.sandcastle/worktrees/ticket-${ticket}`;
-        prepared.push(path);
-        return { path, branch: `ticket-${ticket}` };
+        const worktree = ticketWorktreeOf(ticket);
+        prepared.push(worktree.path);
+        return worktree;
       }),
     runCommand: () => Effect.die('runCommand should not be called'),
     isClean: () => Effect.succeed(true),
@@ -1341,7 +1347,7 @@ test('the exit of one Engine leaves the Claim of another Engine on the same Ledg
   );
 });
 
-test('runEngine stops the run when Idle for the default five minutes', async () => {
+test('runEngine stops the run when Idle for the default idle timeout of five minutes, and names it', async () => {
   const source = fakeSource();
   let stopped = false;
   const messages: string[] = [];
