@@ -74,6 +74,12 @@ the Engine, its process, and its host, and gains the Runner when a Runner starts
 Ticket Processing.
 _Avoid_: Lock, take, checkout
 
+**Stale Claim**:
+A Claim whose process no longer runs on this host. A Claim from another host is
+never stale. The Engine replaces a Stale Claim when it takes the ticket, which
+counts as a release for the Source.
+_Avoid_: Dead lock, orphan, abandoned Claim
+
 **Ledger**:
 The Engine's own record of Ticket Processing, keyed by ticket identity. It is local
 to the Repository Root for every Source; a Source is never the Ledger.
@@ -156,7 +162,7 @@ A Ticket whose blockers are all done. A blocker that cannot be found blocks.
 _Avoid_: Ready, free
 
 **Unclaimed**:
-A Ticket with no Claim in the Ledger.
+A Ticket with no Claim in the Ledger other than a Stale Claim.
 _Avoid_: Available, free, open
 
 **Unattended**:

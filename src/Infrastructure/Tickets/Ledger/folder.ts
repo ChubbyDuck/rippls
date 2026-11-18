@@ -10,7 +10,7 @@ import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 
-import { type ClaimHolder, isSameClaim } from './holder';
+import { type ClaimHolder, isStaleFor } from './holder';
 
 const RECORD_SUFFIX = '.json';
 
@@ -94,17 +94,36 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
 
       const release = (ticket: TicketId) => removeRecord(recordOf(ticket));
 
-      const isStale = (held: Claim) =>
-        held.host === holder.host ? processRuns(held.process).pipe(Effect.map((runs) => !runs)) : Effect.succeed(false);
+      const isStale = isStaleFor(holder, processRuns);
 
-      // The record is read again just before it is removed, so a Claim that
-      // another Engine made after replacing the same stale Claim stays in place.
+      // The stale record is moved aside under a name of its own, which only one
+      // caller can do to one record, and checked there. When another Engine
+      // replaced the same stale Claim first, the record moved aside is that
+      // Engine's Claim, and it is put back.
       const releaseStale = (stale: Claim) =>
-        readRecord(recordOf(stale.ticket)).pipe(
-          Effect.flatMap((held) =>
-            Option.exists(held, (current) => isSameClaim(current, stale)) ? release(stale.ticket) : Effect.void
-          )
-        );
+        Effect.gen(function* () {
+          const record = recordOf(stale.ticket);
+          const held = yield* readRecord(record);
+          if (!Option.exists(held, (current) => current.isSameClaim(stale))) {
+            return;
+          }
+          const scratch = yield* fs
+            .makeTempDirectoryScoped({ directory: dir, prefix: '.scratch-' })
+            .pipe(Effect.mapError(toLedgerError));
+          const aside = path.join(scratch, 'record.json');
+          const moved = yield* fs.rename(record, aside).pipe(
+            Effect.as(true),
+            Effect.catchIf(isNotFound, () => Effect.succeed(false)),
+            Effect.mapError(toLedgerError)
+          );
+          if (!moved) {
+            return;
+          }
+          const movedClaim = yield* readRecord(aside);
+          if (!Option.exists(movedClaim, (current) => current.isSameClaim(stale))) {
+            yield* fs.link(aside, record).pipe(Effect.mapError(toLedgerError));
+          }
+        }).pipe(Effect.scoped);
 
       const records = fs.readDirectory(dir).pipe(
         Effect.catchIf(isNotFound, () => Effect.succeed<string[]>([])),

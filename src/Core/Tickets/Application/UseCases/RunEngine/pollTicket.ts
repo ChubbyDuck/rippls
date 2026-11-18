@@ -37,11 +37,11 @@ const claimsIn = (tickets: readonly Ticket[]) =>
     const claims = yield* ledger.read(tickets.map((ticket) => ticket.id));
     const stale = new Map<TicketId, Claim>();
     const claimed = new Set<TicketId>();
-    for (const [ticket, held] of claims) {
-      if (yield* ledger.isStale(held)) {
-        stale.set(ticket, held);
+    for (const [id, claim] of claims) {
+      if (yield* ledger.isStale(claim)) {
+        stale.set(id, claim);
       } else {
-        claimed.add(ticket);
+        claimed.add(id);
       }
     }
     return { claimed, stale };
@@ -96,9 +96,9 @@ const claimIfStillEligible =
 
 // The Source returns every ticket in scope in its processing order, done ones
 // included, the Ledger holds the Claims, and the core rule picks the Eligible
-// tickets. A ticket whose only Claim is stale counts as Unclaimed here, since the
-// Engine replaces that Claim when it takes the ticket. The Engine claims the first
-// one it can.
+// tickets. A ticket whose only Claim is a Stale Claim is Unclaimed, and the Engine
+// replaces that Claim when it takes the ticket. The Engine claims the first one it
+// can.
 const claimNextEligibleTicket = (engine: EngineId, project?: Project) =>
   Effect.gen(function* () {
     const source = yield* TicketSource;

@@ -17,6 +17,20 @@ export class Claim extends Schema.Class<Claim>('Claim')({
   host: Schema.NonEmptyString,
   runner: Schema.optionalKey(RunnerId),
 }) {
+  /**
+   * Whether the other record is this Claim: on the same ticket, made by the same
+   * Engine, process, and host. The Runner a Claim gains later does not make it
+   * another Claim.
+   */
+  isSameClaim(other: Claim): boolean {
+    return (
+      this.ticket === other.ticket &&
+      this.engine === other.engine &&
+      this.process === other.process &&
+      this.host === other.host
+    );
+  }
+
   withRunner(runner: RunnerId): Claim {
     return new Claim({ ticket: this.ticket, engine: this.engine, process: this.process, host: this.host, runner });
   }

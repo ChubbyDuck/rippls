@@ -20,9 +20,9 @@ The Engine signals a Source only through operations that do not depend on the ti
 - Its adapter keeps the records in a folder for Rippls inside the Git common directory of the Repository Root (`<git-common-dir>/rippls/ledger/`). Every worktree of the repository shares that directory, it never appears in a merge, and it needs no ignore rule.
 - The Ledger is local for every Ticket Source. Linear is not the Ledger.
 - A Claim is made by creating its record exclusively (a hard link onto the record's name), so only one caller can succeed. The record names the Engine, the process, and the host, and it gains the Runner when a Runner starts Ticket Processing.
-- The Engine claims a ticket when it takes it from the Ticket Stream. Unclaimed means the Ledger holds no Claim on the ticket.
+- The Engine claims a ticket when it takes it from the Ticket Stream. Unclaimed means the Ledger holds no Claim on the ticket other than a Stale Claim.
 - On exit an Engine releases only the Claims it holds.
-- A Claim is stale when its process no longer runs on this host. A Claim whose process still runs is never stale, and a Claim from another host is never treated as stale, since the Engine cannot see the processes of another host. When the Engine looks for the next ticket and meets a stale Claim, it replaces it: it reports released to the Ticket Source, removes the stale record, and then claims the ticket in the normal way. The record is removed only while it still holds that stale Claim, so a Claim that another Engine made in the meantime stays in place.
+- A Claim is stale when its process no longer runs on this host. A Claim whose process still runs is never stale, and a Claim from another host is never treated as stale, since the Engine cannot see the processes of another host. When the Engine looks for the next ticket and meets a stale Claim, it replaces it: it reports released to the Ticket Source, removes the stale record, and then claims the ticket in the normal way. The record is moved aside under a name of its own, which only one caller can do, and is removed only when it is that stale Claim; a Claim that another Engine made in the meantime is put back.
 
 ## Consequences
 

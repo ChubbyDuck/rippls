@@ -6,7 +6,7 @@ import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 
-import { type ClaimHolder, isSameClaim } from './holder';
+import { type ClaimHolder, isStaleFor } from './holder';
 
 /**
  * A Ledger held in memory. Every Engine given its layer shares one set of Claims,
@@ -39,11 +39,11 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
       Effect.sync(() => {
         claims.delete(ticket);
       }),
-    isStale: (held) => Effect.sync(() => held.host === holder.host && !running.has(held.process)),
+    isStale: isStaleFor(holder, (process) => Effect.sync(() => running.has(process))),
     releaseStale: (stale) =>
       Effect.sync(() => {
         const held = claims.get(stale.ticket);
-        if (held !== undefined && isSameClaim(held, stale)) {
+        if (held?.isSameClaim(stale) === true) {
           claims.delete(stale.ticket);
         }
       }),

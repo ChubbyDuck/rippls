@@ -15,13 +15,13 @@ export const doneTicketIds = (tickets: readonly Ticket[]): ReadonlySet<TicketId>
 export const isUnblocked = (ticket: Ticket, done: ReadonlySet<TicketId>): boolean =>
   ticket.blockedBy.every((blocker) => done.has(blocker));
 
-/** A Ticket with no Claim in the Ledger. */
+/** A Ticket with no Claim in the Ledger other than a Stale Claim. */
 export const isUnclaimed = (ticket: Ticket, claimed: ReadonlySet<TicketId>): boolean => !claimed.has(ticket.id);
 
 /** A Ticket whose HITL is no, allowing it to proceed without a human. */
 export const isUnattended = (ticket: Ticket): boolean => ticket.hitl === 'no';
 
-/** What the Engine knows of other tickets: which are done, and which hold a Claim in the Ledger that is not stale. */
+/** What the Engine knows of other tickets: which are done, and which hold a Claim in the Ledger that is not a Stale Claim. */
 export type EligibilityFacts = {
   readonly done: ReadonlySet<TicketId>;
   readonly claimed: ReadonlySet<TicketId>;
