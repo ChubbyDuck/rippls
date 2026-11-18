@@ -831,7 +831,7 @@ test('a ticket directly in the tickets folder keeps the identity it had before f
   expect(tickets.get(folderId(1))?.project).toBeUndefined();
 });
 
-test('a ticket in the done/ of its feature folder is done, with the identity it had while open', async () => {
+test('a ticket in the done/ of its feature folder is done, with the identity it had before it was done', async () => {
   const tickets = await readAll([
     ['auth/done/01-login.md', '# Login\n'],
     ['auth/02-logout.md', '# Logout\n\n**Blocked by:** 01 (Login)\n'],

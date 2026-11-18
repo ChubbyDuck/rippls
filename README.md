@@ -635,7 +635,7 @@ blocks: []
 Update the public API guide to use `makeClient`.
 ```
 
-When ticket 12 completes, its file moves to the `done/` of its folder and ticket 13 becomes
+When ticket 12 is done, its file moves to the `done/` of its folder and ticket 13 becomes
 Unblocked. Rippls does not edit ticket 13: it reads the tickets in `done/` as done and
 derives Unblocked on every poll. The stored `status: blocked` does not gate ticket 13.
 A blocker that Rippls finds neither in the tickets folder nor in `done/` keeps its ticket
@@ -667,7 +667,7 @@ case does not matter.
 - When a ticket has both a `blockedBy` field and a "Blocked by" line, the field wins.
   A `blockedBy` key with no value states nothing, so the line is read.
 
-Completed files move to the `done/` of their folder unchanged (see
+Done ticket files move to the `done/` of their folder unchanged (see
 [Completion and `done/`](#completion-and-done)).
 
 A file is unreadable when its name has no numeric prefix, its front matter cannot be

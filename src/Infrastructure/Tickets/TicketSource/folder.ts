@@ -37,9 +37,10 @@ const ticketIdIn = (folder: string, number: number): TicketId =>
 const locationOf = (id: TicketId): { readonly folder: string; readonly number: number } => {
   const { native } = parseTicketId(id);
   const separator = native.lastIndexOf('/');
+  const last = native.slice(separator + 1);
   return {
     folder: separator === -1 ? '' : native.slice(0, separator),
-    number: /^\d+$/.test(native.slice(separator + 1)) ? Number(native.slice(separator + 1)) : Number.NaN,
+    number: /^\d+$/.test(last) ? Number(last) : Number.NaN,
   };
 };
 
@@ -58,14 +59,14 @@ const findFileForId = (files: readonly string[], id: number): string | undefined
   files.find((file) => idFromFilename(file) === id);
 
 /**
- * A ticket file found below the tickets folder: its name, the folders of its path,
- * and its folder, which is that path without `done` segments. A file in a `done/`
- * is done; its folder is the one it had while open.
+ * A ticket file found below the tickets folder: its name, the directories of its
+ * path, and its folder, which is those directories without `done` segments. A
+ * file in a `done/` is done; its folder is the one it had before it was done.
  */
 type TicketFile = {
   readonly name: string;
   readonly number: number;
-  readonly path: readonly string[];
+  readonly directories: readonly string[];
   readonly folder: readonly string[];
   readonly inDone: boolean;
 };
@@ -76,13 +77,13 @@ const ticketFileOf = (relative: readonly string[]): TicketFile | undefined => {
   if (name === undefined || number === undefined) {
     return undefined;
   }
-  const path = relative.slice(0, -1);
+  const directories = relative.slice(0, -1);
   return {
     name,
     number,
-    path,
-    folder: path.filter((segment) => segment !== DONE),
-    inDone: path.includes(DONE),
+    directories,
+    folder: directories.filter((segment) => segment !== DONE),
+    inDone: directories.includes(DONE),
   };
 };
 
@@ -292,16 +293,22 @@ const matchesQuery =
     return true;
   };
 
-// The processing order: by folder, then by number, lowest first. A descending
-// sort reverses it.
+// The processing order: the tickets that are not done, then those in a `done/`,
+// each by folder, then by number, lowest first. A descending sort reverses the
+// order within each.
 const sortByFolderAndNumber =
   (query: TicketQuery) =>
   (files: readonly TicketFile[]): TicketFile[] => {
     const direction = query.sort === 'DESC' ? -1 : 1;
     return [...files].sort(
-      (left, right) => direction * (compareFolders(left.folder, right.folder) || left.number - right.number)
+      (left, right) =>
+        Number(left.inDone) - Number(right.inDone) ||
+        direction * (compareFolders(left.folder, right.folder) || left.number - right.number)
     );
   };
+
+// A ticket file named by its folder path below the tickets folder.
+type FileInFolder = { readonly folder: string; readonly name: string };
 
 export const TicketSourceFolderLive = Layer.effect(
   TicketSource,
@@ -318,21 +325,22 @@ export const TicketSourceFolderLive = Layer.effect(
       const fallbacks: TicketFallbacks = { kind, hitl };
 
       const readTicket = (file: TicketFile): Effect.Effect<Option.Option<Ticket>> =>
-        fs.readFileString(path.join(dir, ...file.path, file.name)).pipe(
+        fs.readFileString(path.join(dir, ...file.directories, file.name)).pipe(
           Effect.map((text) => fileToTicket(text, file, fallbacks)),
           Effect.catchCause(() => Effect.succeedNone)
         );
 
-      // The ticket files below the tickets folder, at any depth, open or done.
+      // The ticket files below the tickets folder, at any depth, in or out of a `done/`.
       const ticketFiles = fs
         .readDirectory(dir, { recursive: true })
         .pipe(Effect.map((entries) => entries.flatMap((entry) => ticketFileOf(entry.split(path.sep)) ?? [])));
 
-      // The readable open or done tickets that match the query, in processing order.
-      const ticketsIn = (inDone: boolean, query: TicketQuery): Stream.Stream<Ticket> =>
+      // The readable tickets that match the query, in processing order, with or
+      // without the done ones.
+      const readTickets = (query: TicketQuery, withDone: boolean): Stream.Stream<Ticket> =>
         Stream.fromEffect(
           ticketFiles.pipe(
-            Effect.map((files) => sortByFolderAndNumber(query)(files.filter((file) => file.inDone === inDone)))
+            Effect.map((files) => sortByFolderAndNumber(query)(files.filter((file) => withDone || !file.inDone)))
           )
         ).pipe(
           Stream.flatMap(Stream.fromIterable),
@@ -343,7 +351,7 @@ export const TicketSourceFolderLive = Layer.effect(
         );
 
       const getOneBy = (query: TicketQuery): Effect.Effect<Ticket, TicketNotFound> =>
-        ticketsIn(false, query).pipe(
+        readTickets(query, false).pipe(
           Stream.runHead,
           Effect.flatMap(
             Option.match({
@@ -353,12 +361,10 @@ export const TicketSourceFolderLive = Layer.effect(
           )
         );
 
-      // The open tickets in processing order, then those of the `done/` folders, so
-      // the core eligibility rule can tell which blockers are done.
+      // Every ticket, the done ones of the `done/` folders last, so the core
+      // eligibility rule can tell which blockers are done.
       const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
-        Effect.all([Stream.runCollect(ticketsIn(false, query)), Stream.runCollect(ticketsIn(true, query))]).pipe(
-          Effect.map(([current, done]) => [...current, ...done])
-        );
+        Stream.runCollect(readTickets(query, true));
 
       // The folder Source keeps no trace of a Claim or an escalation: the Ledger holds them.
       const report = (_ticket: TicketId, _event: ReportedEvent): Effect.Effect<void> => Effect.void;
@@ -386,9 +392,9 @@ export const TicketSourceFolderLive = Layer.effect(
         Effect.gen(function* () {
           const { folder, number } = locationOf(ticket);
           const folderPath = folder === '' ? '' : path.join(...folder.split('/'));
-          const open = findFileForId(yield* fs.readDirectory(path.join(dir, folderPath)), number);
-          if (open !== undefined) {
-            return Option.some({ folder: folderPath, name: open, inDone: false });
+          const notDone = findFileForId(yield* fs.readDirectory(path.join(dir, folderPath)), number);
+          if (notDone !== undefined) {
+            return Option.some({ folder: folderPath, name: notDone, inDone: false });
           }
           const done = yield* fs
             .readDirectory(path.join(dir, folderPath, DONE))
@@ -402,7 +408,7 @@ export const TicketSourceFolderLive = Layer.effect(
 
       // The move into the `done/` of the ticket's folder, once the merge succeeded.
       // It never changes the file's content, and a file already in `done/` stays.
-      const moveInTicketsFolder = (ticket: TicketId, folder: string, name: string): AfterMerge =>
+      const moveInTicketsFolder = (ticket: TicketId, { folder, name }: FileInFolder): AfterMerge =>
         Effect.gen(function* () {
           const doneDir = path.join(dir, folder, DONE);
           const from = path.join(dir, folder, name);
@@ -436,7 +442,7 @@ export const TicketSourceFolderLive = Layer.effect(
         Effect.gen(function* () {
           const file = yield* fileOf(ticket);
           if (Option.isNone(file) || file.value.inDone) {
-            return Option.none<{ folder: string; name: string }>();
+            return Option.none<FileInFolder>();
           }
           const { folder, name } = file.value;
           const inRepository = path.relative(root, dir);
@@ -446,11 +452,11 @@ export const TicketSourceFolderLive = Layer.effect(
           const from = path.join(inRepository, folder, name);
           const to = path.join(inRepository, folder, DONE, name);
           if (yield* isTracked(worktree.path, to)) {
-            return Option.none<{ folder: string; name: string }>();
+            return Option.none<FileInFolder>();
           }
           if (yield* isTracked(worktree.path, from)) {
             yield* commitMoveInWorktree(ticket, worktree.path, from, to);
-            return Option.none<{ folder: string; name: string }>();
+            return Option.none<FileInFolder>();
           }
           return Option.some({ folder, name });
         });
@@ -460,7 +466,7 @@ export const TicketSourceFolderLive = Layer.effect(
           Effect.map(
             Option.match({
               onNone: (): AfterMerge => Effect.void,
-              onSome: ({ folder, name }) => moveInTicketsFolder(ticket, folder, name),
+              onSome: (file) => moveInTicketsFolder(ticket, file),
             })
           ),
           Effect.mapError(notReported(ticket))
