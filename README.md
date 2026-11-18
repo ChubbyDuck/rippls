@@ -314,8 +314,9 @@ Done is the union of two facts: the Source sees the ticket as done (its file is 
 `done/`, or its Linear issue is completed), or the Ledger records it as done. Neither
 fact reverts. Eligibility, blockers, and `rippls status` all use this union.
 
-For the folder Source, done moves the ticket file into `ticketsDir/done/`, with its
-content unchanged. Where the move happens depends on whether Git tracks the file:
+For the folder Source, done moves the ticket file into the `done/` of its folder, such
+as `ticketsDir/done/` or `ticketsDir/auth/done/`, with its content unchanged. Where the
+move happens depends on whether Git tracks the file:
 
 - **Git tracks the ticket file.** The file is in the Ticket Worktree. Rippls moves it
   into `done/` there and commits the move on the ticket branch before the merge, with
@@ -510,7 +511,7 @@ source: {
 
 ### File naming
 
-Ticket files live directly inside `ticketsDir` and match `<numeric-id>*.md`, for example:
+Ticket files match `<numeric-id>*.md`, for example:
 
 ```text
 1.md
@@ -521,10 +522,48 @@ Ticket files live directly inside `ticketsDir` and match `<numeric-id>*.md`, for
 The numeric filename prefix is authoritative: Rippls reads the ID from the filename.
 Rippls never writes front matter, so keys it does not know stay as they are.
 
+### Feature folders
+
+Rippls reads `ticketsDir` recursively, so tickets can live directly in it or in one
+folder per feature, with numbers that restart in each folder, as standard
+ticket-writing skills lay them out:
+
+```text
+.agents/tickets/
+  01-rename-the-api.md        folder:1
+  done/02-old-work.md         folder:2, done
+  auth/
+    01-login.md               folder:auth/1, Project auth
+    02-logout.md              folder:auth/2, Project auth
+    done/03-signup.md         folder:auth/3, Project auth, done
+  billing/plans/
+    01-pricing.md             folder:billing/plans/1, Project billing
+```
+
+- **Identity.** The identity is the ticket's folder below `ticketsDir` plus the numeric
+  value of its filename prefix, such as `folder:auth/1`. A `done` folder is not part of
+  it. A ticket directly in `ticketsDir` has the identity `folder:<number>`. Use the
+  identity with `rippls retry`.
+- **Branch.** The Ticket Worktree and its branch are named from the identity, with
+  every character other than a letter, a digit, `_`, or `-` replaced by `-`:
+  `folder:auth/1` works on `ticket-folder-auth-1`.
+- **Project.** A ticket with no `project` field belongs to the Project of the first
+  folder below `ticketsDir`: `auth/01-login.md` and `billing/plans/01-pricing.md` are in
+  Projects `auth` and `billing`. A stated `project` wins. A ticket directly in
+  `ticketsDir` has no Project unless it states one. `--project auth` narrows a run to
+  that Project, so its work accumulates in one Project Worktree (see
+  [Projects and worktrees](#projects-and-worktrees)).
+- **Done.** Each folder has its own `done/`: a ticket moves into the `done/` next to it.
+- **Blockers.** A blocker number, in a `blockedBy` field or a "Blocked by" line, refers
+  to a ticket in the same folder.
+- **Order.** Tickets are taken by folder path, then by number, lowest first. Tickets
+  directly in `ticketsDir` come first.
+
 ### What a ticket needs
 
-A folder ticket needs only an identity and text. The identity is the numeric filename
-prefix; the text is the file. Everything else is a hint with a fallback:
+A folder ticket needs only an identity and text. The identity is the ticket's folder
+and the numeric filename prefix (see [Feature folders](#feature-folders)); the text is
+the file. Everything else is a hint with a fallback:
 
 | Hint | Read from | When missing |
 | --- | --- | --- |
@@ -532,7 +571,7 @@ prefix; the text is the file. Everything else is a hint with a fallback:
 | Kind | The `kind` field | `defaultKind` from config, `implementation` by default |
 | HITL | The `hitl` field, then a marker, then a stated kind (see [Ticket kinds and HITL](#ticket-kinds-and-hitl)) | `defaultHitl` of the folder Source, `yes` by default |
 | Blockers | The `blockedBy` field, with numeric folder ticket IDs, then a "Blocked by" line of the body (see [Blockers in a "Blocked by" line](#blockers-in-a-blocked-by-line)) | None |
-| Project | The `project` field | None |
+| Project | The `project` field, then the first folder below `ticketsDir` (see [Feature folders](#feature-folders)) | None |
 
 Front matter is optional, and so is a heading. The body is passed to the Strategy
 unchanged: the text after the front matter, or the whole file when it has none. A key
@@ -596,7 +635,7 @@ blocks: []
 Update the public API guide to use `makeClient`.
 ```
 
-When ticket 12 completes, its file moves to `ticketsDir/done/` and ticket 13 becomes
+When ticket 12 completes, its file moves to the `done/` of its folder and ticket 13 becomes
 Unblocked. Rippls does not edit ticket 13: it reads the tickets in `done/` as done and
 derives Unblocked on every poll. The stored `status: blocked` does not gate ticket 13.
 A blocker that Rippls finds neither in the tickets folder nor in `done/` keeps its ticket
@@ -628,7 +667,7 @@ case does not matter.
 - When a ticket has both a `blockedBy` field and a "Blocked by" line, the field wins.
   A `blockedBy` key with no value states nothing, so the line is read.
 
-Completed files move to `ticketsDir/done/` unchanged (see
+Completed files move to the `done/` of their folder unchanged (see
 [Completion and `done/`](#completion-and-done)).
 
 A file is unreadable when its name has no numeric prefix, its front matter cannot be

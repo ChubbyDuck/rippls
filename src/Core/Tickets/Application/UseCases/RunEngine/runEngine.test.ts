@@ -568,6 +568,41 @@ test('runEngine processes a chain of tickets in the standard template in depende
   ]);
 });
 
+test('the Project of runEngine narrows by the Project that a feature folder gives its tickets', async () => {
+  const ran: Ticket[] = [];
+  const ticketsDir = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectory({ prefix: 'engine-features-' });
+      yield* fs.makeDirectory(path.join(dir, 'auth'));
+      yield* fs.makeDirectory(path.join(dir, 'billing'));
+      yield* fs.writeFileString(path.join(dir, '01-root.md'), standardTemplate('01', 'Root', 'None'));
+      yield* fs.writeFileString(path.join(dir, 'auth', '01-login.md'), standardTemplate('01', 'Login', 'None'));
+      yield* fs.writeFileString(path.join(dir, 'auth', '02-logout.md'), standardTemplate('02', 'Logout', '01 (Login)'));
+      yield* fs.writeFileString(path.join(dir, 'billing', '01-invoice.md'), standardTemplate('01', 'Invoice', 'None'));
+      return dir;
+    }).pipe(Effect.provide(NodeServices.layer))
+  );
+  const folderSource = TicketSourceFolderLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ ticketsDir })),
+        Layer.succeed(RepositoryRoot, '/repo'),
+        NodeServices.layer
+      )
+    )
+  );
+  const layer = Layer.mergeAll(folderSource, HarnessSelectorNoop, capturingImplementation(ran));
+  const auth = Schema.decodeSync(Project)('auth');
+
+  expect(await Effect.runPromise(runEngine({ project: auth, limit: 2 }).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(ran.map((ticket) => [ticket.id, ticket.project])).toEqual([
+    [formatTicketId('folder', 'auth/1'), auth],
+    [formatTicketId('folder', 'auth/2'), auth],
+  ]);
+});
+
 test('runEngine resolves a blocker of another Project against every ticket of the Source', async () => {
   const ran: Ticket[] = [];
   const otherProject = Schema.decodeSync(Project)('other');

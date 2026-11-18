@@ -25,6 +25,8 @@ const runMock = vi.mocked(runSandcastle);
 
 const project = Schema.decodeSync(Project)('demo');
 const ticketId = Schema.decodeSync(TicketId)('folder:17');
+const authTicket = Schema.decodeSync(TicketId)('folder:auth/1');
+const billingTicket = Schema.decodeSync(TicketId)('folder:billing/plans/1');
 
 const git = (dir: string, args: string[]) =>
   ChildProcessSpawner.ChildProcessSpawner.pipe(
@@ -174,6 +176,25 @@ test('a ticket without a project is created from HEAD', async () => {
 
   expect(worktree.branch).toBe('ticket-folder-17');
   expect(await run(git(worktree.path, ['rev-parse', '--abbrev-ref', 'HEAD']))).toBe('ticket-folder-17');
+});
+
+test('the same number in two feature folders gets two branches and two Ticket Worktrees', async () => {
+  const { auth, billing } = await run(
+    Effect.gen(function* () {
+      const root = yield* initRepo;
+      return yield* Effect.gen(function* () {
+        const manager = yield* WorktreeManager;
+        const auth = yield* manager.prepareTicket({ id: authTicket });
+        const billing = yield* manager.prepareTicket({ id: billingTicket });
+        return { auth, billing };
+      }).pipe(Effect.provide(WorktreeManagerLive(root)));
+    })
+  );
+
+  expect([auth.branch, billing.branch]).toEqual(['ticket-folder-auth-1', 'ticket-folder-billing-plans-1']);
+  expect(auth.path).not.toBe(billing.path);
+  expect(await run(git(auth.path, ['rev-parse', '--abbrev-ref', 'HEAD']))).toBe('ticket-folder-auth-1');
+  expect(await run(git(billing.path, ['rev-parse', '--abbrev-ref', 'HEAD']))).toBe('ticket-folder-billing-plans-1');
 });
 
 test('a second prepareTicket for the same ticket returns the same worktree without a second create', async () => {

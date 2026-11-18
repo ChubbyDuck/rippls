@@ -56,7 +56,7 @@ const git = (cwd: string, args: readonly string[]) =>
 
 // A repository with the ticket in its tickets folder. A committed ticket is part
 // of the first commit; otherwise Git ignores the tickets folder.
-const repositoryWith = ({ committed }: { readonly committed: boolean }) =>
+const repositoryWith = ({ committed, file = ticketFile }: { readonly committed: boolean; readonly file?: string }) =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
@@ -65,8 +65,8 @@ const repositoryWith = ({ committed }: { readonly committed: boolean }) =>
     yield* git(root, ['init', '-b', 'main']);
     yield* git(root, ['config', 'user.email', 'test@test.com']);
     yield* git(root, ['config', 'user.name', 'Test']);
-    yield* fs.makeDirectory(tickets, { recursive: true });
-    yield* fs.writeFileString(path.join(tickets, ticketFile), ticketContent);
+    yield* fs.makeDirectory(path.dirname(path.join(tickets, file)), { recursive: true });
+    yield* fs.writeFileString(path.join(tickets, file), ticketContent);
     yield* fs.writeFileString(path.join(root, '.gitignore'), committed ? '.sandcastle/\n' : `.sandcastle/\n${ticketsFolder}/\n`);
     yield* fs.writeFileString(path.join(root, 'base.txt'), 'from main\n');
     yield* git(root, ['add', '-A']);
@@ -97,9 +97,9 @@ const folderSourceIn = (root: string, tickets: string) =>
     )
   );
 
-const reportDoneIn = (root: string, tickets: string, worktree: Worktree) =>
+const reportDoneIn = (root: string, tickets: string, worktree: Worktree, ticket = ticketId) =>
   TicketSource.pipe(
-    Effect.flatMap((source) => source.reportDone(ticketId, worktree)),
+    Effect.flatMap((source) => source.reportDone(ticket, worktree)),
     Effect.provide(folderSourceIn(root, tickets))
   );
 
@@ -142,6 +142,36 @@ test('a committed ticket moves into done/ in a commit on the ticket branch, and 
   expect(result.worktreeStatus).toBe('');
   expect(result.merged).toBe(ticketContent);
   expect(result.stillOpen).toBe(false);
+  expect(result.rootAfterMerge).toBe('');
+});
+
+test('a committed ticket of a feature folder moves into the done/ of its own folder on the ticket branch', async () => {
+  const featureTicket = formatTicketId('folder', 'auth/1');
+  const result = await run(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root, tickets } = yield* repositoryWith({ committed: true, file: `auth/${ticketFile}` });
+      const worktree = yield* ticketWorktreeIn(root);
+      const afterMerge = yield* reportDoneIn(root, tickets, worktree, featureTicket);
+      const branchHead = yield* git(worktree.path, ['log', '-1', '--format=%s']);
+      const branchMove = yield* git(worktree.path, ['show', '--name-status', '--format=', 'HEAD']);
+      yield* git(root, ['merge', '--no-ff', '--no-edit', worktree.branch]);
+      yield* afterMerge;
+      return {
+        branchHead,
+        branchMove,
+        merged: yield* fs.readFileString(path.join(tickets, 'auth', 'done', ticketFile)),
+        rootDone: yield* fs.exists(path.join(tickets, 'done')),
+        rootAfterMerge: yield* git(root, ['status', '--porcelain']),
+      };
+    })
+  );
+
+  expect(result.branchHead).toBe(doneMoveMessage(featureTicket));
+  expect(result.branchMove).toBe(`R100\t${ticketsFolder}/auth/${ticketFile}\t${ticketsFolder}/auth/done/${ticketFile}`);
+  expect(result.merged).toBe(ticketContent);
+  expect(result.rootDone).toBe(false);
   expect(result.rootAfterMerge).toBe('');
 });
 

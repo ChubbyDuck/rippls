@@ -22,12 +22,30 @@ import type { Worktree } from '~/Core/Tickets/Ports/WorktreeManager';
 
 const FOLDER_SOURCE = 'folder';
 
-const toFolderId = (native: number | string): TicketId => formatTicketId(FOLDER_SOURCE, String(native));
+const DONE = 'done';
 
-const toNativeNumber = (id: TicketId): number => Number(parseTicketId(id).native);
+const toFolderId = (native: string): TicketId => formatTicketId(FOLDER_SOURCE, native);
 
-const namespaceIds = (value: unknown): unknown =>
-  Array.isArray(value) ? value.map((item) => (typeof item === 'number' ? toFolderId(item) : item)) : value;
+// The identity of the ticket with a number in a folder below the tickets folder.
+// The folder is its path with `/` between segments, and empty for the tickets
+// folder itself, so a ticket there keeps the identity `folder:<number>`.
+const ticketIdIn = (folder: string, number: number): TicketId =>
+  toFolderId(folder === '' ? String(number) : `${folder}/${number}`);
+
+// The folder and the number of a folder identity. A native that ends in no
+// number, as for a blocker that cannot be resolved, has no number.
+const locationOf = (id: TicketId): { readonly folder: string; readonly number: number } => {
+  const { native } = parseTicketId(id);
+  const separator = native.lastIndexOf('/');
+  return {
+    folder: separator === -1 ? '' : native.slice(0, separator),
+    number: /^\d+$/.test(native.slice(separator + 1)) ? Number(native.slice(separator + 1)) : Number.NaN,
+  };
+};
+
+// The numbers of a `blockedBy` field name tickets of the same folder.
+const namespaceIds = (value: unknown, folder: string): unknown =>
+  Array.isArray(value) ? value.map((item) => (typeof item === 'number' ? ticketIdIn(folder, item) : item)) : value;
 
 const ID_FILE = /^(\d+).*\.md$/;
 
@@ -38,6 +56,47 @@ const idFromFilename = (file: string): number | undefined => {
 
 const findFileForId = (files: readonly string[], id: number): string | undefined =>
   files.find((file) => idFromFilename(file) === id);
+
+/**
+ * A ticket file found below the tickets folder: its name, the folders of its path,
+ * and its folder, which is that path without `done` segments. A file in a `done/`
+ * is done; its folder is the one it had while open.
+ */
+type TicketFile = {
+  readonly name: string;
+  readonly number: number;
+  readonly path: readonly string[];
+  readonly folder: readonly string[];
+  readonly inDone: boolean;
+};
+
+const ticketFileOf = (relative: readonly string[]): TicketFile | undefined => {
+  const name = relative.at(-1);
+  const number = name === undefined ? undefined : idFromFilename(name);
+  if (name === undefined || number === undefined) {
+    return undefined;
+  }
+  const path = relative.slice(0, -1);
+  return {
+    name,
+    number,
+    path,
+    folder: path.filter((segment) => segment !== DONE),
+    inDone: path.includes(DONE),
+  };
+};
+
+// Folders in the order of their paths, segment by segment, so the tickets folder
+// itself comes first and a folder comes before the folders below it.
+const compareFolders = (left: readonly string[], right: readonly string[]): number => {
+  for (let index = 0; index < Math.min(left.length, right.length); index += 1) {
+    const [a, b] = [left[index]!, right[index]!];
+    if (a !== b) {
+      return a < b ? -1 : 1;
+    }
+  }
+  return left.length - right.length;
+};
 
 const OPENING_DELIMITER = /^---[ \t]*\r?\n/;
 const FRONT_MATTER = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?=\r?\n|$)/;
@@ -162,16 +221,16 @@ const blockedByItems = (line: string): readonly string[] => {
 // The blocker an item names: the ticket of the same folder with its leading number,
 // whatever text follows. An item without a leading number keeps its text, so it
 // resolves to no ticket and blocks.
-const blockerOf = (item: string): TicketId => {
+const blockerOf = (item: string, folder: string): TicketId => {
   const match = ITEM_NUMBER.exec(item);
-  return toFolderId(match === null ? item : Number(match[1]));
+  return match === null ? toFolderId(item) : ticketIdIn(folder, Number(match[1]));
 };
 
 // The blockers of the first "Blocked by" line of the body, such as
 // `**Blocked by:** 02 (A title), 10`. "None", with or without a remark, names none.
 // A line that names nothing, as when its items follow on the next lines, cannot be
 // resolved: the line itself is its one blocker, so the ticket stays blocked.
-const blockersInBody = (body: string): readonly TicketId[] | undefined => {
+const blockersInBody = (body: string, folder: string): readonly TicketId[] | undefined => {
   const match = firstProseMatch(body, BLOCKED_BY_LINE);
   if (match === undefined) {
     return undefined;
@@ -181,7 +240,7 @@ const blockersInBody = (body: string): readonly TicketId[] | undefined => {
     return [];
   }
   const items = blockedByItems(value);
-  return items.length === 0 ? [toFolderId(match[0].trim())] : items.map(blockerOf);
+  return items.length === 0 ? [toFolderId(match[0].trim())] : items.map((item) => blockerOf(item, folder));
 };
 
 // A key with no value states nothing, like a missing key.
@@ -189,34 +248,31 @@ const emptyAsMissing = (value: unknown): unknown => (value === null ? undefined 
 
 /**
  * The Ticket a file reads as, or none when it is unreadable. A Ticket needs an
- * identity, from the numeric filename prefix, and text. Every other value is a
- * hint: the Title comes from the `title` field, the first heading, or the
- * filename; the Marker from a `status` field or a "Status" line; the blockers
- * from a `blockedBy` field or a "Blocked by" line. A `status` value
- * is read only as a Marker; `blocks`, `claimedBy`, and unknown keys are ignored.
- * An invalid value for a known hint makes the file unreadable. A ticket in
- * `done/` is done.
+ * identity, from its folder and the numeric filename prefix, and text. Every
+ * other value is a hint: the Title comes from the `title` field, the first
+ * heading, or the filename; the Project from the `project` field or the first
+ * folder below the tickets folder; the Marker from a `status` field or a "Status"
+ * line; the blockers, numbers of tickets in the same folder, from a `blockedBy`
+ * field or a "Blocked by" line. A `status` value is read only as a Marker;
+ * `blocks`, `claimedBy`, and unknown keys are ignored. An invalid value for a
+ * known hint makes the file unreadable. A ticket in a `done/` is done.
  */
-const fileToTicket = (
-  text: string,
-  file: string,
-  fileId: number,
-  inDone: boolean,
-  fallbacks: TicketFallbacks
-): Option.Option<Ticket> =>
-  Option.flatMap(splitFrontMatter(text), ({ fields, body }) =>
+const fileToTicket = (text: string, file: TicketFile, fallbacks: TicketFallbacks): Option.Option<Ticket> => {
+  const folder = file.folder.join('/');
+  return Option.flatMap(splitFrontMatter(text), ({ fields, body }) =>
     Schema.decodeUnknownOption(TicketHints)({
-      id: toFolderId(fileId),
-      title: emptyAsMissing(fields.title) ?? headingTitle(body) ?? filenameTitle(file),
+      id: ticketIdIn(folder, file.number),
+      title: emptyAsMissing(fields.title) ?? headingTitle(body) ?? filenameTitle(file.name),
       body,
-      project: emptyAsMissing(fields.project),
-      blockedBy: namespaceIds(emptyAsMissing(fields.blockedBy)) ?? blockersInBody(body),
+      project: emptyAsMissing(fields.project) ?? file.folder[0],
+      blockedBy: namespaceIds(emptyAsMissing(fields.blockedBy), folder) ?? blockersInBody(body, folder),
       kind: emptyAsMissing(fields.kind),
       hitl: emptyAsMissing(fields.hitl),
       marker: markerOf(fields.status) ?? markerInBody(body),
-      doneInSource: inDone,
+      doneInSource: file.inDone,
     }).pipe(Option.map((hints) => ticketFromHints(hints, fallbacks)))
   );
+};
 
 /** The fixed message of the commit that moves a ticket into `done/` on its ticket branch. */
 export const doneMoveMessage = (ticket: TicketId): string => `chore: move ticket ${ticket} to done`;
@@ -236,16 +292,15 @@ const matchesQuery =
     return true;
   };
 
-const sortByIdName =
+// The processing order: by folder, then by number, lowest first. A descending
+// sort reverses it.
+const sortByFolderAndNumber =
   (query: TicketQuery) =>
-  (files: readonly string[]): string[] => {
-    const withId = files.flatMap((file) => {
-      const id = idFromFilename(file);
-      return id === undefined ? [] : [{ file, id }];
-    });
-    const descending = query.sort === 'DESC';
-    withId.sort((left, right) => (descending ? right.id - left.id : left.id - right.id));
-    return withId.map((entry) => entry.file);
+  (files: readonly TicketFile[]): TicketFile[] => {
+    const direction = query.sort === 'DESC' ? -1 : 1;
+    return [...files].sort(
+      (left, right) => direction * (compareFolders(left.folder, right.folder) || left.number - right.number)
+    );
   };
 
 export const TicketSourceFolderLive = Layer.effect(
@@ -260,34 +315,35 @@ export const TicketSourceFolderLive = Layer.effect(
     hitl: Config.schema(Hitl, 'defaultHitl').pipe(Config.withDefault(fallbackHitl)),
   }).pipe(
     Effect.map(({ fs, path, spawner, root, dir, kind, hitl }) => {
-      const doneDir = path.join(dir, 'done');
       const fallbacks: TicketFallbacks = { kind, hitl };
 
-      const readTicketIn =
-        (folder: string, inDone: boolean) =>
-        (file: string): Effect.Effect<Option.Option<Ticket>> => {
-          const fileId = idFromFilename(file);
-          if (fileId === undefined) {
-            return Effect.succeedNone;
-          }
-          return fs.readFileString(path.join(folder, file)).pipe(
-            Effect.map((text) => fileToTicket(text, file, fileId, inDone, fallbacks)),
-            Effect.catchCause(() => Effect.succeedNone)
-          );
-        };
+      const readTicket = (file: TicketFile): Effect.Effect<Option.Option<Ticket>> =>
+        fs.readFileString(path.join(dir, ...file.path, file.name)).pipe(
+          Effect.map((text) => fileToTicket(text, file, fallbacks)),
+          Effect.catchCause(() => Effect.succeedNone)
+        );
 
-      // The readable tickets of one folder that match the query, in its order.
-      const ticketsIn = (folder: string, inDone: boolean, query: TicketQuery): Stream.Stream<Ticket> =>
-        Stream.fromEffect(fs.readDirectory(folder).pipe(Effect.map(sortByIdName(query)))).pipe(
+      // The ticket files below the tickets folder, at any depth, open or done.
+      const ticketFiles = fs
+        .readDirectory(dir, { recursive: true })
+        .pipe(Effect.map((entries) => entries.flatMap((entry) => ticketFileOf(entry.split(path.sep)) ?? [])));
+
+      // The readable open or done tickets that match the query, in processing order.
+      const ticketsIn = (inDone: boolean, query: TicketQuery): Stream.Stream<Ticket> =>
+        Stream.fromEffect(
+          ticketFiles.pipe(
+            Effect.map((files) => sortByFolderAndNumber(query)(files.filter((file) => file.inDone === inDone)))
+          )
+        ).pipe(
           Stream.flatMap(Stream.fromIterable),
-          Stream.mapEffect(readTicketIn(folder, inDone), { concurrency: 1 }),
+          Stream.mapEffect(readTicket, { concurrency: 1 }),
           Stream.filter((option): option is Option.Some<Ticket> => Option.isSome(option) && matchesQuery(query)(option.value)),
           Stream.map((option) => option.value),
           Stream.catchCause(() => Stream.empty)
         );
 
       const getOneBy = (query: TicketQuery): Effect.Effect<Ticket, TicketNotFound> =>
-        ticketsIn(dir, false, query).pipe(
+        ticketsIn(false, query).pipe(
           Stream.runHead,
           Effect.flatMap(
             Option.match({
@@ -297,13 +353,12 @@ export const TicketSourceFolderLive = Layer.effect(
           )
         );
 
-      // The tickets of the tickets folder in processing order, then those of `done/`,
-      // so the core eligibility rule can tell which blockers are done.
+      // The open tickets in processing order, then those of the `done/` folders, so
+      // the core eligibility rule can tell which blockers are done.
       const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
-        Effect.all([
-          Stream.runCollect(ticketsIn(dir, false, query)),
-          Stream.runCollect(ticketsIn(doneDir, true, query)),
-        ]).pipe(Effect.map(([current, done]) => [...current, ...done]));
+        Effect.all([Stream.runCollect(ticketsIn(false, query)), Stream.runCollect(ticketsIn(true, query))]).pipe(
+          Effect.map(([current, done]) => [...current, ...done])
+        );
 
       // The folder Source keeps no trace of a Claim or an escalation: the Ledger holds them.
       const report = (_ticket: TicketId, _event: ReportedEvent): Effect.Effect<void> => Effect.void;
@@ -325,23 +380,32 @@ export const TicketSourceFolderLive = Layer.effect(
       const isTracked = (worktree: string, file: string) =>
         gitExit(['ls-files', '--error-unmatch', '--', file], worktree).pipe(Effect.map((code) => code === 0));
 
-      // The name of the ticket's file in the tickets folder or in `done/`.
+      // The ticket's file in its folder or in the `done/` of that folder, with the
+      // path of its folder below the tickets folder.
       const fileOf = (ticket: TicketId) =>
         Effect.gen(function* () {
-          const native = toNativeNumber(ticket);
-          const open = findFileForId(yield* fs.readDirectory(dir), native);
+          const { folder, number } = locationOf(ticket);
+          const folderPath = folder === '' ? '' : path.join(...folder.split('/'));
+          const open = findFileForId(yield* fs.readDirectory(path.join(dir, folderPath)), number);
           if (open !== undefined) {
-            return Option.some({ name: open, inDone: false });
+            return Option.some({ folder: folderPath, name: open, inDone: false });
           }
-          const done = yield* fs.readDirectory(doneDir).pipe(Effect.catchCause(() => Effect.succeed<string[]>([])));
-          return Option.map(Option.fromNullishOr(findFileForId(done, native)), (name) => ({ name, inDone: true }));
+          const done = yield* fs
+            .readDirectory(path.join(dir, folderPath, DONE))
+            .pipe(Effect.catchCause(() => Effect.succeed<string[]>([])));
+          return Option.map(Option.fromNullishOr(findFileForId(done, number)), (name) => ({
+            folder: folderPath,
+            name,
+            inDone: true,
+          }));
         });
 
-      // The move into `done/` in the tickets folder, once the merge succeeded. It
-      // never changes the file's content, and a file already in `done/` stays.
-      const moveInTicketsFolder = (ticket: TicketId, name: string): AfterMerge =>
+      // The move into the `done/` of the ticket's folder, once the merge succeeded.
+      // It never changes the file's content, and a file already in `done/` stays.
+      const moveInTicketsFolder = (ticket: TicketId, folder: string, name: string): AfterMerge =>
         Effect.gen(function* () {
-          const from = path.join(dir, name);
+          const doneDir = path.join(dir, folder, DONE);
+          const from = path.join(dir, folder, name);
           const to = path.join(doneDir, name);
           if ((yield* fs.exists(to)) || !(yield* fs.exists(from))) {
             return;
@@ -362,33 +426,33 @@ export const TicketSourceFolderLive = Layer.effect(
           );
         });
 
-      // Done moves the file into `done/`. A file that the Ticket Worktree tracks is
-      // moved there and the move is committed on the ticket branch before the
-      // merge, so the merge moves the copy in the Repository Root, or the Ledger
-      // covers it for a Project ticket. Any other file, as in a tickets folder
-      // that Git ignores, waits for the merge: its name is returned. A file
-      // already in `done/` stays where it is.
+      // Done moves the file into the `done/` of its folder. A file that the Ticket
+      // Worktree tracks is moved there and the move is committed on the ticket
+      // branch before the merge, so the merge moves the copy in the Repository
+      // Root, or the Ledger covers it for a Project ticket. Any other file, as in a
+      // tickets folder that Git ignores, waits for the merge: its folder and name
+      // are returned. A file already in `done/` stays where it is.
       const moveBeforeMerge = (ticket: TicketId, worktree: Worktree) =>
         Effect.gen(function* () {
           const file = yield* fileOf(ticket);
           if (Option.isNone(file) || file.value.inDone) {
-            return Option.none<string>();
+            return Option.none<{ folder: string; name: string }>();
           }
-          const { name } = file.value;
+          const { folder, name } = file.value;
           const inRepository = path.relative(root, dir);
           if (inRepository === '..' || inRepository.startsWith(`..${path.sep}`) || path.isAbsolute(inRepository)) {
-            return Option.some(name);
+            return Option.some({ folder, name });
           }
-          const from = path.join(inRepository, name);
-          const to = path.join(inRepository, 'done', name);
+          const from = path.join(inRepository, folder, name);
+          const to = path.join(inRepository, folder, DONE, name);
           if (yield* isTracked(worktree.path, to)) {
-            return Option.none<string>();
+            return Option.none<{ folder: string; name: string }>();
           }
           if (yield* isTracked(worktree.path, from)) {
             yield* commitMoveInWorktree(ticket, worktree.path, from, to);
-            return Option.none<string>();
+            return Option.none<{ folder: string; name: string }>();
           }
-          return Option.some(name);
+          return Option.some({ folder, name });
         });
 
       const reportDone = (ticket: TicketId, worktree: Worktree): Effect.Effect<AfterMerge, TicketEventNotReported> =>
@@ -396,7 +460,7 @@ export const TicketSourceFolderLive = Layer.effect(
           Effect.map(
             Option.match({
               onNone: (): AfterMerge => Effect.void,
-              onSome: (name) => moveInTicketsFolder(ticket, name),
+              onSome: ({ folder, name }) => moveInTicketsFolder(ticket, folder, name),
             })
           ),
           Effect.mapError(notReported(ticket))

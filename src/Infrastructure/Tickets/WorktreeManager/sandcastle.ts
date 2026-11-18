@@ -18,6 +18,12 @@ import { ensureDependencies } from './ensureDependencies';
 const worktreePathOf = (path: Path.Path, repositoryRoot: string, name: string) =>
   path.join(repositoryRoot, '.sandcastle', 'worktrees', name.replaceAll('/', '-'));
 
+// The branch of a Ticket Worktree, named from the ticket identity with every
+// character other than a letter, a digit, `_`, or `-` replaced by `-`. The
+// identity of a folder ticket in a feature folder, such as `folder:auth/1`,
+// gives `ticket-folder-auth-1`.
+export const ticketBranchOf = (id: TicketId): string => `ticket-${id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+
 export const WorktreeManagerLive = (repositoryRoot: string) => {
   const projectMemo = new Map<string, Worktree>();
   const ticketMemo = new Map<string, { worktree: Worktree; parentPath: string }>();
@@ -69,7 +75,7 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
         prepareProject,
         prepareTicket: ({ id, project }: { readonly id: TicketId; readonly project?: Project }) =>
           Effect.gen(function* () {
-            const branch = `ticket-${id.replaceAll(':', '-')}`;
+            const branch = ticketBranchOf(id);
             const cached = ticketMemo.get(branch);
             if (cached !== undefined) {
               yield* Console.log(`Worktree ${branch} is reused at ${cached.worktree.path}`);

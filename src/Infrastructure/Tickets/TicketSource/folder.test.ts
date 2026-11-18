@@ -804,3 +804,154 @@ test('the blockedBy field wins over a "Blocked by" line', async () => {
 
   expect([...tickets.values()].map((ticket) => ticket.blockedBy)).toEqual([[folderId(2)], [], [folderId(4)]]);
 });
+
+const featureId = (folder: string, value: number) => formatTicketId('folder', `${folder}/${value}`);
+
+test('two feature folders that both hold a ticket numbered 1 give them different identities', async () => {
+  const tickets = await readAll([
+    ['auth/01-login.md', '# Login\n'],
+    ['billing/01-invoice.md', '# Invoice\n'],
+    ['billing/plans/1-pricing.md', '# Pricing\n'],
+  ]);
+
+  expect([...tickets.values()].map((ticket) => [ticket.id, ticket.title])).toEqual([
+    [featureId('auth', 1), 'Login'],
+    [featureId('billing', 1), 'Invoice'],
+    [featureId('billing/plans', 1), 'Pricing'],
+  ]);
+});
+
+test('a ticket directly in the tickets folder keeps the identity it had before feature folders', async () => {
+  const tickets = await readAll([
+    ['01-root.md', '# Root\n'],
+    ['auth/01-login.md', '# Login\n'],
+  ]);
+
+  expect(tickets.get(folderId(1))?.title).toBe('Root');
+  expect(tickets.get(folderId(1))?.project).toBeUndefined();
+});
+
+test('a ticket in the done/ of its feature folder is done, with the identity it had while open', async () => {
+  const tickets = await readAll([
+    ['auth/done/01-login.md', '# Login\n'],
+    ['auth/02-logout.md', '# Logout\n\n**Blocked by:** 01 (Login)\n'],
+    ['done/03-root.md', '# Root\n'],
+  ]);
+
+  expect([...tickets.values()].map((ticket) => [ticket.id, ticket.doneInSource])).toEqual([
+    [featureId('auth', 2), false],
+    [folderId(3), true],
+    [featureId('auth', 1), true],
+  ]);
+  expect(isUnblocked(tickets.get(featureId('auth', 2))!, doneInSourceIds([...tickets.values()]))).toBe(true);
+});
+
+test('the first folder below the tickets folder is the Project of a ticket that names none, and a stated Project wins', async () => {
+  const tickets = await readAll([
+    ['1.md', '# Root\n'],
+    ['auth/1.md', '# Derived\n'],
+    ['auth/login/2.md', '# Nested\n'],
+    ['auth/3.md', frontMatter({ project: 'stated' }) + '# Stated\n'],
+    ['auth/done/4.md', '# Done\n'],
+  ]);
+
+  expect([...tickets.values()].map((ticket) => [ticket.title, ticket.project])).toEqual([
+    ['Root', undefined],
+    ['Derived', 'auth'],
+    ['Stated', 'stated'],
+    ['Nested', 'auth'],
+    ['Done', 'auth'],
+  ]);
+});
+
+test('a blocker number resolves only within its own folder', async () => {
+  const tickets = await readAll([
+    ['1.md', '# Root one\n'],
+    ['auth/1.md', '# Auth one\n'],
+    ['auth/2.md', '# Line\n\n**Blocked by:** 1\n'],
+    ['auth/3.md', frontMatter({ blockedBy: [1] }) + '# Field\n'],
+    ['billing/2.md', '# Missing\n\n**Blocked by:** 3\n'],
+  ]);
+
+  expect(tickets.get(featureId('auth', 2))?.blockedBy).toEqual([featureId('auth', 1)]);
+  expect(tickets.get(featureId('auth', 3))?.blockedBy).toEqual([featureId('auth', 1)]);
+  expect(tickets.get(featureId('billing', 2))?.blockedBy).toEqual([featureId('billing', 3)]);
+});
+
+test('tickets are ordered by folder path, then by number, with the tickets directly in the tickets folder first', async () => {
+  const tickets = await readAll([
+    ['billing/2.md', '# b2\n'],
+    ['auth/login/1.md', '# a-login1\n'],
+    ['10.md', '# r10\n'],
+    ['auth/10.md', '# a10\n'],
+    ['auth/2.md', '# a2\n'],
+    ['auth-x/1.md', '# ax1\n'],
+    ['2.md', '# r2\n'],
+  ]);
+
+  expect([...tickets.values()].map((ticket) => ticket.title)).toEqual([
+    'r2',
+    'r10',
+    'a2',
+    'a10',
+    'a-login1',
+    'ax1',
+    'b2',
+  ]);
+});
+
+test('getOneBy finds a ticket of a feature folder by its identity', async () => {
+  const ticket = await Effect.runPromise(
+    Effect.gen(function* () {
+      const dir = yield* setup([
+        ['1.md', '# Root\n'],
+        ['auth/1.md', '# Auth\n'],
+      ]);
+      return yield* getOneIn(dir, TicketQuery.byId(featureId('auth', 1)).build());
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(Option.getOrThrow(ticket).title).toBe('Auth');
+});
+
+test('getManyBy narrows by the Project derived from the feature folder', async () => {
+  const tickets = await Effect.runPromise(
+    Effect.gen(function* () {
+      const dir = yield* setup([
+        ['1.md', '# Root\n'],
+        ['auth/1.md', '# Auth\n'],
+        ['billing/1.md', '# Billing\n'],
+      ]);
+      return yield* getManyIn(dir, TicketQuery.byProject('auth' as never).build());
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(tickets.map((ticket) => ticket.id)).toEqual([featureId('auth', 1)]);
+});
+
+test('done moves a ticket of a feature folder into the done/ of its own folder', async () => {
+  const content = '# Login\n';
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* setup([
+        ['1-root.md', '# Root\n'],
+        ['auth/1-login.md', content],
+      ]);
+      yield* TicketSource.pipe(
+        Effect.flatMap((source) => source.reportDone(featureId('auth', 1), outsideWorktree)),
+        Effect.flatMap((afterMerge) => afterMerge),
+        Effect.provide(withDir(dir))
+      );
+      return {
+        moved: yield* fs.readFileString(path.join(dir, 'auth', 'done', '1-login.md')),
+        stillOpen: yield* fs.exists(path.join(dir, 'auth', '1-login.md')),
+        rootStays: yield* fs.exists(path.join(dir, '1-root.md')),
+        rootDone: yield* fs.exists(path.join(dir, 'done')),
+      };
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(result).toEqual({ moved: content, stillOpen: false, rootStays: true, rootDone: false });
+});
