@@ -199,7 +199,7 @@ const failingServices = (
       select: () =>
         Effect.succeed({
           name: 'implementation',
-          run: () => Effect.succeed(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'verdict' }))),
+          run: () => Effect.succeed(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'verdict other than pass' }))),
         }),
     }),
     WorktreeManagerNoop
@@ -444,7 +444,7 @@ test('processTicket retains the ticket worktree when the strategy fails', () => 
       select: () =>
         Effect.succeed({
           name: 'implementation',
-          run: () => Effect.succeed(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'verdict' }))),
+          run: () => Effect.succeed(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'verdict other than pass' }))),
         }),
     }),
     recordingWorktrees(closed)

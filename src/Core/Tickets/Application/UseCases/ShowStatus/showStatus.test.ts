@@ -327,6 +327,14 @@ describe('showStatus', () => {
     ]);
   });
 
+  it('prints a Stale Claim left on an escalated ticket with its Escalation', async () => {
+    const layer = setup([ticket(5)], { claims: [claimOf(id(5), 4242)], escalations: [escalationOf(id(5))] });
+
+    expect(await printed(layer)).toEqual([
+      'folder:5  Ticket 5  escalated  (Stale Claim: Engine engine-1234, Runner engine-1234:runner-a, process 4242, host memory)  (Escalation: strategy failure: step 2, verdict other than pass, 2 attempts, Ticket Worktree /repo/.sandcastle/worktrees/ticket-5)',
+    ]);
+  });
+
   it('prints a Claim that has no Runner yet', async () => {
     const claim = new Claim({ ticket: id(3), engine, process: 1, host: 'memory' });
     const layer = setup([ticket(3)], { claims: [claim] });

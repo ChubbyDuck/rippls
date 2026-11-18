@@ -53,6 +53,10 @@ const verdicts = (signals: (string | undefined)[]): Handler => {
 const run = (steps: readonly StrategyStep[], harness: Harness) =>
   Effect.runPromise(configuredStrategy('implementation', steps).run(ticket, harness));
 
+// The reason of the Escalation that a failed Strategy causes.
+const reasonOf = (outcome: Result.Result<void, StrategyRuntimeError>) =>
+  Result.getFailure(outcome).pipe(Option.map((error) => error.message));
+
 const verdictStep: StrategyStep = { prompt: 'Judge {{id}}.', verdict: true, retries: 1 };
 
 test('the Harness receives the rendered prompts in order, each with its own model demand', async () => {
@@ -122,10 +126,8 @@ test('a verdict that is not a pass after every retry fails the Strategy and runs
 
   const outcome = await run([{ prompt: 'Before.' }, verdictStep, { prompt: 'After.' }], harness);
 
-  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'verdict' })));
-  expect(Result.getFailure(outcome).pipe(Option.map((error) => error.reason))).toEqual(
-    Option.some('strategy failure: step 2, verdict other than pass')
-  );
+  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'verdict other than pass' })));
+  expect(reasonOf(outcome)).toEqual(Option.some('strategy failure: step 2, verdict other than pass'));
   expect(calls.map((call) => call.options.label)).toEqual([
     'ticket-folder:7-step-1',
     'ticket-folder:7-step-2',
@@ -138,7 +140,7 @@ test('a verdict step with no retry count fails on the first verdict that is not 
 
   const outcome = await run([{ prompt: 'Judge.', verdict: true }], harness);
 
-  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 1, failure: 'verdict' })));
+  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 1, failure: 'verdict other than pass' })));
   expect(calls).toHaveLength(1);
 });
 
@@ -162,10 +164,8 @@ test('the time limit ends a step, which then counts as failed', async () => {
     }).pipe(Effect.provide(TestClock.layer()))
   );
 
-  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'time limit' })));
-  expect(Result.getFailure(outcome).pipe(Option.map((error) => error.reason))).toEqual(
-    Option.some('strategy failure: step 2, time limit reached')
-  );
+  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'time limit reached' })));
+  expect(reasonOf(outcome)).toEqual(Option.some('strategy failure: step 2, time limit reached'));
   expect(calls.map((call) => call.options.label)).toEqual([
     'ticket-folder:7-step-1',
     'ticket-folder:7-step-2',
@@ -181,9 +181,7 @@ test('a Harness error fails the Strategy and runs no further step', async () => 
   const outcome = await run([{ prompt: 'Before.' }, { prompt: 'Implement.' }, { prompt: 'After.' }], harness);
 
   expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'Harness error' })));
-  expect(Result.getFailure(outcome).pipe(Option.map((error) => error.reason))).toEqual(
-    Option.some('strategy failure: step 2, Harness error')
-  );
+  expect(reasonOf(outcome)).toEqual(Option.some('strategy failure: step 2, Harness error'));
   expect(calls).toHaveLength(2);
 });
 

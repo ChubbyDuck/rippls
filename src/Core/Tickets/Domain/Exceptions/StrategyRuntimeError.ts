@@ -1,21 +1,17 @@
 import { Data } from 'effect';
 
 /** How a step of a Strategy fails: a Harness error, its time limit, or a verdict other than pass. */
-export type StepFailure = 'Harness error' | 'time limit' | 'verdict';
+export type StepFailure = 'Harness error' | 'time limit reached' | 'verdict other than pass';
 
-const failureText: Record<StepFailure, string> = {
-  'Harness error': 'Harness error',
-  'time limit': 'time limit reached',
-  verdict: 'verdict other than pass',
-};
-
-/** A Strategy failed: the step at its position, counted from one, failed in the given way. */
+/**
+ * A Strategy failed: the step at its position, counted from one, failed in the
+ * given way on its last run. The message is the reason of the Escalation.
+ */
 export class StrategyRuntimeError extends Data.TaggedError('StrategyRuntimeError')<{
   readonly step: number;
   readonly failure: StepFailure;
 }> {
-  /** The reason of the Escalation: the step that failed, by its position, and how it failed. */
-  get reason(): string {
-    return `strategy failure: step ${this.step}, ${failureText[this.failure]}`;
+  override get message(): string {
+    return `strategy failure: step ${this.step}, ${this.failure}`;
   }
 }

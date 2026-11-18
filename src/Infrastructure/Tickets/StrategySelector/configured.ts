@@ -38,11 +38,11 @@ const runStep = (step: StrategyStep, ticket: Ticket, harness: Harness, index: nu
   const limited =
     step.timeLimit === undefined
       ? run
-      : run.pipe(Effect.timeoutOrElse({ duration: step.timeLimit, orElse: () => Effect.fail(failed('time limit')) }));
+      : run.pipe(Effect.timeoutOrElse({ duration: step.timeLimit, orElse: () => Effect.fail(failed('time limit reached')) }));
   return limited.pipe(
     Effect.filterOrFail(
       (result) => step.verdict !== true || result.completionSignal === VERDICT_PASS,
-      () => failed('verdict')
+      () => failed('verdict other than pass')
     ),
     Effect.retry({ times: step.retries ?? 0 }),
     Effect.withSpan('strategy.step', { attributes: { step: index + 1, verdict: step.verdict === true } })
