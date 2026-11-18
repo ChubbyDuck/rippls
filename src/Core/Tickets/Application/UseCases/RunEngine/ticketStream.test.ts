@@ -34,6 +34,7 @@ const scriptedSource = (next: () => Ticket | undefined) => {
         const found = query.id === undefined ? undefined : seen.get(query.id);
         return found === undefined ? Effect.fail(new TicketNotFound()) : Effect.succeed(found);
       }),
+    getUnreadable: Effect.succeed([]),
     getManyBy: () =>
       Effect.sync(() => {
         const ticket = next();

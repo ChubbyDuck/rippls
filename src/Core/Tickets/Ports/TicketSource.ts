@@ -2,6 +2,7 @@ import { Context, type Effect } from 'effect';
 
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import type { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import type { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import type { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
@@ -24,6 +25,11 @@ export class TicketSource extends Context.Service<
   {
     readonly getOneBy: (query: TicketQuery) => Effect.Effect<Ticket, TicketNotFound>;
     readonly getManyBy: (query: TicketQuery) => Effect.Effect<readonly Ticket[]>;
+    /**
+     * Every ticket the Source cannot read, with the reason, whatever its Project:
+     * an unreadable ticket's Project cannot be read with certainty.
+     */
+    readonly getUnreadable: Effect.Effect<readonly UnreadableTicket[]>;
     /** Tells the Source what happened to a ticket. Done is told with `reportDone`. */
     readonly report: (
       ticket: TicketId,

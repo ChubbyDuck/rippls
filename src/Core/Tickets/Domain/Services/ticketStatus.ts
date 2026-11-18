@@ -4,9 +4,18 @@ import { type EligibilityFacts, isDone, isEscalated, isUnattended, isUnblocked, 
 
 /**
  * The values of a Ticket Status, in their order of precedence: when several apply
- * to one ticket, the first one is its Ticket Status.
+ * to one ticket, the first one is its Ticket Status. Unreadable is the Ticket
+ * Status of a ticket its Source cannot read; no other value applies to it.
  */
-export const derivedTicketStatuses = ['done', 'escalated', 'claimed', 'not ready', 'blocked', 'eligible'] as const;
+export const derivedTicketStatuses = [
+  'unreadable',
+  'done',
+  'escalated',
+  'claimed',
+  'not ready',
+  'blocked',
+  'eligible',
+] as const;
 
 /**
  * A Ticket's Ticket Status: its position in its lifecycle, derived from the
@@ -15,11 +24,15 @@ export const derivedTicketStatuses = ['done', 'escalated', 'claimed', 'not ready
 export type DerivedTicketStatus = (typeof derivedTicketStatuses)[number];
 
 /**
- * The Ticket Status of a ticket. When several values apply, the first of done,
- * escalated, claimed, not ready, blocked, and eligible is the one. Not ready means
- * HITL yes. A ticket is eligible exactly when it is Eligible.
+ * The Ticket Status of a ticket its Source read, so never unreadable. When several
+ * values apply, the first of done, escalated, claimed, not ready, blocked, and
+ * eligible is the one. Not ready means HITL yes. A ticket is eligible exactly when
+ * it is Eligible.
  */
-export const deriveTicketStatus = (ticket: Ticket, facts: EligibilityFacts): DerivedTicketStatus => {
+export const deriveTicketStatus = (
+  ticket: Ticket,
+  facts: EligibilityFacts
+): Exclude<DerivedTicketStatus, 'unreadable'> => {
   if (isDone(ticket, facts.done)) {
     return 'done';
   }

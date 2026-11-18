@@ -6,7 +6,7 @@ We added Linear as a second Source behind the existing `TicketSource` port, so t
 
 - Identity: the issue UUID (stable). The `identifier` (`ENG-123`) is display-only.
 - Native fields: `title`, `description` → body, Linear project → Project (slugified to a branch-safe string), issue relations → `blockedBy` (blockers from `inverseRelations(type: blocks)`).
-- No native slot: `kind` and `hitl` are grouped labels, and both are hints. An issue without a `kind` label has the default Ticket Kind from config; an invalid value, or more than one `kind` or `hitl` label, makes it unreadable, and the source skips it. Its HITL is the `hitl` label, else the HITL its stated `kind` implies, else yes. Linear has no readiness marker.
+- No native slot: `kind` and `hitl` are grouped labels, and both are hints. An issue without a `kind` label has the default Ticket Kind from config; an invalid value, or more than one `kind` or `hitl` label, makes it unreadable: the source does not offer it as a ticket, and reports it with the reason, so the Engine prints it at start and `rippls status` lists it. Its HITL is the `hitl` label, else the HITL its stated `kind` implies, else yes. Linear has no readiness marker.
 - A Ticket stores no status. The source sees an issue in a `completed` state as done; its workflow state means nothing else to the Ticket.
 
 ## Reads and writes

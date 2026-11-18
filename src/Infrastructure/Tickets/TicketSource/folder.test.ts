@@ -753,6 +753,75 @@ test('a file with unparseable front matter, or an invalid value for a known hint
   expect([...tickets.keys()]).toEqual([folderId(6)]);
 });
 
+// The unreadable tickets of a fresh tickets folder, as their name, identity,
+// reason, and detail.
+const unreadableIn = (files: ReadonlyArray<readonly [string, string]>) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const dir = yield* setup(files);
+      const unreadable = yield* TicketSource.pipe(
+        Effect.flatMap((source) => source.getUnreadable),
+        Effect.provide(withDir(dir))
+      );
+      return unreadable.map(({ name, id, reason, detail }) => ({ name, id, reason, detail }));
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+test('getUnreadable reports a Markdown file without a numeric prefix, in any folder and in done/, and no other file', async () => {
+  const unreadable = await unreadableIn([
+    ['README.md', '# Tickets\n'],
+    ['web/notes.md', '# Notes\n'],
+    ['web/done/old.md', '# Old\n'],
+    ['image.png', 'not text'],
+    ['1-readable.md', '# Readable\n'],
+  ]);
+
+  expect(unreadable.toSorted((left, right) => left.name.localeCompare(right.name))).toEqual([
+    { name: 'README.md', id: undefined, reason: 'no numeric prefix', detail: undefined },
+    { name: 'web/done/old.md', id: undefined, reason: 'no numeric prefix', detail: undefined },
+    { name: 'web/notes.md', id: undefined, reason: 'no numeric prefix', detail: undefined },
+  ]);
+});
+
+test('getUnreadable reports front matter that cannot be parsed, with why', async () => {
+  const unreadable = await unreadableIn([
+    ['1-yaml.md', '---\ntitle: [unclosed\n---\n'],
+    ['2-open.md', '---\ntitle: No closing delimiter\n'],
+    ['web/3-list.md', '---\n- a list\n---\n'],
+  ]);
+
+  expect(unreadable.map(({ name, id, reason }) => ({ name, id, reason }))).toEqual([
+    { name: '1-yaml.md', id: folderId(1), reason: 'unparseable front matter' },
+    { name: '2-open.md', id: folderId(2), reason: 'unparseable front matter' },
+    { name: 'web/3-list.md', id: formatTicketId('folder', 'web/3'), reason: 'unparseable front matter' },
+  ]);
+  expect(unreadable[0]?.detail).toMatch(/flow sequence|unclosed|Missing|Unexpected/i);
+  expect(unreadable.slice(1).map(({ detail }) => detail)).toEqual([
+    'it has no closing `---`',
+    'it is not a mapping of keys to values',
+  ]);
+});
+
+test('getUnreadable reports an invalid value for a known hint, and names the hint', async () => {
+  const unreadable = await unreadableIn([
+    ['1.md', frontMatter({ title: 'Invalid Kind', kind: 'chore' })],
+    ['2.md', frontMatter({ title: 'Invalid HITL', hitl: 'maybe' })],
+    ['done/3.md', frontMatter({ title: 'Invalid blockers', blockedBy: 'two' })],
+    ['4.md', frontMatter({ title: 'Readable' })],
+  ]);
+
+  expect(unreadable.map(({ id, reason }) => [id, reason])).toEqual([
+    [folderId(1), 'invalid hint'],
+    [folderId(2), 'invalid hint'],
+    [folderId(3), 'invalid hint'],
+  ]);
+  expect(unreadable.map(({ detail }) => detail)).toEqual([
+    expect.stringContaining('["kind"]'),
+    expect.stringContaining('["hitl"]'),
+    expect.stringContaining('["blockedBy"]'),
+  ]);
+});
+
 test('a "Blocked by" line names blockers by number, ignores the text after each number, and reads none as no blockers', async () => {
   const tickets = await readAll([
     ['1.md', '# One number\n\n**Blocked by:** 7\n'],

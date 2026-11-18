@@ -87,6 +87,7 @@ test('processTicket can be reused independently with the services supplied by ea
       }),
       Layer.succeed(TicketSource, {
         getOneBy: () => Effect.succeed(ticket),
+        getUnreadable: Effect.succeed([]),
         getManyBy: () => Effect.succeed([]),
         reportDone: (id) =>
           Effect.sync(() => {
@@ -141,6 +142,7 @@ test('processTicket runs a ticket that omits project', () => {
     }),
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(withoutProject),
+      getUnreadable: Effect.succeed([]),
       getManyBy: () => Effect.succeed([]),
       reportDone: (id) =>
         Effect.sync(() => {
@@ -179,6 +181,7 @@ const failingServices = (
     }),
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(ticket),
+      getUnreadable: Effect.succeed([]),
       getManyBy: () => Effect.succeed([]),
       reportDone: (id) =>
         Effect.sync(() => {
@@ -262,6 +265,7 @@ test('processTicket propagates a missing strategy and does not mark the ticket d
     }),
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.fail(new TicketNotFound()),
+      getUnreadable: Effect.succeed([]),
       getManyBy: () => Effect.succeed([]),
       reportDone: (id) =>
         Effect.sync(() => {
@@ -303,6 +307,7 @@ const probingStrategy = Layer.succeed(StrategySelector, {
 
 const ticketRepoIgnoringReads = Layer.succeed(TicketSource, {
   getOneBy: () => Effect.succeed(ticket),
+  getUnreadable: Effect.succeed([]),
   getManyBy: () => Effect.succeed([]),
   reportDone: () => Effect.succeed(Effect.void),
   report: () => Effect.void,
@@ -324,6 +329,7 @@ test('processTicket hands the strategy a harness bound to the ticket worktree', 
     }),
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(withoutProject),
+      getUnreadable: Effect.succeed([]),
       getManyBy: () => Effect.succeed([]),
       reportDone: () => Effect.succeed(Effect.void),
       report: () => Effect.void,
@@ -376,6 +382,7 @@ test('two tickets that name the same project run in distinct ticket worktrees', 
         const found = query.id === undefined ? undefined : store.get(query.id);
         return found === undefined ? Effect.fail(new TicketNotFound()) : Effect.succeed(found);
       },
+      getUnreadable: Effect.succeed([]),
       getManyBy: () => Effect.succeed([]),
       reportDone: () => Effect.succeed(Effect.void),
       report: () => Effect.void,
@@ -455,6 +462,7 @@ test('a project-worktree create failure is retried once and then halts without e
     }),
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(ticket),
+      getUnreadable: Effect.succeed([]),
       getManyBy: () => Effect.succeed([]),
       reportDone: (id) =>
         Effect.sync(() => {
@@ -529,6 +537,7 @@ test('a ticket-worktree close failure is retried once and then halts with no don
     }),
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(ticket),
+      getUnreadable: Effect.succeed([]),
       getManyBy: () => Effect.succeed([]),
       reportDone: (id) =>
         Effect.sync(() => {
@@ -611,6 +620,7 @@ test('a done report that fails escalates the ticket, merges nothing, and records
     }),
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(ticket),
+      getUnreadable: Effect.succeed([]),
       getManyBy: () => Effect.succeed([]),
       report: (_, event) =>
         Effect.sync(() => {

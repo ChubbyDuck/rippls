@@ -12,6 +12,7 @@ import type { RunEngineCommand } from './command';
 import { createEngine } from './createEngine';
 import { ensureWorktreesWritable } from './ensureWorktreesWritable';
 import { makeIdleClock } from './idleClock';
+import { reportUnreadable } from './reportUnreadable';
 import { ticketStream } from './ticketStream';
 
 // On exit the Engine releases only the Claims it holds, and reports each release
@@ -41,6 +42,7 @@ export const runEngine = Effect.fn('engine.run')(function* ({
   const root = yield* RepositoryRoot;
   yield* ensureWorktreesWritable(root);
   const engine = yield* createEngine;
+  yield* reportUnreadable(project);
   const availableRunners = yield* Queue.unbounded<Runner>();
   yield* Queue.offerAll(
     availableRunners,

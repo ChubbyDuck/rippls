@@ -1,9 +1,10 @@
-import { Option, Schema } from 'effect';
+import { type Option, Result, Schema } from 'effect';
 
 import { type Ticket, TicketHints, ticketFromHints } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { fallbackHitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
+import { detailOf, UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import type { LinearIssue, LinearLabel, LinearMetadata } from '~/Core/Tickets/Ports/LinearApi';
 
 export const slugify = (name: string): string =>
@@ -44,17 +45,19 @@ const relatedIds = (relations: LinearIssue['relations'], type: 'blocks'): readon
   relations.filter((relation) => relation.type === type).map((relation) => toLinearId(relation.issueId));
 
 /**
- * The Ticket an Issue reads as, or none when it is unreadable: a `kind` or `hitl`
- * label with an invalid value, or more than one of either. An Issue without a
+ * The Ticket an Issue reads as, or why it is unreadable: a `kind` or `hitl` label
+ * with an invalid value, or more than one of either, is an invalid hint. An
+ * unreadable Issue is named by its identifier, such as `ENG-12`. An Issue without a
  * `kind` label has the default Ticket Kind. An Issue that needs a human keeps its
  * Ticket Kind and states HITL yes. Linear has no Marker, and its workflow state
  * does not make an Issue Unattended, so an Issue that states no HITL and no Ticket
  * Kind that implies one is HITL yes.
  */
-export const issueToTicket = (issue: LinearIssue, defaultKind: TicketKind): Option.Option<Ticket> => {
+export const readIssue = (issue: LinearIssue, defaultKind: TicketKind): Result.Result<Ticket, UnreadableTicket> => {
   const project = issue.project === null ? '' : slugify(issue.project.name);
-  return Schema.decodeUnknownOption(TicketHints)({
-    id: toLinearId(issue.id),
+  const id = toLinearId(issue.id);
+  return Schema.decodeUnknownResult(TicketHints)({
+    id,
     title: issue.title,
     ...(project === '' ? {} : { project }),
     blockedBy: relatedIds(issue.inverseRelations, 'blocks'),
@@ -62,8 +65,23 @@ export const issueToTicket = (issue: LinearIssue, defaultKind: TicketKind): Opti
     hitl: needsHuman(issue.labels) ? 'yes' : groupedHint(issue.labels, 'hitl'),
     body: issue.description ?? '',
     doneInSource: issue.state.type === 'completed',
-  }).pipe(Option.map((hints) => ticketFromHints(hints, { kind: defaultKind, hitl: fallbackHitl })));
+  }).pipe(
+    Result.mapError(
+      (error) =>
+        new UnreadableTicket({
+          name: issue.identifier,
+          id,
+          reason: 'invalid hint',
+          detail: detailOf(error.message),
+        })
+    ),
+    Result.map((hints) => ticketFromHints(hints, { kind: defaultKind, hitl: fallbackHitl }))
+  );
 };
+
+/** The Ticket an Issue reads as, or none when it is unreadable (see `readIssue`). */
+export const issueToTicket = (issue: LinearIssue, defaultKind: TicketKind): Option.Option<Ticket> =>
+  Result.getSuccess(readIssue(issue, defaultKind));
 
 export type LinearWrite =
   | { readonly op: 'setAssignee'; readonly issueId: string; readonly assigneeId: string | null }

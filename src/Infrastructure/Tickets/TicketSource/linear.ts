@@ -1,8 +1,9 @@
-import { Config, Console, Effect, Layer, Option } from 'effect';
+import { Config, Console, Effect, Layer, Option, Result } from 'effect';
 
 import { defaultKindConfig } from '~/Core/Shared/Domain/EngineConfig';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
+import type { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import { parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
@@ -19,6 +20,7 @@ import {
   issueToTicket,
   NEEDS_HUMAN_LABEL,
   needsHumanLabelId,
+  readIssue,
   type LinearWrite,
   releaseWrites,
   retryWrites,
@@ -111,6 +113,21 @@ export const TicketSourceLinearLive = Layer.effect(
     const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
       pull(query).pipe(Effect.catchCause(() => Effect.succeed<readonly Ticket[]>([])));
 
+    // The Issues among those offered for processing that cannot be read as tickets,
+    // by creation time, oldest first.
+    const getUnreadable: Effect.Effect<readonly UnreadableTicket[]> = api.issues(teamId).pipe(
+      Effect.map((issues) =>
+        issues
+          .filter((issue) => OFFERED_STATE_TYPES.has(issue.state.type))
+          .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
+          .flatMap((issue) => {
+            const read = readIssue(issue, defaultKind);
+            return Result.isFailure(read) ? [read.failure] : [];
+          })
+      ),
+      Effect.catchCause(() => Effect.succeed<readonly UnreadableTicket[]>([]))
+    );
+
     const applyWrite = (write: LinearWrite) => {
       switch (write.op) {
         case 'setAssignee':
@@ -194,6 +211,6 @@ export const TicketSourceLinearLive = Layer.effect(
         Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event: 'done' }))
       );
 
-    return { getOneBy, getManyBy, report, reportDone };
+    return { getOneBy, getManyBy, getUnreadable, report, reportDone };
   })
 );

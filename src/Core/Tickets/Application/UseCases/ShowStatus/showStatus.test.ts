@@ -8,6 +8,7 @@ import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
@@ -36,7 +37,7 @@ const ticket = (value: number, fields: Record<string, unknown> = {}) =>
 
 // A fake Source that keeps tickets in memory, in the order given. A read for the
 // tickets in scope returns every one of them, narrowed only by Project.
-const fakeSource = (tickets: readonly Ticket[]) => {
+const fakeSource = (tickets: readonly Ticket[], unreadable: readonly UnreadableTicket[] = []) => {
   const read = (query: TicketQuery) =>
     tickets.filter(
       (candidate) =>
@@ -51,6 +52,7 @@ const fakeSource = (tickets: readonly Ticket[]) => {
         return found === undefined ? Effect.fail(new TicketNotFound()) : Effect.succeed(found);
       }),
     getManyBy: (query) => Effect.sync(() => read(query)),
+    getUnreadable: Effect.succeed(unreadable),
     report: () => Effect.void,
     reportDone: () => Effect.succeed(Effect.void),
   });
@@ -70,10 +72,12 @@ const setup = (
     claims = [],
     escalations = [],
     done = [],
+    unreadable = [],
   }: {
     readonly claims?: readonly Claim[];
     readonly escalations?: readonly Escalation[];
     readonly done?: readonly TicketId[];
+    readonly unreadable?: readonly UnreadableTicket[];
   } = {}
 ) => {
   const ledger = makeLedgerMemory();
@@ -86,13 +90,17 @@ const setup = (
   for (const escalation of escalations) {
     ledger.escalated.set(escalation.ticket, escalation);
   }
-  return Layer.merge(fakeSource(tickets), ledger.layer);
+  return Layer.merge(fakeSource(tickets, unreadable), ledger.layer);
 };
 
 const statusesOf = (layer: ReturnType<typeof setup>, command: ShowStatusCommand = {}) =>
   Effect.runPromise(
     ticketStatuses(command).pipe(
-      Effect.map((lines) => lines.map((line) => [line.ticket.id, line.status] as const)),
+      Effect.map((lines) =>
+        lines.map((line) =>
+          line.status === 'unreadable' ? ([line.unreadable.name, line.status] as const) : ([line.ticket.id, line.status] as const)
+        )
+      ),
       Effect.provide(layer)
     )
   );
@@ -185,6 +193,69 @@ describe('ticketStatuses', () => {
   });
 });
 
+// The unreadable tickets of a folder, one for each reason.
+const unreadable = [
+  new UnreadableTicket({ name: 'README.md', reason: 'no numeric prefix' }),
+  new UnreadableTicket({
+    name: '07-broken.md',
+    id: id(7),
+    reason: 'unparseable front matter',
+    detail: 'it has no closing `---`',
+  }),
+  new UnreadableTicket({ name: '08-unknown-kind.md', id: id(8), reason: 'invalid hint', detail: 'Expected a kind at ["kind"]' }),
+];
+
+describe('ticketStatuses, unreadable tickets and blockers', () => {
+  it('lists every unreadable ticket under the Ticket Status unreadable, with its reason, after the tickets', async () => {
+    const layer = setup([ticket(1)], { unreadable });
+
+    const lines = await Effect.runPromise(ticketStatuses({}).pipe(Effect.provide(layer)));
+
+    expect(lines.map((line) => (line.status === 'unreadable' ? [line.status, line.unreadable] : [line.status]))).toEqual([
+      ['eligible'],
+      ['unreadable', unreadable[0]],
+      ['unreadable', unreadable[1]],
+      ['unreadable', unreadable[2]],
+    ]);
+  });
+
+  it('lists the unreadable tickets whatever the Project', async () => {
+    const layer = setup([ticket(1)], { unreadable });
+
+    expect(await statusesOf(layer, { project: web })).toEqual([
+      ['README.md', 'unreadable'],
+      ['07-broken.md', 'unreadable'],
+      ['08-unknown-kind.md', 'unreadable'],
+    ]);
+  });
+
+  it('shows which blockers of a blocked ticket are open and which are unresolved', async () => {
+    const layer = setup(
+      [
+        ticket(1, { hitl: 'yes' }),
+        ticket(2, { doneInSource: true }),
+        ticket(3, { blockedBy: [id(1), id(2), id(9), formatTicketId('folder', 'A title')] }),
+      ],
+    );
+
+    const lines = await Effect.runPromise(ticketStatuses({}).pipe(Effect.provide(layer)));
+
+    expect(lines.flatMap((line) => (line.status === 'blocked' ? [[line.ticket.id, line.blockers]] : []))).toEqual([
+      [id(3), { open: [id(1)], unresolved: [id(9), formatTicketId('folder', 'A title')] }],
+    ]);
+  });
+
+  it('counts a blocker of another Project that the Source finds by its identity as open', async () => {
+    const layer = setup([ticket(1, { project: web, hitl: 'yes' }), ticket(2, { blockedBy: [id(1)] })]);
+
+    const lines = await Effect.runPromise(ticketStatuses({ project: billing }).pipe(Effect.provide(layer)));
+
+    expect(lines.flatMap((line) => (line.status === 'blocked' ? [line.blockers] : []))).toEqual([
+      { open: [id(1)], unresolved: [] },
+    ]);
+  });
+});
+
 describe('showStatus', () => {
   it('prints the identity, the Title, and the Ticket Status of every ticket', async () => {
     const layer = setup([ticket(1, { doneInSource: true }), ticket(2)]);
@@ -197,7 +268,7 @@ describe('showStatus', () => {
 
     expect(await printed(layer)).toEqual([
       'folder:1   Short           eligible',
-      'folder:12  A longer title  blocked',
+      'folder:12  A longer title  blocked  (Blockers: open folder:1)',
     ]);
   });
 
@@ -223,6 +294,27 @@ describe('showStatus', () => {
 
     expect(await printed(layer)).toEqual([
       'folder:5  Ticket 5  escalated  (Escalation: strategy failure, 2 attempts, Ticket Worktree /repo/.sandcastle/worktrees/ticket-5)',
+    ]);
+  });
+
+  it('prints each unreadable ticket with its reason, and a dash for a file with no identity', async () => {
+    const layer = setup([ticket(1)], { unreadable });
+
+    expect(await printed(layer)).toEqual([
+      'folder:1  Ticket 1            eligible',
+      '-         README.md           unreadable  (no numeric prefix)',
+      'folder:7  07-broken.md        unreadable  (unparseable front matter: it has no closing `---`)',
+      'folder:8  08-unknown-kind.md  unreadable  (invalid hint: Expected a kind at ["kind"])',
+    ]);
+  });
+
+  it('prints the open and the unresolved blockers of a blocked ticket', async () => {
+    const layer = setup([ticket(1, { hitl: 'yes' }), ticket(3, { blockedBy: [id(1), id(9)] }), ticket(4, { blockedBy: [id(1)] })]);
+
+    expect(await printed(layer)).toEqual([
+      'folder:1  Ticket 1  not ready',
+      'folder:3  Ticket 3  blocked  (Blockers: open folder:1; unresolved folder:9)',
+      'folder:4  Ticket 4  blocked  (Blockers: open folder:1)',
     ]);
   });
 

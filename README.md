@@ -240,6 +240,26 @@ npx rippls --poll-interval "30 seconds"
 npx rippls --help
 ```
 
+### Reported at Engine start
+
+Before it takes a ticket, the Engine prints what it cannot read or resolve, then runs
+as usual:
+
+- one line for each ticket that is unreadable because of its front matter or an invalid
+  hint, with the reason;
+- one line for each blocker that cannot be resolved, with the ticket and the reference;
+- one line with the count of Markdown files that have no numeric prefix.
+
+```text
+folder:7 (07-broken.md) is unreadable and is not taken: unparseable front matter: it has no closing `---`
+folder:3 has a blocker that cannot be resolved, so it stays blocked: folder:99
+2 files have no numeric prefix, so they are not read as tickets
+```
+
+`--project` narrows the blockers it reports to the tickets of that Project. It reports
+unreadable files whatever their Project, since an unreadable file's Project cannot be
+read.
+
 Use `Ctrl-C` to stop a run. On exit an Engine releases only the Claims it holds and
 reports each release to the Source. The Claims of another Engine on the same
 Repository Root stay in place, so two Engines can run side by side.
@@ -256,6 +276,7 @@ the ticket, the Ledger, and the done tickets; the ticket file does not hold it.
 
 | Ticket Status | Meaning |
 | --- | --- |
+| `unreadable` | Its Source cannot read it (see [What a ticket needs](#what-a-ticket-needs)). |
 | `done` | Its Source sees it as done, or the Ledger records it as done. |
 | `escalated` | The Ledger holds an Escalation for it (see [Escalation](#escalation)). |
 | `claimed` | The Ledger holds a Claim on it that is not stale. |
@@ -268,14 +289,19 @@ whose only Claim is stale shows the value it would have without that Claim.
 
 A claimed ticket also shows the owner of its Claim: the Engine, the Runner (or `no
 Runner yet`), the process ID, and the host. An escalated ticket shows the reason of its
-Escalation, the attempt count, and the path of its retained Ticket Worktree.
+Escalation, the attempt count, and the path of its retained Ticket Worktree. A blocked
+ticket shows which of its blockers are open and which cannot be resolved. After the
+tickets, every unreadable file or Issue is listed with its reason, under its identity
+when Rippls can tell one and `-` otherwise.
 
 ```text
 folder:1  Add login                   claimed  (Claim: Engine honey-wren-c9w5, Runner honey-wren-c9w5:0, process 21474, host build-box)
-folder:2  Add logout                  blocked
+folder:2  Add logout                  blocked  (Blockers: open folder:1; unresolved folder:9)
 folder:3  Add the session store       done
 folder:4  Add sign-up                 escalated  (Escalation: strategy failure, 1 attempt, Ticket Worktree /repo/.sandcastle/worktrees/ticket-folder-4)
 folder:5  Choose the password policy  not ready
+-         README.md                   unreadable  (no numeric prefix)
+folder:7  07-broken.md                unreadable  (unparseable front matter: it has no closing `---`)
 ```
 
 `--project` and `--source` scope the list as they scope the Engine, before or after
@@ -670,9 +696,11 @@ case does not matter.
 Done ticket files move to the `done/` of their folder unchanged (see
 [Completion and `done/`](#completion-and-done)).
 
-A file is unreadable when its name has no numeric prefix, its front matter cannot be
-parsed, or a hint it states has an invalid value, such as an unknown `kind`. Rippls
-does not take an unreadable ticket.
+A Markdown file is unreadable when its name has no numeric prefix, its front matter
+cannot be parsed, or a hint it states has an invalid value, such as an unknown `kind`.
+Rippls does not take an unreadable ticket, and it reports every one: at Engine start
+and in `rippls status`, with the reason (see [Reported at Engine start](#reported-at-engine-start)).
+A blocker that cannot be resolved is reported the same way.
 
 ## Linear Source
 
@@ -722,7 +750,8 @@ Linear has no marker, and a workflow state does not make an issue Unattended. An
 is HITL `no` only through a `hitl:no` label or a `kind:*` label whose kind implies it
 (see [Ticket kinds and HITL](#ticket-kinds-and-hitl)); otherwise it is HITL `yes`.
 An issue with an unknown kind or HITL, or with more than one `kind:*` or `hitl:*`
-label, is unreadable, and Rippls does not take it.
+label, is unreadable: Rippls does not take it, and reports it by its identifier, such as
+`ENG-12`, at Engine start and in `rippls status`.
 
 Create a `needs-human` label in the team as well. Rippls adds it to an escalated issue,
 and reads an issue that has it as `hitl: yes`, whatever its `kind`. Without the label,

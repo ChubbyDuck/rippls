@@ -408,3 +408,31 @@ test('getManyBy narrows by Project and keeps the creation order', async () => {
 
   expect(tickets.map((ticket) => ticket.id)).toEqual([toLinearId('earlier'), toLinearId('later')]);
 });
+
+test('getUnreadable reports each offered Issue with an invalid hint, named by its identifier, oldest first', async () => {
+  const api = fakeLinear([
+    issue({ id: 'readable', createdAt: '2026-01-01T00:00:00.000Z' }),
+    issue({ id: 'two-kinds', createdAt: '2026-03-01T00:00:00.000Z', labels: [
+      { id: 'label-impl', name: 'kind:implementation' },
+      { id: 'label-task', name: 'kind:task' },
+    ] }),
+    issue({ id: 'unknown-kind', createdAt: '2026-02-01T00:00:00.000Z', labels: [{ id: 'label-chore', name: 'kind:chore' }] }),
+    issue({ id: 'started', stateType: 'started', labels: [{ id: 'label-chore', name: 'kind:chore' }] }),
+  ]);
+
+  const unreadable = await Effect.runPromise(
+    TicketSource.pipe(
+      Effect.flatMap((source) => source.getUnreadable),
+      Effect.provide(withRepo(api))
+    )
+  );
+
+  expect(unreadable.map(({ name, id, reason }) => [name, id, reason])).toEqual([
+    ['ENG-24', toLinearId('unknown-kind'), 'invalid hint'],
+    ['ENG-24', toLinearId('two-kinds'), 'invalid hint'],
+  ]);
+  expect(unreadable.map(({ detail }) => detail)).toEqual([
+    expect.stringContaining('["kind"]'),
+    expect.stringContaining('["kind"]'),
+  ]);
+});

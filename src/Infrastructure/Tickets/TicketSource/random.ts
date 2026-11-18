@@ -33,6 +33,7 @@ export const TicketSourceLive = Layer.sync(TicketSource, () => {
         Effect.map((kind) => sampleTicket(++created, kind))
       ),
     getManyBy: () => Effect.succeed([]),
+    getUnreadable: Effect.succeed([]),
     report: () => Effect.void,
     reportDone: () => Effect.succeed(Effect.void),
   };

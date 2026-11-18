@@ -24,6 +24,7 @@ const fakeSource = (failing?: TicketEvent) => {
   const layer = Layer.succeed(TicketSource, {
     getOneBy: () => Effect.die('getOneBy should not be called'),
     getManyBy: () => Effect.die('getManyBy should not be called'),
+    getUnreadable: Effect.die('getUnreadable should not be called'),
     report: (ticket, event) =>
       event === failing
         ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event }))

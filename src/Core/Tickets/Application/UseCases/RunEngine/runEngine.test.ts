@@ -12,6 +12,7 @@ import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
@@ -76,6 +77,7 @@ const fakeSource = (
       event: ReportedEvent
     ) => Effect.Effect<void, TicketEventNotReported>;
     readonly reportDone?: (ticket: TicketId, worktree: Worktree) => Effect.Effect<AfterMerge, TicketEventNotReported>;
+    readonly unreadable?: readonly UnreadableTicket[];
   } = {}
 ) => {
   const store = new Map(seed.map((ticket) => [ticket.id, ticket]));
@@ -103,6 +105,7 @@ const fakeSource = (
         }
         return read(query);
       }),
+    getUnreadable: Effect.succeed(options.unreadable ?? []),
     report: (ticket, event) =>
       (options.report ?? (() => Effect.void))(ticket, event).pipe(
         Effect.andThen(
@@ -125,6 +128,10 @@ const fakeSource = (
   };
   return { layer, store, scopeReads, reports, doneReported, add };
 };
+
+// The Engine reads the tickets in scope once at start, to report what it cannot
+// read, before its first poll.
+const startRead = 1;
 
 // A Claim that another Engine holds in the shared Ledger.
 const otherEngine = Schema.decodeSync(EngineId)('other-engine-0000');
@@ -180,6 +187,9 @@ const runUntil = <A, E>(effect: Effect.Effect<A, E>, isReady: () => boolean) =>
 const capturingConsole = (messages: string[]): Console.Console =>
   Object.assign(Object.create(console), {
     log: (...args: ReadonlyArray<unknown>) => {
+      messages.push(args.map(String).join(' '));
+    },
+    warn: (...args: ReadonlyArray<unknown>) => {
       messages.push(args.map(String).join(' '));
     },
     error: (...args: ReadonlyArray<unknown>) => {
@@ -519,6 +529,65 @@ test('runEngine keeps a ticket blocked by a blocker that the Source cannot find'
   );
 
   expect(ran).toEqual([]);
+});
+
+test('runEngine prints the unreadable tickets, the unresolved blockers, and the files without a numeric prefix at start, then takes its Eligible tickets', async () => {
+  const ran: Ticket[] = [];
+  const messages: string[] = [];
+  const unreadable = [
+    new UnreadableTicket({ name: 'README.md', reason: 'no numeric prefix' }),
+    new UnreadableTicket({ name: 'web/notes.md', reason: 'no numeric prefix' }),
+    new UnreadableTicket({
+      name: '07-broken.md',
+      id: id(7),
+      reason: 'unparseable front matter',
+      detail: 'it has no closing `---`',
+    }),
+    new UnreadableTicket({
+      name: '08-unknown-kind.md',
+      id: id(8),
+      reason: 'invalid hint',
+      detail: 'Expected "implementation" | "research", got "chore" at ["kind"]',
+    }),
+  ];
+  const source = fakeSource(
+    [
+      blockedTicket(3, 99),
+      blockedTicket(4, 5),
+      Ticket.create({ ...sampleFields(5), hitl: 'yes' }),
+      sampleTicket(6),
+    ],
+    { unreadable }
+  );
+  const layer = Layer.mergeAll(
+    source.layer,
+    HarnessSelectorNoop,
+    capturingImplementation(ran),
+    Layer.succeed(Console.Console, capturingConsole(messages))
+  );
+
+  expect(await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => ran.length === 1)).toBeUndefined();
+  expect(messages.slice(0, 4)).toEqual([
+    'folder:7 (07-broken.md) is unreadable and is not taken: unparseable front matter: it has no closing `---`',
+    'folder:8 (08-unknown-kind.md) is unreadable and is not taken: invalid hint: Expected "implementation" | "research", got "chore" at ["kind"]',
+    'folder:3 has a blocker that cannot be resolved, so it stays blocked: folder:99',
+    '2 files have no numeric prefix, so they are not read as tickets',
+  ]);
+  expect(ran).toEqual([sampleTicket(6)]);
+});
+
+test('runEngine prints nothing at start when every ticket is readable and every blocker resolves', async () => {
+  const ran: Ticket[] = [];
+  const messages: string[] = [];
+  const layer = Layer.mergeAll(
+    fakeSource([sampleTicket(1), blockedTicket(2, 1)]).layer,
+    HarnessSelectorNoop,
+    capturingImplementation(ran),
+    Layer.succeed(Console.Console, capturingConsole(messages))
+  );
+
+  expect(await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => ran.length === 2)).toBeUndefined();
+  expect(messages.filter((message) => /unreadable|cannot be resolved|numeric prefix/.test(message))).toEqual([]);
 });
 
 // A ticket in the template of a standard ticket-writing skill, with no front matter.
@@ -944,11 +1013,11 @@ test('runEngine keeps polling when the provided repository has no ticket', async
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* runEngine({ project }).pipe(Effect.forkChild({ startImmediately: true }));
-      expect(source.scopeReads.length).toBe(1);
+      expect(source.scopeReads.length).toBe(startRead + 1);
       yield* TestClock.adjust('10 seconds');
-      expect(source.scopeReads.length).toBe(2);
+      expect(source.scopeReads.length).toBe(startRead + 2);
       yield* TestClock.adjust('10 seconds');
-      expect(source.scopeReads.length).toBe(3);
+      expect(source.scopeReads.length).toBe(startRead + 3);
     }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer())))
   );
 });
@@ -994,11 +1063,11 @@ test('runEngine source.scopeReads.length at the given pollInterval when empty', 
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
-      expect(source.scopeReads.length).toBe(1);
+      expect(source.scopeReads.length).toBe(startRead + 1);
       yield* TestClock.adjust('1999 millis');
-      expect(source.scopeReads.length).toBe(1);
+      expect(source.scopeReads.length).toBe(startRead + 1);
       yield* TestClock.adjust('1 millis');
-      expect(source.scopeReads.length).toBe(2);
+      expect(source.scopeReads.length).toBe(startRead + 2);
     }).pipe(Effect.provide(TestClock.layer()))
   );
 });
@@ -1017,11 +1086,11 @@ test('runEngine source.scopeReads.length once every 10 seconds when empty regard
         Effect.forkChild({ startImmediately: true })
       );
       yield* TestClock.adjust('0 millis');
-      expect(source.scopeReads.length).toBe(1);
+      expect(source.scopeReads.length).toBe(startRead + 1);
       yield* TestClock.adjust('10 seconds');
-      expect(source.scopeReads.length).toBe(2);
+      expect(source.scopeReads.length).toBe(startRead + 2);
       yield* TestClock.adjust('10 seconds');
-      expect(source.scopeReads.length).toBe(3);
+      expect(source.scopeReads.length).toBe(startRead + 3);
     }).pipe(Effect.provide(TestClock.layer()))
   );
 });
@@ -1058,7 +1127,7 @@ test('runEngine stops reading at the limit length', async () => {
   ).toBeUndefined();
   expect(ran).toHaveLength(2);
   expect(ran).toEqual([first, second]);
-  expect(source.scopeReads).toHaveLength(2);
+  expect(source.scopeReads).toHaveLength(startRead + 2);
 });
 
 test('runEngine claims a single unblocked ticket once', async () => {

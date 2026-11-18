@@ -1,4 +1,4 @@
-import { Config, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from 'effect';
+import { Config, Effect, FileSystem, Layer, Option, Path, Result, Schema, Stream } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { parse } from 'yaml';
 
@@ -13,10 +13,11 @@ import {
 import { fallbackHitl, Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { Marker } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Marker';
 import { formatTicketId, parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { detailOf, UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import type { Worktree } from '~/Core/Tickets/Ports/WorktreeManager';
 
@@ -87,6 +88,21 @@ const ticketFileOf = (relative: readonly string[]): TicketFile | undefined => {
   };
 };
 
+// The path of a ticket file below the tickets folder, with `/` between segments.
+const pathOf = ({ directories, name }: Pick<TicketFile, 'directories' | 'name'>): string =>
+  [...directories, name].join('/');
+
+const MARKDOWN_FILE = /\.md$/;
+
+// A Markdown file whose name has no numeric prefix is no ticket Rippls can read.
+const withoutNumber = (relative: readonly string[]): UnreadableTicket | undefined => {
+  const name = relative.at(-1);
+  if (name === undefined || !MARKDOWN_FILE.test(name) || idFromFilename(name) !== undefined) {
+    return undefined;
+  }
+  return new UnreadableTicket({ name: pathOf({ directories: relative.slice(0, -1), name }), reason: 'no numeric prefix' });
+};
+
 // Folders in the order of their paths, segment by segment, so the tickets folder
 // itself comes first and a folder comes before the folders below it.
 const compareFolders = (left: readonly string[], right: readonly string[]): number => {
@@ -109,28 +125,28 @@ const isRecord = (value: unknown): value is { readonly [key: string]: unknown } 
 
 // The front matter and the body of a ticket file. A file without front matter is
 // all body. Front matter without a closing delimiter, or that does not parse to a
-// mapping, cannot be read.
-const splitFrontMatter = (text: string): Option.Option<FrontMatterAndBody> => {
+// mapping, cannot be read: the failure says why.
+const splitFrontMatter = (text: string): Result.Result<FrontMatterAndBody, string> => {
   if (!OPENING_DELIMITER.test(text)) {
-    return Option.some({ fields: {}, body: text });
+    return Result.succeed({ fields: {}, body: text });
   }
   const match = FRONT_MATTER.exec(text);
   if (match === null) {
-    return Option.none();
+    return Result.fail('it has no closing `---`');
   }
   let fields: unknown;
   try {
     fields = parse(match[1] ?? '');
-  } catch {
-    return Option.none();
+  } catch (error) {
+    return Result.fail(detailOf(error instanceof Error ? error.message : String(error)));
   }
   if (fields === null || fields === undefined) {
     fields = {};
   }
   if (!isRecord(fields)) {
-    return Option.none();
+    return Result.fail('it is not a mapping of keys to values');
   }
-  return Option.some({ fields, body: text.slice(match[0].length).replace(/^(?:\r?\n)+/, '') });
+  return Result.succeed({ fields, body: text.slice(match[0].length).replace(/^(?:\r?\n)+/, '') });
 };
 
 const FENCE = /^\s*(?:```|~~~)/;
@@ -248,30 +264,40 @@ const blockersInBody = (body: string, folder: string): readonly TicketId[] | und
 const emptyAsMissing = (value: unknown): unknown => (value === null ? undefined : value);
 
 /**
- * The Ticket a file reads as, or none when it is unreadable. A Ticket needs an
+ * The Ticket a file reads as, or why it is unreadable. A Ticket needs an
  * identity, from its folder and the numeric filename prefix, and text. Every
  * other value is a hint: the Title comes from the `title` field, the first
  * heading, or the filename; the Project from the `project` field or the first
  * folder below the tickets folder; the Marker from a `status` field or a "Status"
  * line; the blockers, numbers of tickets in the same folder, from a `blockedBy`
  * field or a "Blocked by" line. A `status` value is read only as a Marker;
- * `blocks`, `claimedBy`, and unknown keys are ignored. An invalid value for a
- * known hint makes the file unreadable. A ticket in a `done/` is done.
+ * `blocks`, `claimedBy`, and unknown keys are ignored. Front matter that cannot be
+ * parsed, or an invalid value for a known hint, makes the file unreadable. A
+ * ticket in a `done/` is done.
  */
-const fileToTicket = (text: string, file: TicketFile, fallbacks: TicketFallbacks): Option.Option<Ticket> => {
+const fileToTicket = (text: string, file: TicketFile, fallbacks: TicketFallbacks): Result.Result<Ticket, UnreadableTicket> => {
   const folder = file.folder.join('/');
-  return Option.flatMap(splitFrontMatter(text), ({ fields, body }) =>
-    Schema.decodeUnknownOption(TicketHints)({
-      id: ticketIdIn(folder, file.number),
-      title: emptyAsMissing(fields.title) ?? headingTitle(body) ?? filenameTitle(file.name),
-      body,
-      project: emptyAsMissing(fields.project) ?? file.folder[0],
-      blockedBy: namespaceIds(emptyAsMissing(fields.blockedBy), folder) ?? blockersInBody(body, folder),
-      kind: emptyAsMissing(fields.kind),
-      hitl: emptyAsMissing(fields.hitl),
-      marker: markerOf(fields.status) ?? markerInBody(body),
-      doneInSource: file.inDone,
-    }).pipe(Option.map((hints) => ticketFromHints(hints, fallbacks)))
+  const id = ticketIdIn(folder, file.number);
+  const unreadable = (reason: UnreadableTicket['reason']) => (detail: string) =>
+    new UnreadableTicket({ name: pathOf(file), id, reason, detail });
+  return splitFrontMatter(text).pipe(
+    Result.mapError(unreadable('unparseable front matter')),
+    Result.flatMap(({ fields, body }) =>
+      Schema.decodeUnknownResult(TicketHints)({
+        id,
+        title: emptyAsMissing(fields.title) ?? headingTitle(body) ?? filenameTitle(file.name),
+        body,
+        project: emptyAsMissing(fields.project) ?? file.folder[0],
+        blockedBy: namespaceIds(emptyAsMissing(fields.blockedBy), folder) ?? blockersInBody(body, folder),
+        kind: emptyAsMissing(fields.kind),
+        hitl: emptyAsMissing(fields.hitl),
+        marker: markerOf(fields.status) ?? markerInBody(body),
+        doneInSource: file.inDone,
+      }).pipe(
+        Result.mapError((error) => unreadable('invalid hint')(detailOf(error.message))),
+        Result.map((hints) => ticketFromHints(hints, fallbacks))
+      )
+    )
   );
 };
 
@@ -324,16 +350,20 @@ export const TicketSourceFolderLive = Layer.effect(
     Effect.map(({ fs, path, spawner, root, dir, kind, hitl }) => {
       const fallbacks: TicketFallbacks = { kind, hitl };
 
-      const readTicket = (file: TicketFile): Effect.Effect<Option.Option<Ticket>> =>
+      const readTicket = (file: TicketFile): Effect.Effect<Option.Option<Result.Result<Ticket, UnreadableTicket>>> =>
         fs.readFileString(path.join(dir, ...file.directories, file.name)).pipe(
-          Effect.map((text) => fileToTicket(text, file, fallbacks)),
+          Effect.map((text) => Option.some(fileToTicket(text, file, fallbacks))),
           Effect.catchCause(() => Effect.succeedNone)
         );
 
-      // The ticket files below the tickets folder, at any depth, in or out of a `done/`.
-      const ticketFiles = fs
+      // The paths below the tickets folder, at any depth, in or out of a `done/`,
+      // as their segments.
+      const entries = fs
         .readDirectory(dir, { recursive: true })
-        .pipe(Effect.map((entries) => entries.flatMap((entry) => ticketFileOf(entry.split(path.sep)) ?? [])));
+        .pipe(Effect.map((found) => found.map((entry) => entry.split(path.sep))));
+
+      // The ticket files below the tickets folder, at any depth, in or out of a `done/`.
+      const ticketFiles = entries.pipe(Effect.map((found) => found.flatMap((entry) => ticketFileOf(entry) ?? [])));
 
       // The readable tickets that match the query, in processing order, with or
       // without the done ones.
@@ -345,8 +375,11 @@ export const TicketSourceFolderLive = Layer.effect(
         ).pipe(
           Stream.flatMap(Stream.fromIterable),
           Stream.mapEffect(readTicket, { concurrency: 1 }),
-          Stream.filter((option): option is Option.Some<Ticket> => Option.isSome(option) && matchesQuery(query)(option.value)),
-          Stream.map((option) => option.value),
+          Stream.filterMap((read) =>
+            Option.isSome(read) && Result.isSuccess(read.value) && matchesQuery(query)(read.value.success)
+              ? Result.succeed(read.value.success)
+              : Result.failVoid
+          ),
           Stream.catchCause(() => Stream.empty)
         );
 
@@ -365,6 +398,19 @@ export const TicketSourceFolderLive = Layer.effect(
       // eligibility rule can tell which blockers are done.
       const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
         Stream.runCollect(readTickets(query, true));
+
+      // The Markdown files without a numeric prefix, then the ticket files that
+      // cannot be read as tickets, in processing order, done ones included.
+      const getUnreadable: Effect.Effect<readonly UnreadableTicket[]> = Effect.gen(function* () {
+        const found = yield* entries;
+        const withoutNumbers = found.flatMap((entry) => withoutNumber(entry) ?? []);
+        const files = sortByFolderAndNumber(TicketQuery.build())(found.flatMap((entry) => ticketFileOf(entry) ?? []));
+        const reads = yield* Effect.forEach(files, readTicket);
+        const unreadable = reads.flatMap((read) =>
+          Option.isSome(read) && Result.isFailure(read.value) ? [read.value.failure] : []
+        );
+        return [...withoutNumbers, ...unreadable];
+      }).pipe(Effect.catchCause(() => Effect.succeed([])));
 
       // The folder Source keeps no trace of a Claim or an escalation: the Ledger holds them.
       const report = (_ticket: TicketId, _event: ReportedEvent): Effect.Effect<void> => Effect.void;
@@ -472,7 +518,7 @@ export const TicketSourceFolderLive = Layer.effect(
           Effect.mapError(notReported(ticket))
         );
 
-      return { getOneBy, getManyBy, report, reportDone };
+      return { getOneBy, getManyBy, getUnreadable, report, reportDone };
     })
   )
 );
