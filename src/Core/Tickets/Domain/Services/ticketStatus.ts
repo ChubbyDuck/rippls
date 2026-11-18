@@ -39,7 +39,7 @@ export const deriveTicketStatus = (
   if (isEscalated(ticket, facts.escalated)) {
     return 'escalated';
   }
-  if (!isUnclaimed(ticket, facts.claimed)) {
+  if (!isUnclaimed(ticket, facts)) {
     return 'claimed';
   }
   if (!isUnattended(ticket)) {

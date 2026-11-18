@@ -8,7 +8,7 @@ import { deriveTicketStatus } from './ticketStatus';
 
 const id = (value: number) => formatTicketId('folder', String(value));
 const none: ReadonlySet<TicketId> = new Set();
-const nothing = { done: none, claimed: none, escalated: none };
+const nothing = { done: none, claimed: none, stale: none, escalated: none };
 const one: ReadonlySet<TicketId> = new Set([id(1)]);
 
 const ticket = (fields: Record<string, unknown> = {}) =>
@@ -39,6 +39,14 @@ describe('deriveTicketStatus', () => {
     expect(deriveTicketStatus(ticket(), { ...nothing, claimed: one })).toBe('claimed');
   });
 
+  it('is claimed for a ticket its Source sees as claimed with no record in the Ledger', () => {
+    expect(deriveTicketStatus(ticket({ claimedInSource: true }), nothing)).toBe('claimed');
+  });
+
+  it('is eligible for a ticket its Source sees as claimed whose Claim on this host is stale', () => {
+    expect(deriveTicketStatus(ticket({ claimedInSource: true }), { ...nothing, stale: one })).toBe('eligible');
+  });
+
   it('is escalated for a ticket with an Escalation', () => {
     expect(deriveTicketStatus(ticket(), { ...nothing, escalated: one })).toBe('escalated');
   });
@@ -53,7 +61,7 @@ describe('deriveTicketStatus', () => {
 
   describe('when several values apply, shows the first of done, escalated, claimed, not ready, blocked', () => {
     const notReadyAndBlocked = ticket({ hitl: 'yes', blockedBy: [id(9)] });
-    const all = { done: none, claimed: one, escalated: one };
+    const all = { done: none, claimed: one, stale: none, escalated: one };
 
     it('shows done over every other value', () => {
       expect(deriveTicketStatus(notReadyAndBlocked, { ...all, done: one })).toBe('done');

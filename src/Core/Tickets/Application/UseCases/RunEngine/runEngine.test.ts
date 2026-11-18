@@ -1,5 +1,5 @@
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { ConfigProvider, Console, Duration, Effect, FileSystem, Fiber, Layer, Path, Random, Result, Schema } from 'effect';
+import { ConfigProvider, Console, Deferred, Duration, Effect, FileSystem, Fiber, Layer, Path, Random, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { expect, test } from 'vitest';
@@ -181,6 +181,7 @@ const seenAsDone = (ticket: Ticket) =>
     blockedBy: ticket.blockedBy,
     body: ticket.body,
     doneInSource: true,
+    claimedInSource: false,
   });
 
 const blockedTicket = (value: number, blockedBy: number) =>
@@ -1282,6 +1283,110 @@ test('runEngine replaces a stale Claim: it reports released before the new claim
   ]);
 });
 
+test('runEngine reports released only when it wins the removal of a Stale Claim that another Engine also replaces', async () => {
+  const ledger = makeLedgerMemory();
+  // The other Engine's process no longer runs on this host.
+  ledger.claims.set(id(1), new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
+  const removals: boolean[] = [];
+  const recordingRemovals = Layer.effect(
+    Ledger,
+    Ledger.pipe(
+      Effect.map((inner) => ({
+        ...inner,
+        releaseStale: (claim: Claim) =>
+          inner.releaseStale(claim).pipe(Effect.tap((won) => Effect.sync(() => removals.push(won)))),
+      }))
+    )
+  ).pipe(Layer.provide(ledger.layer));
+  const source = fakeSource([sampleTicket(1)]);
+  // Both Engines read the ticket by identity, with the Stale Claim, before either removes it.
+  let identityReads = 0;
+  const bothRead = Deferred.makeUnsafe<void>();
+  const racingSource = Layer.effect(
+    TicketSource,
+    TicketSource.pipe(
+      Effect.map((inner) => ({
+        ...inner,
+        getOneBy: (query: TicketQuery) =>
+          inner.getOneBy(query).pipe(
+            Effect.tap(() =>
+              Effect.suspend(() => {
+                identityReads += 1;
+                return identityReads === 2 ? Deferred.succeed(bothRead, undefined) : Effect.void;
+              }).pipe(Effect.andThen(Deferred.await(bothRead)))
+            )
+          ),
+      }))
+    )
+  ).pipe(Layer.provide(source.layer));
+  const hangingImplementation = Layer.succeed(StrategySelector, {
+    select: () => Effect.succeed({ name: 'implementation', run: () => Effect.never }),
+  });
+  const engineOf = (seed: string) =>
+    executeEngine({ project }).pipe(
+      Random.withSeed(seed),
+      Effect.provide(
+        Layer.mergeAll(EngineStartupTest, recordingRemovals, racingSource, HarnessSelectorNoop, hangingImplementation)
+      )
+    );
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const first = yield* engineOf('first').pipe(Effect.forkChild({ startImmediately: true }));
+      const second = yield* engineOf('second').pipe(Effect.forkChild({ startImmediately: true }));
+      yield* until(() => removals.length === 2 && source.reports.length === 2);
+
+      expect(removals.toSorted((left, right) => Number(left) - Number(right))).toEqual([false, true]);
+      expect(source.reports).toEqual([
+        { ticket: id(1), event: 'released' },
+        { ticket: id(1), event: 'claimed' },
+      ]);
+      yield* Fiber.interrupt(first);
+      yield* Fiber.interrupt(second);
+    })
+  );
+});
+
+test('runEngine keeps its new Claim when the release of a Stale Claim fails, does not process the ticket, and releases the Claim on exit', async () => {
+  const ledger = makeLedgerMemory();
+  const seen: Array<Claim | undefined> = [];
+  ledger.claims.set(id(1), new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
+  // As on Linear, a failed release leaves the ticket claimed on the Source, so the
+  // claimed report fails too. At exit, the release succeeds.
+  let releases = 0;
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    report: (ticket, event) => {
+      if (event === 'released') {
+        releases += 1;
+      }
+      return ticket === id(1) && (event === 'claimed' || (event === 'released' && releases === 1))
+        ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event }))
+        : Effect.void;
+    },
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, claimRecordingImplementation(ledger, seen));
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine({ project }, ledger).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true })
+      );
+      yield* until(() => source.doneReported.length === 1);
+
+      expect(seen.map((claim) => claim?.ticket)).toEqual([id(2)]);
+      expect(ledger.claims.get(id(1))?.engine).toBe(engineId);
+      yield* Fiber.interrupt(fiber);
+    })
+  );
+
+  expect(ledger.claims.has(id(1))).toBe(false);
+  expect(source.reports).toEqual([
+    { ticket: id(2), event: 'claimed' },
+    { ticket: id(1), event: 'released' },
+  ]);
+});
+
 test('runEngine does not take a ticket whose Claim another running Engine holds', async () => {
   const ran: Ticket[] = [];
   const ledger = makeLedgerMemory();
@@ -1323,6 +1428,41 @@ test('runEngine releases only its own Claims on exit and reports each release', 
     { ticket: id(1), event: 'claimed' },
     { ticket: id(1), event: 'released' },
   ]);
+});
+
+test('runEngine keeps a Claim in the Ledger on exit when the Source fails to report its release, and logs it', async () => {
+  const ledger = makeLedgerMemory();
+  const messages: string[] = [];
+  const source = fakeSource([sampleTicket(1)], {
+    report: (ticket, event) =>
+      event === 'released' ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event })) : Effect.void,
+  });
+  const hangingImplementation = Layer.succeed(StrategySelector, {
+    select: () => Effect.succeed({ name: 'implementation', run: () => Effect.never }),
+  });
+  const layer = Layer.mergeAll(
+    source.layer,
+    HarnessSelectorNoop,
+    hangingImplementation,
+    Layer.succeed(Console.Console, capturingConsole(messages))
+  );
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine({ project }, ledger).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true })
+      );
+      yield* until(() => ledger.claims.has(id(1)) && source.reports.length === 1);
+      yield* Fiber.interrupt(fiber);
+    })
+  );
+
+  expect(ledger.claims.get(id(1))?.engine).toBe(engineId);
+  expect(source.reports).toEqual([{ ticket: id(1), event: 'claimed' }]);
+  expect(messages).toContainEqual(
+    expect.stringContaining(`Failed to report the release of ticket ${id(1)} after the run, so its Claim stays in the Ledger`)
+  );
 });
 
 test('the exit of one Engine leaves the Claim of another Engine on the same Ledger in place', async () => {

@@ -26,12 +26,14 @@ import {
   retryWrites,
 } from '~/Infrastructure/Tickets/LinearApi/codec';
 
-// The read of every ticket in scope offers only unstarted Issues for processing. A
-// read by identity finds an Issue in any state: a started one, so the Engine can
-// complete the Issue it claimed, a completed one, which reads as done, and one in a
-// backlog, triage, or canceled state, which reads as not done, so a blocker in any
-// state resolves.
+// The read of every ticket in scope returns the unstarted Issues, which are offered
+// for processing, and the started ones, which read as claimed on Linear: the Engine
+// takes one only to replace a Stale Claim it holds on it. A read by identity finds
+// an Issue in any state: a started one, so the Engine can complete the Issue it
+// claimed, a completed one, which reads as done, and one in a backlog, triage, or
+// canceled state, which reads as not done, so a blocker in any state resolves.
 const OFFERED_STATE_TYPES: ReadonlySet<string> = new Set(['unstarted']);
+const SCOPE_STATE_TYPES: ReadonlySet<string> = new Set([...OFFERED_STATE_TYPES, 'started']);
 
 const isNoOp = (write: LinearWrite, issue: LinearIssue): boolean => {
   switch (write.op) {
@@ -87,7 +89,7 @@ export const TicketSourceLinearLive = Layer.effect(
         }
         const issues = yield* api.issues(teamId);
         return toTickets(
-          issues.filter((issue) => OFFERED_STATE_TYPES.has(issue.state.type)),
+          issues.filter((issue) => SCOPE_STATE_TYPES.has(issue.state.type)),
           defaultKind,
           query
         );
@@ -139,8 +141,9 @@ export const TicketSourceLinearLive = Layer.effect(
 
     // Only an Issue offered for processing can be claimed. Since the Engine read it,
     // it may have left its unstarted state: a started Issue is already claimed on
-    // Linear, perhaps by an Engine on another machine, and an Issue in another state
-    // is not offered.
+    // Linear, perhaps by an Engine on another machine, or still holds the Claim of a
+    // stopped Engine whose release failed, and an Issue in another state is not
+    // offered.
     const ensureOffered = (issueId: string) =>
       api.issue(issueId).pipe(
         Effect.filterOrFail(

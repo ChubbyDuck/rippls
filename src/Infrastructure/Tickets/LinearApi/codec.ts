@@ -65,6 +65,7 @@ export const readIssue = (issue: LinearIssue, defaultKind: TicketKind): Result.R
     hitl: needsHuman(issue.labels) ? 'yes' : groupedHint(issue.labels, 'hitl'),
     body: issue.description ?? '',
     doneInSource: issue.state.type === 'completed',
+    claimedInSource: issue.state.type === 'started',
   }).pipe(
     Result.mapError(
       (error) =>

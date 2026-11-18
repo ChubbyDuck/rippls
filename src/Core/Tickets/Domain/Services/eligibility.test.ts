@@ -7,7 +7,9 @@ import { doneInSourceIds, isDone, isEligible, isEscalated, isUnattended, isUnblo
 
 const id = (value: number) => formatTicketId('folder', String(value));
 const none: ReadonlySet<TicketId> = new Set();
-const nothing = { done: none, claimed: none, escalated: none };
+const nothing = { done: none, claimed: none, stale: none, escalated: none };
+const claimedWith = (...ids: TicketId[]) => ({ ...nothing, claimed: new Set(ids) });
+const staleWith = (...ids: TicketId[]) => ({ ...nothing, stale: new Set(ids) });
 const doneWith = (...ids: TicketId[]) => ({ ...nothing, done: new Set(ids) });
 const claimedOne = { ...nothing, claimed: new Set([id(1)]) };
 const escalatedOne = { ...nothing, escalated: new Set([id(1)]) };
@@ -75,20 +77,42 @@ describe('isUnblocked', () => {
 });
 
 describe('isUnclaimed', () => {
+  const claimedInSource = ticket({ claimedInSource: true });
+
   it('holds for a ticket with no Claim in the Ledger', () => {
-    expect(isUnclaimed(ticket(), none)).toBe(true);
+    expect(isUnclaimed(ticket(), nothing)).toBe(true);
   });
 
   it('fails for a ticket with a Claim in the Ledger', () => {
-    expect(isUnclaimed(ticket(), new Set([id(1)]))).toBe(false);
+    expect(isUnclaimed(ticket(), claimedWith(id(1)))).toBe(false);
   });
 
   it('holds while only another ticket has a Claim', () => {
-    expect(isUnclaimed(ticket(), new Set([id(2)]))).toBe(true);
+    expect(isUnclaimed(ticket(), claimedWith(id(2)))).toBe(true);
+  });
+
+  it('holds for a ticket whose only Claim is a Stale Claim', () => {
+    expect(isUnclaimed(ticket(), staleWith(id(1)))).toBe(true);
   });
 
   it('ignores a claim field that an earlier Engine wrote into the ticket', () => {
-    expect(isUnclaimed(ticket({ claimedBy: 'runner-1' }), none)).toBe(true);
+    expect(isUnclaimed(ticket({ claimedBy: 'runner-1' }), nothing)).toBe(true);
+  });
+
+  it('fails for a ticket its Source sees as claimed with no record in the Ledger', () => {
+    expect(isUnclaimed(claimedInSource, nothing)).toBe(false);
+  });
+
+  it('fails for a ticket its Source sees as claimed with a Claim in the Ledger', () => {
+    expect(isUnclaimed(claimedInSource, claimedWith(id(1)))).toBe(false);
+  });
+
+  it('fails for a ticket its Source sees as claimed while only another ticket has a Stale Claim', () => {
+    expect(isUnclaimed(claimedInSource, staleWith(id(2)))).toBe(false);
+  });
+
+  it('holds for a ticket its Source sees as claimed whose Claim on this host is stale', () => {
+    expect(isUnclaimed(claimedInSource, staleWith(id(1)))).toBe(true);
   });
 });
 
@@ -134,10 +158,16 @@ describe('isEligible', () => {
   it.each([
     ['blocked', blocked, nothing],
     ['claimed in the Ledger', ticket(), claimedOne],
+    ['claimed in its Source with no record in the Ledger', ticket({ claimedInSource: true }), nothing],
+    ['claimed in its Source and in the Ledger', ticket({ claimedInSource: true }), claimedOne],
     ['escalated in the Ledger', ticket(), escalatedOne],
     ['attended', attended, nothing],
   ])('fails for a ticket that is %s', (_, candidate, facts) => {
     expect(isEligible(candidate, facts)).toBe(false);
+  });
+
+  it('holds for a ticket claimed in its Source whose Claim on this host is stale', () => {
+    expect(isEligible(ticket({ claimedInSource: true }), staleWith(id(1)))).toBe(true);
   });
 
   it('fails for a ticket that misses every condition', () => {

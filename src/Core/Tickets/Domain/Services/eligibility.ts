@@ -23,8 +23,14 @@ export const isDone = (ticket: Ticket, done: ReadonlySet<TicketId>): boolean =>
 export const isUnblocked = (ticket: Ticket, done: ReadonlySet<TicketId>): boolean =>
   ticket.blockedBy.every((blocker) => done.has(blocker));
 
-/** A Ticket with no Claim in the Ledger other than a Stale Claim. */
-export const isUnclaimed = (ticket: Ticket, claimed: ReadonlySet<TicketId>): boolean => !claimed.has(ticket.id);
+/**
+ * A Ticket with no Claim in the Ledger other than a Stale Claim, which its Source
+ * does not see as claimed. A ticket its Source sees as claimed is Unclaimed only
+ * when this host's Ledger holds a Stale Claim on it: the Claim on the Source is
+ * then the one a stopped Engine left, which the Engine replaces.
+ */
+export const isUnclaimed = (ticket: Ticket, { claimed, stale }: Pick<EligibilityFacts, 'claimed' | 'stale'>): boolean =>
+  !claimed.has(ticket.id) && (!ticket.claimedInSource || stale.has(ticket.id));
 
 /** A Ticket that has an Escalation in the Ledger. */
 export const isEscalated = (ticket: Ticket, escalated: ReadonlySet<TicketId>): boolean => escalated.has(ticket.id);
@@ -35,11 +41,13 @@ export const isUnattended = (ticket: Ticket): boolean => ticket.hitl === 'no';
 /**
  * What the Engine knows of other tickets: which are done, as their Source sees them
  * or as the Ledger records them, which hold a Claim in the Ledger that is not a
- * Stale Claim, and which have an Escalation in the Ledger.
+ * Stale Claim, which hold a Stale Claim in the Ledger, and which have an Escalation
+ * in the Ledger.
  */
 export type EligibilityFacts = {
   readonly done: ReadonlySet<TicketId>;
   readonly claimed: ReadonlySet<TicketId>;
+  readonly stale: ReadonlySet<TicketId>;
   readonly escalated: ReadonlySet<TicketId>;
 };
 
@@ -50,9 +58,9 @@ export type EligibilityFacts = {
  * the Claims and Escalations; this rule decides which of the tickets the Engine
  * may take.
  */
-export const isEligible = (ticket: Ticket, { done, claimed, escalated }: EligibilityFacts): boolean =>
-  !isDone(ticket, done) &&
-  !isEscalated(ticket, escalated) &&
-  isUnblocked(ticket, done) &&
-  isUnclaimed(ticket, claimed) &&
+export const isEligible = (ticket: Ticket, facts: EligibilityFacts): boolean =>
+  !isDone(ticket, facts.done) &&
+  !isEscalated(ticket, facts.escalated) &&
+  isUnblocked(ticket, facts.done) &&
+  isUnclaimed(ticket, facts) &&
   isUnattended(ticket);

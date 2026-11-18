@@ -4,6 +4,7 @@ import type { Runner } from '~/Core/Shared/Domain/Entities/Runner';
 import { defaultIdleTimeout, defaultPollInterval } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
+import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
@@ -15,22 +16,31 @@ import { makeIdleClock } from './idleClock';
 import { reportUnreadable } from './reportUnreadable';
 import { ticketStream } from './ticketStream';
 
-// On exit the Engine releases only the Claims it holds, and reports each release
-// to the Source. The Claims of other Engines stay in place.
-const releaseOwnClaims = (engine: EngineId) =>
+// On exit the Engine releases only the Claims it holds. It reports each release to
+// the Source, and removes the record of the Claim only once that report succeeds.
+// A record whose release was not reported stays: once the Engine has exited, it is
+// a Stale Claim, which a later run replaces. The Claims of other Engines stay in
+// place.
+const releaseOwnClaim = (ticket: TicketId) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
     const source = yield* TicketSource;
-    const released = yield* ledger.releaseAllOf(engine);
-    yield* Effect.forEach(
-      released,
-      (ticket) =>
-        source
-          .report(ticket, 'released')
-          .pipe(Effect.catch((error) => Console.error(`Failed to report the release of ticket ${ticket} after the run`, error))),
-      { discard: true }
-    );
-  }).pipe(Effect.catchTag('LedgerError', (error) => Console.error('Failed to release the Claims of the Engine after the run', error)));
+    yield* source.report(ticket, 'released');
+    yield* ledger.release(ticket);
+  }).pipe(
+    Effect.catchTags({
+      TicketEventNotReported: (error) =>
+        Console.error(`Failed to report the release of ticket ${ticket} after the run, so its Claim stays in the Ledger`, error),
+      LedgerError: (error) => Console.error(`Failed to release the Claim on ticket ${ticket} after the run`, error),
+    })
+  );
+
+const releaseOwnClaims = (engine: EngineId) =>
+  Ledger.pipe(
+    Effect.flatMap((ledger) => ledger.ticketsClaimedBy(engine)),
+    Effect.flatMap((tickets) => Effect.forEach(tickets, releaseOwnClaim, { discard: true })),
+    Effect.catchTag('LedgerError', (error) => Console.error('Failed to release the Claims of the Engine after the run', error))
+  );
 
 export const runEngine = Effect.fn('engine.run')(function* ({
   project,

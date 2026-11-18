@@ -56,18 +56,14 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
     releaseStale: (stale) =>
       Effect.sync(() => {
         const held = claims.get(stale.ticket);
-        if (held?.isSameClaim(stale) === true) {
-          claims.delete(stale.ticket);
+        if (held?.isSameClaim(stale) !== true) {
+          return false;
         }
+        claims.delete(stale.ticket);
+        return true;
       }),
-    releaseAllOf: (engine) =>
-      Effect.sync(() => {
-        const released = [...claims.values()].filter((held) => held.engine === engine).map((held) => held.ticket);
-        for (const ticket of released) {
-          claims.delete(ticket);
-        }
-        return released;
-      }),
+    ticketsClaimedBy: (engine) =>
+      Effect.sync(() => [...claims.values()].filter((held) => held.engine === engine).map((held) => held.ticket)),
     read: (tickets) => Effect.sync(() => pick(claims, tickets)),
     escalate: (ticket, { reason, worktree }) =>
       Effect.sync(() => {

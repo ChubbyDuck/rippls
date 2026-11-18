@@ -17,6 +17,11 @@ export class Ticket extends Schema.Class<Ticket>('Ticket')({
   body: Schema.String,
   /** Whether its Source sees the ticket as done: in `done/`, or completed on Linear. */
   doneInSource: Schema.Boolean,
+  /**
+   * Whether its Source sees the ticket as claimed, by an Engine or a person: in a
+   * started state on Linear. A Claim in the Ledger is another fact.
+   */
+  claimedInSource: Schema.Boolean,
 }) {
   /** A Ticket from what a Source read, with the standard fallbacks unless others are given. */
   static create(hints: unknown, fallbacks: TicketFallbacks = standardFallbacks): Ticket {
@@ -43,6 +48,7 @@ export const TicketHints = Schema.Struct({
   hitl: Schema.optional(Hitl),
   marker: Schema.optional(Marker),
   doneInSource: Schema.optional(Schema.Boolean),
+  claimedInSource: Schema.optional(Schema.Boolean),
 });
 
 export type TicketHints = typeof TicketHints.Type;
@@ -80,4 +86,5 @@ export const ticketFromHints = (hints: TicketHints, fallbacks: TicketFallbacks):
     blockedBy: hints.blockedBy ?? [],
     body: hints.body,
     doneInSource: hints.doneInSource ?? false,
+    claimedInSource: hints.claimedInSource ?? false,
   });

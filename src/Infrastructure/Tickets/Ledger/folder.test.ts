@@ -87,8 +87,8 @@ test('releasing a ticket with no Claim does nothing', async () => {
   expect(claims.size).toBe(0);
 });
 
-test('releasing all Claims of one Engine leaves the Claims of another Engine in place', async () => {
-  const { released, claims } = await run(
+test('the tickets claimed by one Engine leave out the Claims of another Engine, and are not released', async () => {
+  const { claimedByFirst, claims } = await run(
     Effect.gen(function* () {
       const dir = yield* gitCommonDir;
       return yield* inLedger(
@@ -98,17 +98,16 @@ test('releasing all Claims of one Engine leaves the Claims of another Engine in 
           yield* ledger.claim(ticket(1), first);
           yield* ledger.claim(ticket(2), second);
           yield* ledger.claim(ticket(3), first);
-          const released = yield* ledger.releaseAllOf(first);
+          const claimedByFirst = yield* ledger.ticketsClaimedBy(first);
           const claims = yield* ledger.read([ticket(1), ticket(2), ticket(3)]);
-          return { released, claims };
+          return { claimedByFirst, claims };
         })
       );
     })
   );
 
-  expect([...released].toSorted()).toEqual([ticket(1), ticket(3)]);
-  expect([...claims.keys()]).toEqual([ticket(2)]);
-  expect(claims.get(ticket(2))?.engine).toBe(second);
+  expect([...claimedByFirst].toSorted()).toEqual([ticket(1), ticket(3)]);
+  expect([...claims.keys()]).toEqual([ticket(1), ticket(2), ticket(3)]);
 });
 
 test('the record names the Engine, the process, and the host, and gains the Runner', async () => {
@@ -325,7 +324,7 @@ test('a Claim from another host is not stale, even when no such process runs her
 });
 
 test('releasing a stale Claim removes it, and leaves a Claim made since then in place', async () => {
-  const { afterStale, afterReplaced } = await run(
+  const { won, afterStale, wonAgain, afterReplaced } = await run(
     Effect.gen(function* () {
       const dir = yield* gitCommonDir;
       const dead = { process: yield* deadProcess, host: holder.host };
@@ -338,19 +337,43 @@ test('releasing a stale Claim removes it, and leaves a Claim made since then in 
         Effect.gen(function* () {
           const ledger = yield* Ledger;
           const stale = (yield* ledger.read([ticket(1)])).get(ticket(1))!;
-          yield* ledger.releaseStale(stale);
+          const won = yield* ledger.releaseStale(stale);
           const afterStale = yield* ledger.read([ticket(1)]);
           yield* ledger.claim(ticket(1), first);
-          yield* ledger.releaseStale(stale);
+          const wonAgain = yield* ledger.releaseStale(stale);
           const afterReplaced = yield* ledger.read([ticket(1)]);
-          return { afterStale, afterReplaced };
+          return { won, afterStale, wonAgain, afterReplaced };
         })
       );
     })
   );
 
+  expect([won, wonAgain]).toEqual([true, false]);
   expect(afterStale.size).toBe(0);
   expect(afterReplaced.get(ticket(1))?.engine).toBe(first);
+});
+
+test('of two callers that release one stale Claim, only one removes it', async () => {
+  const outcomes = await run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      const dead = { process: yield* deadProcess, host: holder.host };
+      yield* Ledger.pipe(
+        Effect.flatMap((ledger) => ledger.claim(ticket(1), second)),
+        Effect.provide(ledgerFolder(dir, dead))
+      );
+      return yield* inLedger(
+        dir,
+        Effect.gen(function* () {
+          const ledger = yield* Ledger;
+          const stale = (yield* ledger.read([ticket(1)])).get(ticket(1))!;
+          return yield* Effect.all([ledger.releaseStale(stale), ledger.releaseStale(stale)], { concurrency: 2 });
+        })
+      );
+    })
+  );
+
+  expect(outcomes.toSorted((left, right) => Number(left) - Number(right))).toEqual([false, true]);
 });
 
 const git = (dir: string, args: string[]) =>

@@ -127,13 +127,14 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
       // The stale record is moved aside under a name of its own, which only one
       // caller can do to one record, and checked there. When another Engine
       // replaced the same stale Claim first, the record moved aside is that
-      // Engine's Claim, and it is put back.
+      // Engine's Claim, and it is put back. Only the caller that moved the stale
+      // record aside removed it.
       const releaseStale = (stale: Claim) =>
         Effect.gen(function* () {
           const record = recordOf(stale.ticket);
           const held = yield* readRecord(record);
           if (!Option.exists(held, (current) => current.isSameClaim(stale))) {
-            return;
+            return false;
           }
           const scratch = yield* fs
             .makeTempDirectoryScoped({ directory: dir, prefix: '.scratch-' })
@@ -145,12 +146,14 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
             Effect.mapError(toLedgerError)
           );
           if (!moved) {
-            return;
+            return false;
           }
           const movedClaim = yield* readRecord(aside);
-          if (!Option.exists(movedClaim, (current) => current.isSameClaim(stale))) {
-            yield* fs.link(aside, record).pipe(Effect.mapError(toLedgerError));
+          if (Option.exists(movedClaim, (current) => current.isSameClaim(stale))) {
+            return true;
           }
+          yield* fs.link(aside, record).pipe(Effect.mapError(toLedgerError));
+          return false;
         }).pipe(Effect.scoped);
 
       const records = fs.readDirectory(dir).pipe(
@@ -161,10 +164,9 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
         Effect.map((claims) => claims.flatMap(Option.toArray))
       );
 
-      const releaseAllOf = (engine: EngineId) =>
+      const ticketsClaimedBy = (engine: EngineId) =>
         records.pipe(
-          Effect.map((claims) => claims.filter((held) => held.engine === engine).map((held) => held.ticket)),
-          Effect.tap((tickets) => Effect.forEach(tickets, release, { discard: true }))
+          Effect.map((claims) => claims.filter((held) => held.engine === engine).map((held) => held.ticket))
         );
 
       const read = (tickets: readonly TicketId[]) => readMany(tickets, (ticket) => readRecord(recordOf(ticket)));
@@ -221,7 +223,7 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
         release,
         isStale,
         releaseStale,
-        releaseAllOf,
+        ticketsClaimedBy,
         read,
         escalate,
         clearEscalation,

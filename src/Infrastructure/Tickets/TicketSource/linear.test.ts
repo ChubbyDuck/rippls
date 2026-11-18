@@ -1,7 +1,10 @@
-import { ConfigProvider, Console, Effect, Layer } from 'effect';
+import { ConfigProvider, Console, Effect, Layer, Option, Schema } from 'effect';
 import { expect, test } from 'vitest';
 
+import { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
+import { pollTicket } from '~/Core/Tickets/Application/UseCases/RunEngine/pollTicket';
 import { showStatus, ticketStatuses } from '~/Core/Tickets/Application/UseCases/ShowStatus/showStatus';
+import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -256,17 +259,20 @@ test.each(['unstarted', 'backlog', 'triage', 'canceled', 'completed'])(
   }
 );
 
-test('a started Issue is not offered for processing, and its read by identity still finds it', async () => {
+test('a started Issue is read in scope and by identity as claimed on Linear, and an unstarted one is not', async () => {
   const api = fakeLinear([
     issue({ id: 'started', createdAt: '2026-01-01T00:00:00.000Z', stateType: 'started', assigneeId: 'other-user' }),
     issue({ id: 'unstarted', createdAt: '2026-02-01T00:00:00.000Z' }),
   ]);
 
-  const offered = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+  const inScope = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
   const byIdentity = await Effect.runPromise(getOneIn(api, TicketQuery.byId(toLinearId('started')).build()));
 
-  expect(offered.map((ticket) => ticket.id)).toEqual([toLinearId('unstarted')]);
-  expect(byIdentity.id).toBe(toLinearId('started'));
+  expect(inScope.map((ticket) => [ticket.id, ticket.claimedInSource])).toEqual([
+    [toLinearId('started'), true],
+    [toLinearId('unstarted'), false],
+  ]);
+  expect([byIdentity.id, byIdentity.claimedInSource]).toEqual([toLinearId('started'), true]);
 });
 
 test('report of done writes nothing, and what it leaves for after the merge moves the Issue to the first completed state', async () => {
@@ -412,7 +418,7 @@ test('report of retried on an Issue without needs-human changes nothing', async 
   expect(api.calls).toEqual([]);
 });
 
-test('getManyBy offers every unstarted issue in scope by creation time, oldest first', async () => {
+test('getManyBy reads every unstarted and started issue in scope by creation time, oldest first', async () => {
   const api = fakeLinear([
     issue({ id: 'newest', createdAt: '2026-03-01T00:00:00.000Z' }),
     issue({ id: 'claimed', createdAt: '2026-01-01T00:00:00.000Z', stateType: 'started', assigneeId: 'viewer-1' }),
@@ -431,7 +437,7 @@ test('getManyBy offers every unstarted issue in scope by creation time, oldest f
   const tickets = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
 
   expect(tickets.map((ticket) => ticket.id)).toEqual(
-    ['blocked', 'attended', 'newest'].map((native) => toLinearId(native))
+    ['claimed', 'blocked', 'attended', 'newest'].map((native) => toLinearId(native))
   );
 });
 
@@ -500,13 +506,13 @@ test.each(['backlog', 'triage', 'canceled'])(
 
 // The Ticket Status of each ticket in scope, with the outstanding blockers, as
 // `rippls status` derives them from the Linear Source and an empty Ledger.
-const statusesIn = (api: ReturnType<typeof fakeLinear>) =>
+const statusesIn = (api: ReturnType<typeof fakeLinear>, ledger = makeLedgerMemory()) =>
   Effect.runPromise(
     ticketStatuses({}).pipe(
       Effect.map((lines) =>
         lines.flatMap((line) => (line.status === 'unreadable' ? [] : [[line.ticket.id, line.status, line.blockers] as const]))
       ),
-      Effect.provide(Layer.merge(withRepo(api), makeLedgerMemory().layer))
+      Effect.provide(Layer.merge(withRepo(api), ledger.layer))
     )
   );
 
@@ -551,3 +557,73 @@ test.each(['backlog', 'triage', 'canceled'])(
     ]);
   }
 );
+
+const engine = Schema.decodeSync(EngineId)('linear-engine-0000');
+const stoppedEngine = Schema.decodeSync(EngineId)('stopped-engine-0000');
+
+// A Ledger on this host whose given Claim on the Issue was made by a process that
+// runs, or by one that no longer runs, so is stale.
+const ledgerWithClaim = (runs: boolean) => {
+  const ledger = makeLedgerMemory();
+  ledger.claims.set(
+    toLinearId(uuid),
+    new Claim({ ticket: toLinearId(uuid), engine: stoppedEngine, process: 2, host: 'memory' })
+  );
+  if (runs) {
+    ledger.running.add(2);
+  }
+  return ledger;
+};
+
+test.each([
+  ['no record in the Ledger', () => makeLedgerMemory()],
+  ['a live Claim in the Ledger', () => ledgerWithClaim(true)],
+])('a started Issue with %s is claimed, not Eligible, and the poll does not take it', async (_, ledgerOf) => {
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
+
+  expect(await statusesIn(api, ledgerOf())).toEqual([[toLinearId(uuid), 'claimed', undefined]]);
+  const taken = await Effect.runPromise(
+    pollTicket(engine).pipe(Effect.provide(Layer.merge(withRepo(api), ledgerOf().layer)))
+  );
+  expect(Option.isNone(taken)).toBe(true);
+  expect(api.calls).toEqual([]);
+});
+
+test('a started Issue whose Claim on this host is stale is Eligible, and taking it reports released, then claimed', async () => {
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
+  const ledger = ledgerWithClaim(false);
+
+  expect(await statusesIn(api, ledgerWithClaim(false))).toEqual([[toLinearId(uuid), 'eligible', undefined]]);
+  const taken = await Effect.runPromise(pollTicket(engine).pipe(Effect.provide(Layer.merge(withRepo(api), ledger.layer))));
+
+  expect(Option.map(taken, (ticket) => ticket.id)).toEqual(Option.some(toLinearId(uuid)));
+  expect(api.calls).toEqual([
+    { op: 'setAssignee', issueId: uuid, assigneeId: null },
+    { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
+    { op: 'setAssignee', issueId: uuid, assigneeId: 'viewer-1' },
+    { op: 'setState', issueId: uuid, stateId: 'state-started' },
+  ]);
+  expect(ledger.claims.get(toLinearId(uuid))?.engine).toBe(engine);
+});
+
+test('a started Issue whose stale release fails keeps the new Claim, is not taken, and is not claimed on Linear', async () => {
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })], { failStates: true });
+  const ledger = ledgerWithClaim(false);
+
+  const taken = await Effect.runPromise(pollTicket(engine).pipe(Effect.provide(Layer.merge(withRepo(api), ledger.layer))));
+
+  expect(Option.isNone(taken)).toBe(true);
+  expect(api.issues.get(uuid)?.state.type).toBe('started');
+  expect(ledger.claims.get(toLinearId(uuid))?.engine).toBe(engine);
+});
+
+test.each(['backlog', 'triage', 'canceled'])('the poll never offers an Issue in a %s state', async (stateType) => {
+  const api = fakeLinear([issue({ stateType })]);
+
+  const taken = await Effect.runPromise(
+    pollTicket(engine).pipe(Effect.provide(Layer.merge(withRepo(api), makeLedgerMemory().layer)))
+  );
+
+  expect(Option.isNone(taken)).toBe(true);
+  expect(api.calls).toEqual([]);
+});

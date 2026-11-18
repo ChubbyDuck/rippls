@@ -120,6 +120,7 @@ export const readTicketScope = (project?: Project) =>
     const facts: EligibilityFacts = {
       done,
       claimed: new Set(claims.keys()),
+      stale: new Set(stale.keys()),
       escalated: new Set(escalations.keys()),
     };
     return { tickets, claims, stale, escalations, facts, resolved } satisfies TicketScope;

@@ -60,7 +60,7 @@ numeric prefix, front matter that cannot be parsed, an invalid hint, or a file t
 cannot be read from disk. A folder that cannot be read is reported as unreadable too. An unreadable
 ticket is no Ticket, so no other value applies to it. The values are unreadable, done,
 escalated, claimed, not ready, blocked, and eligible. When several apply, the first in
-that order is the Ticket Status. Claimed means a Claim other than a Stale Claim; not
+that order is the Ticket Status. Claimed means not Unclaimed; not
 ready means HITL yes; eligible means Eligible. A `status` value
 in a ticket file is not the Ticket Status; it is read only as a Marker.
 _Avoid_: State, phase
@@ -91,7 +91,9 @@ _Avoid_: Lock, take, checkout
 **Stale Claim**:
 A Claim whose process no longer runs on this host. A Claim from another host is
 never stale. The Engine replaces a Stale Claim when it takes the ticket, which
-counts as a release for the Source.
+counts as a release for the Source. Only the Engine that wins the removal of its
+record reports that release. An Engine that cannot report the release of its own
+Claim on exit leaves its record, which is then a Stale Claim.
 _Avoid_: Dead lock, orphan, abandoned Claim
 
 **Escalation**:
@@ -199,7 +201,9 @@ A Ticket whose blockers are all done. A blocker that cannot be found blocks.
 _Avoid_: Ready, free
 
 **Unclaimed**:
-A Ticket with no Claim in the Ledger other than a Stale Claim.
+A Ticket with no Claim in the Ledger other than a Stale Claim, which its Source does
+not see as claimed, as Linear sees an Issue in a started state. A Ticket its Source
+sees as claimed is Unclaimed only when this host's Ledger holds a Stale Claim on it.
 _Avoid_: Available, free, open
 
 **Unattended**:
