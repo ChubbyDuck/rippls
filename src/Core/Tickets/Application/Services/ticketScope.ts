@@ -23,6 +23,11 @@ export type TicketScope = {
   readonly stale: ReadonlyMap<TicketId, Claim>;
   readonly escalations: ReadonlyMap<TicketId, Escalation>;
   readonly facts: EligibilityFacts;
+  /**
+   * The identities the Source resolves: the tickets it read, and the blockers it
+   * found by their identity because no read of tickets found them.
+   */
+  readonly resolved: ReadonlySet<TicketId>;
 };
 
 const scopeQuery = (project?: Project) =>
@@ -43,42 +48,43 @@ const readForBlockers = (tickets: readonly Ticket[], project?: Project) =>
     ? Effect.succeed(tickets)
     : TicketSource.pipe(Effect.flatMap((source) => source.getManyBy(TicketQuery.build())));
 
-// A Source may leave a blocker out of every read of tickets in scope, as the
-// Linear Source leaves out a completed Issue, so a blocker that is still not known
-// as done is read by its identity, and is done when its Source sees it as done.
-const doneByIdentity = (blockers: readonly TicketId[]) =>
-  TicketSource.pipe(
-    Effect.flatMap((source) =>
-      Effect.forEach(blockers, (blocker) =>
-        source.getOneBy(TicketQuery.byId(blocker).build()).pipe(
-          Effect.option,
-          Effect.map((found) => (Option.exists(found, isDoneInSource) ? [blocker] : []))
-        )
-      )
-    ),
-    Effect.map((found) => found.flat())
-  );
+// A Source may leave a blocker out of every read of tickets, as the Linear Source
+// leaves out a completed Issue, so each blocker that no read found and that is not
+// known as done is read by its identity. It resolves when the Source finds it, and
+// is done when its Source sees it as done.
+const readByIdentity = (blockers: readonly TicketId[]) =>
+  Effect.gen(function* () {
+    const source = yield* TicketSource;
+    const found = yield* Effect.forEach(blockers, (blocker) =>
+      source.getOneBy(TicketQuery.byId(blocker).build()).pipe(Effect.option)
+    );
+    return found.flatMap((ticket) => (Option.isSome(ticket) ? [ticket.value] : []));
+  });
 
-// Done is the union of two facts: the Source sees the ticket as done, or the
-// Ledger records it as done. The Ledger is asked about the tickets in scope and
-// their blockers.
-const doneFor = (tickets: readonly Ticket[], project?: Project) =>
+// Done is the union of two facts: the Source sees the ticket as done, in a read of
+// tickets or a read by identity, or the Ledger records it as done. The Ledger is
+// asked about the tickets in scope and their blockers. A blocker resolves when a
+// read of tickets or a read by identity finds it.
+const resolveBlockers = (tickets: readonly Ticket[], project?: Project) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
-    const read = yield* readForBlockers(tickets, project);
+    const ticketsRead = yield* readForBlockers(tickets, project);
     const ticketsAndBlockers = new Set(tickets.flatMap((ticket) => [ticket.id, ...ticket.blockedBy]));
-    const inLedger = yield* ledger.done([...ticketsAndBlockers]);
-    const known = new Set([...doneInSourceIds(read), ...inLedger]);
-    const readIds = new Set(read.map((ticket) => ticket.id));
-    const unknown = [
+    const doneInLedger = yield* ledger.done([...ticketsAndBlockers]);
+    const doneSoFar = new Set([...doneInSourceIds(ticketsRead), ...doneInLedger]);
+    const readIds = new Set(ticketsRead.map((ticket) => ticket.id));
+    const notFoundYet = [
       ...new Set(
         tickets
-          .filter((ticket) => !known.has(ticket.id))
-          .flatMap((ticket) => ticket.blockedBy.filter((blocker) => !known.has(blocker) && !readIds.has(blocker)))
+          .filter((ticket) => !doneSoFar.has(ticket.id))
+          .flatMap((ticket) => ticket.blockedBy.filter((blocker) => !doneSoFar.has(blocker) && !readIds.has(blocker)))
       ),
     ];
-    const byIdentity = yield* doneByIdentity(unknown);
-    return new Set([...known, ...byIdentity]);
+    const foundByIdentity = yield* readByIdentity(notFoundYet);
+    return {
+      done: new Set([...doneSoFar, ...doneInSourceIds(foundByIdentity)]),
+      resolved: new Set([...readIds, ...foundByIdentity.map((ticket) => ticket.id)]),
+    };
   });
 
 // The Claims on the tickets in scope, split into the ones that hold their ticket
@@ -110,10 +116,11 @@ export const readTicketScope = (project?: Project) =>
     const tickets = yield* source.getManyBy(scopeQuery(project));
     const { claims, stale } = yield* claimsIn(tickets);
     const escalations = yield* ledger.escalations(tickets.map((ticket) => ticket.id));
+    const { done, resolved } = yield* resolveBlockers(tickets, project);
     const facts: EligibilityFacts = {
-      done: yield* doneFor(tickets, project),
+      done,
       claimed: new Set(claims.keys()),
       escalated: new Set(escalations.keys()),
     };
-    return { tickets, claims, stale, escalations, facts } satisfies TicketScope;
+    return { tickets, claims, stale, escalations, facts, resolved } satisfies TicketScope;
   });

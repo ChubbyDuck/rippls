@@ -53,7 +53,7 @@ export const ticketStatuses = ({ project }: ShowStatusCommand) =>
     const source = yield* TicketSource;
     const scope = yield* readTicketScope(project);
     const { tickets, claims, escalations, facts } = scope;
-    const outstanding = yield* outstandingBlockers(scope);
+    const outstanding = outstandingBlockers(scope);
     const unreadable = yield* source.getUnreadable;
     const read = tickets.map((ticket): TicketStatusLine => {
       const status = deriveTicketStatus(ticket, facts);

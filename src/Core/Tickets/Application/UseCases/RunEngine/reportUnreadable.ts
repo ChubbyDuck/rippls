@@ -31,7 +31,7 @@ export const reportUnreadable = (project?: Project) =>
   Effect.gen(function* () {
     const source = yield* TicketSource;
     const unreadable = yield* source.getUnreadable;
-    const blockers = yield* readTicketScope(project).pipe(Effect.flatMap(outstandingBlockers));
+    const blockers = yield* readTicketScope(project).pipe(Effect.map(outstandingBlockers));
     const withoutNumber = unreadable.filter(hasNoNumber);
     const lines = [
       ...unreadable.filter((ticket) => !hasNoNumber(ticket)).map(unreadableLine),

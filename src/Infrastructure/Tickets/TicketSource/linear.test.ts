@@ -245,6 +245,17 @@ test('report of released unassigns the Issue and moves it to the first unstarted
   expect(api.issues.get(uuid)?.state.type).toBe('unstarted');
 });
 
+test.each(['unstarted', 'backlog', 'triage', 'canceled', 'completed'])(
+  'report of released writes nothing for an Issue in a %s state, which holds no Claim on Linear',
+  async (stateType) => {
+    const api = fakeLinear([issue({ stateType, assigneeId: 'someone' })]);
+
+    await Effect.runPromise(reportIn(api, 'released'));
+
+    expect(api.calls).toEqual([]);
+  }
+);
+
 test('a started Issue is not offered for processing, and its read by identity still finds it', async () => {
   const api = fakeLinear([
     issue({ id: 'started', createdAt: '2026-01-01T00:00:00.000Z', stateType: 'started', assigneeId: 'other-user' }),
