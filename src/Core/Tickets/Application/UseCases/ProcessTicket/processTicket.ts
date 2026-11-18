@@ -104,11 +104,15 @@ export const processTicket = ({
         ? `${ticket.label} is preparing worktree ticket-${ticket.id} from HEAD`
         : `${ticket.label} is preparing worktree ticket-${ticket.id} from ${ticket.project}`
     );
+    // A directory that is not the expected worktree stays so: it gets no second
+    // try, no Agent runs in it, and the halt names what was found.
     const worktree = yield* prepareTicketWorktree({ ticket }).pipe(
-      Effect.retry({ times: 1 }),
-      Effect.catchTag('WorktreeCreationError', () =>
-        Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'worktree creation failure' }))
-      )
+      Effect.retry({ times: 1, while: (error) => error._tag === 'WorktreeCreationError' }),
+      Effect.catchTags({
+        WorktreeCreationError: () =>
+          Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'worktree creation failure' })),
+        WorktreeNotExpected: (error) => Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: error.message })),
+      })
     );
     yield* Console.log(`${ticket.label} is opening worktree ${worktree.branch} at ${worktree.path}`);
     const worktreeHarness = harnessInWorktree(harness, worktree.path);

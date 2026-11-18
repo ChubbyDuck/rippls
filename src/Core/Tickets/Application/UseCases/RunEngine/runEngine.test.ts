@@ -1,6 +1,7 @@
 import * as NodeServices from '@effect/platform-node/NodeServices';
 import { ConfigProvider, Console, Duration, Effect, FileSystem, Fiber, Layer, Path, Random, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { expect, test } from 'vitest';
 
 import {
@@ -40,6 +41,7 @@ import { type CommandRun, type Worktree, WorktreeManager } from '~/Core/Tickets/
 import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 import { StrategySelectorNoop } from '~/Infrastructure/Tickets/StrategySelector/noop';
 import { TicketSourceFolderLive } from '~/Infrastructure/Tickets/TicketSource/folder';
+import { WorktreeManagerLive } from '~/Infrastructure/Tickets/WorktreeManager/sandcastle';
 
 import { retryTicket } from '../RetryTicket/retryTicket';
 
@@ -998,6 +1000,77 @@ test('runEngine records no done in the Ledger when the merge fails, halts, and r
     { ticket: id(1), event: 'claimed' },
     { ticket: id(1), event: 'released' },
   ]);
+});
+
+test('runEngine leaves the ticket file in place and records no done in the Ledger when the merge of the Worktree Manager conflicts', async () => {
+  const ledger = makeLedgerMemory();
+  const git = (cwd: string, args: readonly string[]) =>
+    ChildProcessSpawner.ChildProcessSpawner.pipe(
+      Effect.flatMap((spawner) => spawner.string(ChildProcess.make('git', args, { cwd })))
+    );
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectory({ prefix: 'engine-merge-conflict-' });
+      const ticketsDir = path.join(root, '.agents', 'tickets');
+      const ticketFile = path.join(ticketsDir, '01-conflict.md');
+      const content = standardTemplate('01', 'Conflict', 'None (can start immediately)');
+      yield* git(root, ['init', '-b', 'main']);
+      yield* git(root, ['config', 'user.email', 'test@test.com']);
+      yield* git(root, ['config', 'user.name', 'Test']);
+      yield* fs.makeDirectory(ticketsDir, { recursive: true });
+      yield* fs.writeFileString(ticketFile, content);
+      yield* fs.writeFileString(path.join(root, '.gitignore'), '.sandcastle/\n.agents/\n');
+      yield* fs.writeFileString(path.join(root, 'base.txt'), 'from main\n');
+      yield* git(root, ['add', '-A']);
+      yield* git(root, ['commit', '-m', 'init']);
+      // The Agent commits its work in the Ticket Worktree. Meanwhile another
+      // change to the same file lands in the Repository Root.
+      const conflictingHarness: Harness = {
+        name: 'conflicting',
+        model: 'test-model',
+        run: (_prompt, options) =>
+          Effect.gen(function* () {
+            yield* fs.writeFileString(path.join(options.cwd!, 'base.txt'), 'the work\n');
+            yield* git(options.cwd!, ['commit', '-am', 'feat: the work']);
+            yield* fs.writeFileString(path.join(root, 'base.txt'), 'other work\n');
+            yield* git(root, ['commit', '-am', 'feat: other work']);
+            return { completionSignal: undefined };
+          }).pipe(Effect.provide(NodeServices.layer), Effect.orDie),
+      };
+      const layer = Layer.mergeAll(
+        TicketSourceFolderLive.pipe(
+          Layer.provide(Layer.merge(ConfigProvider.layer(ConfigProvider.fromUnknown({ ticketsDir })), gitRootOf(root)))
+        ),
+        WorktreeManagerLive(root),
+        gitRootOf(root),
+        ledger.layer,
+        Layer.succeed(HarnessSelector, { select: Effect.succeed(conflictingHarness) }),
+        StrategySelectorNoop,
+        Layer.succeed(Console.Console, capturingConsole([]))
+      );
+      const halt = yield* executeEngine({}).pipe(Random.withSeed('test'), Effect.provide(layer), Effect.flip);
+      return {
+        halt,
+        content,
+        inPlace: yield* fs.readFileString(ticketFile),
+        inDone: yield* fs.exists(path.join(ticketsDir, 'done')),
+        mergeInProgress: yield* fs.exists(path.join(root, '.git', 'MERGE_HEAD')),
+        rootContent: yield* fs.readFileString(path.join(root, 'base.txt')),
+        rootHead: (yield* git(root, ['log', '-1', '--format=%s'])).trim(),
+      };
+    }).pipe(Effect.provide(NodeServices.layer))
+  );
+
+  expect(result.halt).toEqual(new EngineHalted({ ticketId: id(1), reason: 'worktree close failure' }));
+  expect(result.inPlace).toBe(result.content);
+  expect(result.inDone).toBe(false);
+  expect(ledger.done.size).toBe(0);
+  expect(ledger.claims.size).toBe(0);
+  expect(result.mergeInProgress).toBe(false);
+  expect(result.rootContent).toBe('other work\n');
+  expect(result.rootHead).toBe('feat: other work');
 });
 
 test('runEngine does not take a Project ticket that the Ledger records as done while its file is still open, and takes its dependent', async () => {

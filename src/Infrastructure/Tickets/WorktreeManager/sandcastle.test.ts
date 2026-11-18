@@ -6,6 +6,8 @@ import { beforeEach, expect, test, vi } from 'vitest';
 
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
+import { WorktreeNotExpected } from '~/Core/Tickets/Domain/Exceptions/WorktreeNotExpected';
 import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 import { registeredHarnessesOf } from '~/Infrastructure/Shared/HarnessSelector/registered';
 
@@ -342,6 +344,149 @@ test('a Ticket Worktree on disk is reused by a new manager, and a Harness run, m
   expect(runMock.mock.calls[0]?.[0]).toMatchObject({ prompt: 'continue the work', cwd: result.reused.path });
   expect(result.merged).toEqual({ earlier: 'earlier work', fix: 'fixed by a human', agent: 'from the agent' });
   expect(result.exists).toBe(false);
+});
+
+test('a conflicting merge fails with WorktreeCloseError and leaves the Repository Root with no merge in progress', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* initRepo;
+      return yield* Effect.gen(function* () {
+        const manager = yield* WorktreeManager;
+        const ticketTree = yield* manager.prepareTicket({ id: ticketId });
+        yield* fs.writeFileString(path.join(ticketTree.path, 'base.txt'), 'from ticket');
+        yield* git(ticketTree.path, ['commit', '-am', 'feat: the work']);
+        // A change in the Repository Root to the file the work changed makes the merge conflict.
+        yield* fs.writeFileString(path.join(root, 'base.txt'), 'other work');
+        yield* git(root, ['commit', '-am', 'feat: other work']);
+        const head = yield* git(root, ['rev-parse', 'HEAD']);
+        const merged = yield* manager.mergeAndClose(ticketTree).pipe(Effect.flip);
+        // The Engine tries a failed merge once more.
+        const mergedAgain = yield* manager.mergeAndClose(ticketTree).pipe(Effect.flip);
+        return {
+          merged,
+          mergedAgain,
+          headMoved: (yield* git(root, ['rev-parse', 'HEAD'])) !== head,
+          mergeInProgress: yield* fs.exists(path.join(root, '.git', 'MERGE_HEAD')),
+          status: yield* git(root, ['status', '--porcelain', '--untracked-files=no']),
+          content: yield* fs.readFileString(path.join(root, 'base.txt')),
+          ticketTreeKept: yield* fs.exists(ticketTree.path),
+        };
+      }).pipe(Effect.provide(WorktreeManagerLive(root)));
+    })
+  );
+
+  expect(result.merged).toBeInstanceOf(WorktreeCloseError);
+  expect(result.mergedAgain).toBeInstanceOf(WorktreeCloseError);
+  expect(result.headMoved).toBe(false);
+  expect(result.mergeInProgress).toBe(false);
+  expect(result.status).toBe('');
+  expect(result.content).toBe('other work');
+  expect(result.ticketTreeKept).toBe(true);
+});
+
+// What the Worktree Manager prepares, with the directory and the branch it expects on disk.
+const preparations = [
+  {
+    kind: 'Project Worktree',
+    name: 'demo',
+    prepare: WorktreeManager.pipe(Effect.flatMap((manager) => manager.prepareProject(project))),
+  },
+  {
+    kind: 'Ticket Worktree',
+    name: 'ticket-folder-17',
+    prepare: WorktreeManager.pipe(Effect.flatMap((manager) => manager.prepareTicket({ id: ticketId }))),
+  },
+];
+
+// Prepares a worktree in a new repository whose directory `occupy` has put on disk
+// before, and returns the failure with what the directory holds afterwards.
+const prepareOver = (
+  { name, prepare }: (typeof preparations)[number],
+  occupy: (root: string, dir: string) => Effect.Effect<unknown, PlatformError.PlatformError, NodeServices.NodeServices>
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* initRepo;
+    const dir = path.join(root, '.sandcastle', 'worktrees', name);
+    yield* occupy(root, dir);
+    createWorktreeMock.mockClear();
+    const failure = yield* prepare.pipe(Effect.provide(WorktreeManagerLive(root)), Effect.flip);
+    return { dir, failure, files: yield* fs.readDirectory(dir) };
+  });
+
+test.each(preparations)('an existing directory that is not a Git worktree fails the preparation of a $kind', async (preparation) => {
+  const { dir, failure, files } = await run(
+    prepareOver(preparation, (_root, dir) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(dir, { recursive: true });
+        yield* fs.writeFileString(path.join(dir, 'left.txt'), 'left behind');
+      })
+    )
+  );
+
+  expect(failure).toEqual(
+    new WorktreeNotExpected({ path: dir, expectedBranch: preparation.name, found: 'a directory that is not a Git worktree' })
+  );
+  expect(failure.message).toBe(
+    `${dir} is expected to be a Git worktree on branch ${preparation.name}, but it is a directory that is not a Git worktree`
+  );
+  expect(files).toEqual(['left.txt']);
+  expect(createWorktreeMock).not.toHaveBeenCalled();
+});
+
+test.each(preparations)('an existing worktree on another branch fails the preparation of a $kind', async (preparation) => {
+  const { dir, failure } = await run(
+    prepareOver(preparation, (root, dir) => git(root, ['worktree', 'add', '-b', 'other', dir, 'HEAD']))
+  );
+
+  expect(failure).toEqual(
+    new WorktreeNotExpected({ path: dir, expectedBranch: preparation.name, found: 'a Git worktree on branch other' })
+  );
+  expect(await run(git(dir, ['rev-parse', '--abbrev-ref', 'HEAD']))).toBe('other');
+  expect(createWorktreeMock).not.toHaveBeenCalled();
+});
+
+test.each(preparations)('an existing worktree with a detached HEAD fails the preparation of a $kind', async (preparation) => {
+  const { dir, failure } = await run(
+    prepareOver(preparation, (root, dir) => git(root, ['worktree', 'add', '--detach', dir, 'HEAD']))
+  );
+
+  expect(failure).toEqual(
+    new WorktreeNotExpected({ path: dir, expectedBranch: preparation.name, found: 'a Git worktree with a detached HEAD' })
+  );
+  expect(createWorktreeMock).not.toHaveBeenCalled();
+});
+
+test('a foreign Project Worktree fails the preparation of a Ticket Worktree of that Project', async () => {
+  const { dir, failure, ticketTreeExists } = await run(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* initRepo;
+      const dir = path.join(root, '.sandcastle', 'worktrees', 'demo');
+      yield* git(root, ['worktree', 'add', '-b', 'other', dir, 'HEAD']);
+      const failure = yield* WorktreeManager.pipe(
+        Effect.flatMap((manager) => manager.prepareTicket({ id: ticketId, project })),
+        Effect.provide(WorktreeManagerLive(root)),
+        Effect.flip
+      );
+      return {
+        dir,
+        failure,
+        ticketTreeExists: yield* fs.exists(path.join(root, '.sandcastle', 'worktrees', 'ticket-folder-17')),
+      };
+    })
+  );
+
+  expect(failure).toEqual(
+    new WorktreeNotExpected({ path: dir, expectedBranch: 'demo', found: 'a Git worktree on branch other' })
+  );
+  expect(ticketTreeExists).toBe(false);
 });
 
 // Prepares the Ticket Worktree of `folder:17` in a new repository, and runs a

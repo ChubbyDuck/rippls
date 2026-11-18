@@ -17,6 +17,7 @@ import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketE
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
 import { WorktreeCreationError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCreationError';
+import { WorktreeNotExpected } from '~/Core/Tickets/Domain/Exceptions/WorktreeNotExpected';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
@@ -500,6 +501,47 @@ test('a project-worktree create failure is retried once and then halts without e
   expect(attempts).toBe(2);
   expect(doneReported).toEqual([]);
 });
+
+test.each(['Project Worktree', 'Ticket Worktree'] as const)(
+  'a %s on disk that is not the expected one halts with what was found, with no second try and no Agent',
+  (kind) => {
+    const cwds: Array<string | undefined> = [];
+    const ledger = ledgerClaiming(ticket);
+    let attempts = 0;
+    const unexpected = new WorktreeNotExpected({
+      path: kind === 'Project Worktree' ? projectWorktree.path : ticketWorktreeOf(ticket.id).path,
+      expectedBranch: kind === 'Project Worktree' ? projectWorktree.branch : ticketWorktreeOf(ticket.id).branch,
+      found: 'a directory that is not a Git worktree',
+    });
+    const failing = Effect.suspend(() => {
+      attempts += 1;
+      return Effect.fail(unexpected);
+    });
+    const services = Layer.mergeAll(
+      Layer.succeed(HarnessSelector, { select: Effect.succeed(harnessRecordingCwd(cwds)) }),
+      ticketRepoIgnoringReads,
+      probingStrategy,
+      Layer.succeed(WorktreeManager, {
+        prepareProject: () => (kind === 'Project Worktree' ? failing : Effect.succeed(projectWorktree)),
+        prepareTicket: () => (kind === 'Ticket Worktree' ? failing : Effect.die('prepareTicket should not be called')),
+        runCommand: () => Effect.die('runCommand should not be called'),
+        isClean: () => Effect.die('isClean should not be called'),
+        mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
+      })
+    );
+
+    const halt = Effect.runSync(
+      processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(Layer.merge(services, ledger.layer)), Effect.flip)
+    );
+
+    expect(halt).toEqual(new EngineHalted({ ticketId: ticket.id, reason: unexpected.message }));
+    expect(unexpected.message).toContain(unexpected.path);
+    expect(attempts).toBe(1);
+    expect(cwds).toEqual([]);
+    expect(ledger.done.size).toBe(0);
+    expect(ledger.escalated.size).toBe(0);
+  }
+);
 
 test('a project-worktree create failure that succeeds on retry processes the ticket', () => {
   const cwds: Array<string | undefined> = [];

@@ -7,6 +7,7 @@ import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/
 import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
 import { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCommandError';
 import { WorktreeCreationError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCreationError';
+import { WorktreeNotExpected } from '~/Core/Tickets/Domain/Exceptions/WorktreeNotExpected';
 import { type CommandRun, type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
 import { ensureDependencies } from './ensureDependencies';
@@ -14,8 +15,9 @@ import { ensureDependencies } from './ensureDependencies';
 // Sandcastle stores a named-branch worktree at this path. A second createWorktree
 // for the same branch fails because that branch is already checked out, so the
 // adapter reuses the directory when it is already on disk: a Project Worktree,
-// and a Ticket Worktree retained after an escalation. The adapter keeps no
-// Sandcastle handle, so a Harness runs in a reused worktree as in a new one.
+// and a Ticket Worktree retained after an escalation. It reuses the directory
+// only when it is a Git worktree on that branch. The adapter keeps no Sandcastle
+// handle, so a Harness runs in a reused worktree as in a new one.
 const worktreePathOf = (path: Path.Path, repositoryRoot: string, name: string) =>
   path.join(repositoryRoot, '.sandcastle', 'worktrees', name.replaceAll('/', '-'));
 
@@ -48,6 +50,30 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)
         );
 
+      // Whether the directory is on disk as the Git worktree on the branch. A
+      // directory that is anything else fails: it is never reused. Git answers
+      // from the worktree that holds the directory, so a plain directory under the
+      // Repository Root has the Repository Root as its top level, not itself.
+      const isReusable = (onDisk: string, branch: string) =>
+        Effect.gen(function* () {
+          if (!(yield* fs.exists(onDisk))) {
+            return false;
+          }
+          const git = (args: readonly string[]) =>
+            spawner.string(ChildProcess.make('git', args, { cwd: onDisk })).pipe(Effect.map((output) => output.trim()));
+          const unexpected = (found: string) => new WorktreeNotExpected({ path: onDisk, expectedBranch: branch, found });
+          if ((yield* git(['rev-parse', '--show-toplevel'])) !== (yield* fs.realPath(onDisk))) {
+            return yield* unexpected('a directory that is not a Git worktree');
+          }
+          const current = yield* git(['branch', '--show-current']);
+          if (current !== branch) {
+            return yield* unexpected(
+              current === '' ? 'a Git worktree with a detached HEAD' : `a Git worktree on branch ${current}`
+            );
+          }
+          return true;
+        }).pipe(Effect.catchTag('PlatformError', () => Effect.fail(new WorktreeCreationError())));
+
       const prepareProject = (project: Project) =>
         Effect.gen(function* () {
           const cached = projectMemo.get(project);
@@ -56,7 +82,7 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
             return cached;
           }
           const onDisk = worktreePathOf(path, repositoryRoot, project);
-          if (yield* fs.exists(onDisk).pipe(Effect.mapError(() => new WorktreeCreationError()))) {
+          if (yield* isReusable(onDisk, project)) {
             yield* Console.log(`Worktree ${project} is reused from disk at ${onDisk}`);
             const worktree = { path: onDisk, branch: project };
             yield* prepared(worktree.path);
@@ -92,7 +118,7 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
             const parent =
               project === undefined ? { path: repositoryRoot, branch: 'HEAD' } : yield* prepareProject(project);
             const onDisk = worktreePathOf(path, repositoryRoot, branch);
-            if (yield* fs.exists(onDisk).pipe(Effect.mapError(() => new WorktreeCreationError()))) {
+            if (yield* isReusable(onDisk, branch)) {
               yield* Console.log(`Worktree ${branch} is reused from disk at ${onDisk}`);
               const worktree = { path: onDisk, branch };
               yield* prepared(worktree.path);
@@ -125,7 +151,22 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
                 .string(ChildProcess.make('git', args, { cwd }))
                 .pipe(Effect.mapError(() => new WorktreeCloseError()));
             yield* Console.log(`Worktree ${worktree.branch} is merging into ${record.parentPath}`);
-            yield* git(['merge', '--no-ff', '--no-edit', worktree.branch], record.parentPath);
+            // A merge that exits non-zero, as on a conflict, is aborted, so the
+            // directory it merges into is left as it was. Its output is not read.
+            const merged = yield* spawner
+              .exitCode(
+                ChildProcess.make('git', ['merge', '--no-ff', '--no-edit', worktree.branch], {
+                  cwd: record.parentPath,
+                  stdin: 'ignore',
+                  stdout: 'ignore',
+                  stderr: 'ignore',
+                })
+              )
+              .pipe(Effect.mapError(() => new WorktreeCloseError()));
+            if (merged !== 0) {
+              yield* git(['merge', '--abort'], record.parentPath).pipe(Effect.ignore);
+              return yield* new WorktreeCloseError();
+            }
             yield* Console.log(`Worktree ${worktree.branch} is closing at ${worktree.path}`);
             // As a Sandcastle handle closes it, once the work is merged: a
             // worktree with uncommitted changes stays on disk, and a failure to
