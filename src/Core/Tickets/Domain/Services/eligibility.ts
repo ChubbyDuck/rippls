@@ -18,7 +18,7 @@ export const isUnblocked = (ticket: Ticket, done: ReadonlySet<TicketId>): boolea
 /** A Ticket with no Claim in the Ledger other than a Stale Claim. */
 export const isUnclaimed = (ticket: Ticket, claimed: ReadonlySet<TicketId>): boolean => !claimed.has(ticket.id);
 
-/** A Ticket that the Ledger records as escalated to a human. */
+/** A Ticket that has an Escalation in the Ledger. */
 export const isEscalated = (ticket: Ticket, escalated: ReadonlySet<TicketId>): boolean => escalated.has(ticket.id);
 
 /** A Ticket whose HITL is no, allowing it to proceed without a human. */
@@ -26,7 +26,7 @@ export const isUnattended = (ticket: Ticket): boolean => ticket.hitl === 'no';
 
 /**
  * What the Engine knows of other tickets: which are done, which hold a Claim in
- * the Ledger that is not a Stale Claim, and which the Ledger records as escalated.
+ * the Ledger that is not a Stale Claim, and which have an Escalation in the Ledger.
  */
 export type EligibilityFacts = {
   readonly done: ReadonlySet<TicketId>;
@@ -38,7 +38,7 @@ export type EligibilityFacts = {
  * The one eligibility rule of the Engine: an Unblocked, Unclaimed, Unattended
  * Ticket that is not done or escalated, which the Engine may take next. A Ticket
  * Source returns every ticket in scope, done ones included, and the Ledger holds
- * the Claims and escalations; this rule decides which of the tickets the Engine
+ * the Claims and Escalations; this rule decides which of the tickets the Engine
  * may take.
  */
 export const isEligible = (ticket: Ticket, { done, claimed, escalated }: EligibilityFacts): boolean =>

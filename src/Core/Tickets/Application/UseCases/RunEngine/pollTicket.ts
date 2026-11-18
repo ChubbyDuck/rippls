@@ -61,8 +61,11 @@ const replaceStale = (ticket: Ticket, stale: Claim) =>
 // Each candidate is read again by identity, so the ticket taken carries its full
 // content and is still Eligible when it is taken. A stale Claim on it is replaced
 // first. The Claim is then created in the Ledger, where only one caller can
-// succeed, and reported to the Source. When the Source cannot confirm the Claim,
-// the Engine releases it and takes another ticket.
+// succeed. Another Engine may have escalated the ticket and released its Claim
+// since the Ledger was read; an Engine records the Escalation before that release,
+// so it is read again once the Claim is held, and an escalated ticket is released
+// and skipped. The Claim is then reported to the Source. When the Source cannot
+// confirm the Claim, the Engine releases it and takes another ticket.
 const claimIfStillEligible =
   (engine: EngineId, facts: EligibilityFacts, stale: ReadonlyMap<TicketId, Claim>) => (candidate: Ticket) =>
   Effect.gen(function* () {
@@ -78,6 +81,11 @@ const claimIfStillEligible =
       yield* replaceStale(ticket, staleClaim);
     }
     yield* ledger.claim(ticket.id, engine);
+    const escalated = yield* ledger.escalations([ticket.id]);
+    if (escalated.has(ticket.id)) {
+      yield* ledger.release(ticket.id);
+      return Result.fail(candidate);
+    }
     yield* source.report(ticket.id, 'claimed').pipe(
       Effect.tapError(() =>
         Console.log(`${ticket.label} could not be claimed on the Source, taking another ticket`).pipe(

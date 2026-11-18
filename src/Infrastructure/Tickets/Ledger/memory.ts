@@ -11,7 +11,7 @@ import { type ClaimHolder, isStaleFor } from './holder';
 
 /**
  * A Ledger held in memory. Every Engine given its layer shares one set of Claims
- * and escalations, so several Engines can run against one Ledger. The processes
+ * and Escalations, so several Engines can run against one Ledger. The processes
  * in `running` run on the holder's host; the holder's own process is one of them.
  */
 export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memory' }) => {

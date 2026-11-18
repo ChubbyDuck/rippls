@@ -14,18 +14,17 @@ import { harnessInWorktree } from './harnessInWorktree';
 import type { ProcessTicketCommand } from './command';
 import { prepareTicketWorktree } from './prepareTicketWorktree';
 
-// A failed ticket keeps its content. The Ledger records the escalation with the
+// A failed ticket keeps its content. The Ledger records the Escalation with the
 // retained Ticket Worktree, the Claim is released, and the Source hears escalated.
-// A report that fails is only logged, since the Ledger holds the escalation. The
+// A report that fails is only logged, since the Ledger holds the Escalation. The
 // Engine then halts.
 const escalate = (ticket: Ticket, worktree: Worktree, reason: string) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
     const source = yield* TicketSource;
-    yield* Console.error(`${ticket.label} failed and is raised to a human`);
     const escalation = yield* ledger.escalate(ticket.id, { reason, worktree: worktree.path });
     yield* Console.error(
-      `${ticket.label} is escalated after ${escalation.attempts} attempt(s), its worktree is retained at ${worktree.path}`
+      `${ticket.label} failed (${reason}) and is escalated after ${escalation.attempts} attempt(s); its Ticket Worktree is retained at ${worktree.path}`
     );
     yield* ledger.release(ticket.id);
     yield* source

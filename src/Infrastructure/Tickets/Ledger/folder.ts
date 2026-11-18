@@ -5,7 +5,7 @@ import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import type { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
-import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
+import { Escalation, type EscalationCause } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
@@ -41,7 +41,7 @@ const processRuns = (pid: number): Effect.Effect<boolean> =>
  * The Ledger as one record per ticket in a folder for Rippls inside the Git common
  * directory. Every worktree of the repository shares that directory, it never
  * appears in a merge, and it needs no ignore rule. A Claim is the record in the
- * folder itself; an escalation is a record in its `escalations` folder, so it
+ * folder itself; an Escalation is a record in its `escalations` folder, so it
  * outlives the Claim that is released when the ticket is escalated.
  */
 export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
@@ -76,6 +76,15 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
           );
       const readRecord = readWith(decodeClaim);
       const readEscalation = readWith(decodeEscalation);
+
+      // The records of the given tickets, keyed by ticket. A ticket with no record is absent.
+      const readMany = <A extends { readonly ticket: TicketId }>(
+        tickets: readonly TicketId[],
+        readOne: (ticket: TicketId) => Effect.Effect<Option.Option<A>, LedgerError>
+      ) =>
+        Effect.forEach(tickets, readOne).pipe(
+          Effect.map((found) => new Map(found.flatMap(Option.toArray).map((held) => [held.ticket, held] as const)))
+        );
 
       const removeRecord = (file: string) =>
         fs.remove(file).pipe(Effect.catchIf(isNotFound, () => Effect.void), Effect.mapError(toLedgerError));
@@ -151,16 +160,11 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
           Effect.tap((tickets) => Effect.forEach(tickets, release, { discard: true }))
         );
 
-      const read = (tickets: readonly TicketId[]) =>
-        Effect.forEach(tickets, (ticket) => readRecord(recordOf(ticket))).pipe(
-          Effect.map(
-            (claims) => new Map(claims.flatMap(Option.toArray).map((held) => [held.ticket, held] as const))
-          )
-        );
+      const read = (tickets: readonly TicketId[]) => readMany(tickets, (ticket) => readRecord(recordOf(ticket)));
 
       // Only the Engine that holds the Claim escalates a ticket, so the attempt
       // count is read and raised without a race.
-      const escalate = (ticket: TicketId, { reason, worktree }: { readonly reason: string; readonly worktree: string }) =>
+      const escalate = (ticket: TicketId, { reason, worktree }: EscalationCause) =>
         Effect.gen(function* () {
           const previous = yield* readEscalation(escalationOf(ticket));
           const attempts = Option.match(previous, { onNone: () => 0, onSome: (held) => held.attempts }) + 1;
@@ -174,9 +178,7 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
         }).pipe(Effect.scoped);
 
       const escalations = (tickets: readonly TicketId[]) =>
-        Effect.forEach(tickets, (ticket) => readEscalation(escalationOf(ticket))).pipe(
-          Effect.map((found) => new Map(found.flatMap(Option.toArray).map((held) => [held.ticket, held] as const)))
-        );
+        readMany(tickets, (ticket) => readEscalation(escalationOf(ticket)));
 
       return { claim, assignRunner, release, isStale, releaseStale, releaseAllOf, read, escalate, escalations };
     })

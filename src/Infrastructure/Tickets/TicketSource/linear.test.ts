@@ -260,13 +260,14 @@ test('save of a done ticket moves it to the completed state', async () => {
   expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
 });
 
-test('report of escalated unassigns, moves to the first unstarted state, and adds needs-human, leaving the kind label', async () => {
+test('report of escalated unassigns, moves to the first unstarted state, and adds needs-human, leaving the kind and hitl labels', async () => {
   const api = fakeLinear([
     issue({
       stateType: 'started',
       assigneeId: 'viewer-1',
       labels: [
-        { id: 'label-impl', name: 'kind:implementation' },
+        { id: 'label-task', name: 'kind:task' },
+        { id: 'label-hitl-no', name: 'hitl:no' },
         { id: 'label-priority', name: 'priority:high' },
       ],
     }),
@@ -280,7 +281,8 @@ test('report of escalated unassigns, moves to the first unstarted state, and add
     { op: 'setLabels', issueId: uuid, addedLabelIds: ['label-needs-human'], removedLabelIds: [] },
   ]);
   expect(api.issues.get(uuid)?.labels.map((label) => label.name)).toEqual([
-    'kind:implementation',
+    'kind:task',
+    'hitl:no',
     'priority:high',
     'needs-human',
   ]);

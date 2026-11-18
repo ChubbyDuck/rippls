@@ -83,8 +83,8 @@ _Avoid_: Dead lock, orphan, abandoned Claim
 **Escalation**:
 The Ledger's record that a Ticket needs a human because its Ticket Processing
 failed. It holds the reason, the attempt count, and the path of the retained Ticket
-Worktree. The Ticket keeps its Ticket Kind and HITL. An escalated Ticket is not
-Eligible.
+Worktree. The Engine does not change the Ticket's Kind or HITL. An escalated Ticket
+is not Eligible.
 _Avoid_: HITL raise, failure, human task
 
 **Ledger**:

@@ -21,6 +21,7 @@ import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketE
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import { TicketNotSaved } from '~/Core/Tickets/Domain/Exceptions/TicketNotSaved';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
@@ -643,6 +644,40 @@ test('runEngine does not take a ticket that an earlier Engine run escalated', as
 
   expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
   expect(ledger.escalated.has(id(1))).toBe(true);
+});
+
+test('runEngine does not process a ticket that another Engine escalated after this Engine read the Ledger', async () => {
+  const ran: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+  // The poll reads the Escalations before another Engine escalates ticket 1 and
+  // releases its Claim, so the read misses that Escalation.
+  const real = Effect.runSync(Ledger.pipe(Effect.provide(ledger.layer)));
+  let reads = 0;
+  const lateEscalation = Layer.succeed(Ledger, {
+    ...real,
+    escalations: (tickets) =>
+      reads++ === 0
+        ? real.escalations(tickets).pipe(
+            Effect.tap(() =>
+              real.escalate(id(1), { reason: 'strategy failure', worktree: '/repo/.sandcastle/worktrees/ticket-folder:1' })
+            )
+          )
+        : real.escalations(tickets),
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  expect(
+    await Effect.runPromise(
+      executeEngine({ project, limit: 1 }).pipe(
+        Random.withSeed('test'),
+        Effect.provide(Layer.mergeAll(EngineStartupTest, lateEscalation, layer))
+      )
+    )
+  ).toBeUndefined();
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
+  expect(ledger.claims.has(id(1))).toBe(false);
+  expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
 
 test('runEngine fails when the done write cannot be saved, and releases its Claim on exit', () => {
