@@ -1,5 +1,4 @@
 import { type AgentProvider, claudeCode, codex, cursor, opencode, run } from '@ai-hero/sandcastle';
-import { parseEnv } from 'node:util';
 import { noSandbox } from '@ai-hero/sandcastle/sandboxes/no-sandbox';
 import { Console, Effect, type FileSystem, type Path, type PlatformError } from 'effect';
 
@@ -110,12 +109,33 @@ const isNotFound = (error: PlatformError.PlatformError) => error.reason._tag ===
 
 // The keys of the Repository Root's `.sandcastle/.env`. Sandcastle reads that file
 // from the run's working directory, and in a Ticket Worktree it does not exist (Git
-// ignores it), so Rippls passes its keys as the run's environment. Like Sandcastle,
-// a key with an empty value is left to the shell. A missing file has no keys.
-const keysOf = (text: string): Record<string, string> => {
+// ignores it), so Rippls passes its keys as the run's environment. A missing file
+// has no keys.
+const escapes: Record<string, string> = { n: '\n', r: '\r', t: '\t', '\\': '\\' };
+
+// The keys of a `.env` file with a non-empty value, read by the rules of Sandcastle's
+// own reader (EnvResolver), so that the Agent in a Ticket Worktree gets the values
+// it gets in the Repository Root. A key with an empty value is left to the shell.
+const envFileKeysOf = (text: string): Record<string, string> => {
   const keys: Record<string, string> = {};
-  for (const [key, value] of Object.entries(parseEnv(text))) {
-    if (value !== undefined && value !== '') {
+  for (const line of text.split('\n')) {
+    const trimmed = line.trim();
+    const equals = trimmed.indexOf('=');
+    if (trimmed === '' || trimmed.startsWith('#') || equals === -1) {
+      continue;
+    }
+    const key = trimmed.slice(0, equals).trim();
+    let value = trimmed.slice(equals + 1).trim();
+    const quote = value.length >= 2 && value[0] === value.at(-1) ? value[0] : undefined;
+    if (quote === '"' || quote === "'") {
+      value = value.slice(1, -1);
+    }
+    if (quote === '"') {
+      value = value.replace(/\\([nrt\\])/g, (_, escaped: string) => escapes[escaped] ?? escaped);
+    }
+    if (value === '') {
+      delete keys[key];
+    } else {
       keys[key] = value;
     }
   }
@@ -128,7 +148,7 @@ const rootEnvOf = (
   repositoryRoot: string
 ): Effect.Effect<Record<string, string>, HarnessRuntimeError> =>
   fs.readFileString(path.join(repositoryRoot, '.sandcastle', '.env')).pipe(
-    Effect.map(keysOf),
+    Effect.map(envFileKeysOf),
     Effect.catchIf(isNotFound, () => Effect.succeed({})),
     Effect.mapError(() => new HarnessRuntimeError())
   );

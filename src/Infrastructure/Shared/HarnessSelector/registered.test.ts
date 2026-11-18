@@ -169,3 +169,28 @@ test('a run with no .sandcastle/.env in the Repository Root still runs, with no 
   expect(runMock).toHaveBeenCalledTimes(1);
   expect(sandboxEnvOf(runMock.mock.calls[0]?.[0])).toEqual({});
 });
+
+test("a run reads the Repository Root's .sandcastle/.env by Sandcastle's rules", async () => {
+  await runInTemporaryRoot((root) =>
+    fs.makeDirectory(path.join(root, '.sandcastle')).pipe(
+      Effect.andThen(
+        fs.writeFileString(
+          path.join(root, '.sandcastle', '.env'),
+          [
+            'DOUBLE="two\\nlines"',
+            "SINGLE='as \\n written'",
+            'INLINE=value # not a comment',
+            'EMPTY=',
+            'not a key',
+          ].join('\n')
+        )
+      )
+    )
+  );
+
+  expect(sandboxEnvOf(runMock.mock.calls[0]?.[0])).toEqual({
+    DOUBLE: 'two\nlines',
+    SINGLE: 'as \\n written',
+    INLINE: 'value # not a comment',
+  });
+});

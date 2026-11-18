@@ -258,7 +258,7 @@ export const commitConfig: Config.Config<CommitConfig> = Config.schema(CommitFil
 // up to `retries` times, and then fails the Strategy.
 const StepPrompt = Schema.NonEmptyString;
 
-// A record keyed by the names of one kind, such as Harness names. An unknown key is a
+// A record keyed by a fixed set of names, such as Harness names. An unknown key is a
 // config error that names it and the valid names, so a typo never falls back silently.
 const recordOfKnownNames = <const Names extends ReadonlyArray<string>, Value extends Schema.Constraint>(
   noun: string,

@@ -671,11 +671,11 @@ test('strategiesConfig rejects an unknown Ticket Kind, and names the valid ones'
 });
 
 test('EngineConfigSchema rejects an unknown Harness name in prompts and an unknown Ticket Kind', () => {
-  const issues = (strategies: unknown) =>
+  const messageOf = (strategies: unknown) =>
     Effect.runSync(
       Schema.decodeUnknownEffect(EngineConfigSchema)({ harnesses: [{ name: 'Claude' }], strategies }).pipe(Effect.flip)
     ).message;
 
-  expect(issues({ task: [{ prompt: 'Do it.', prompts: { Claud: '/do-it' } }] })).toContain('Unknown Harness "Claud"');
-  expect(issues({ implementaton: [{ prompt: 'Build it.' }] })).toContain('Unknown Ticket Kind "implementaton"');
+  expect(messageOf({ task: [{ prompt: 'Do it.', prompts: { Claud: '/do-it' } }] })).toContain('Unknown Harness "Claud"');
+  expect(messageOf({ implementaton: [{ prompt: 'Build it.' }] })).toContain('Unknown Ticket Kind "implementaton"');
 });
