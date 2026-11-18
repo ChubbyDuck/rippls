@@ -1,9 +1,11 @@
 import { Console, Effect, Result } from 'effect';
 
 import { defaultCheckConfig, defaultCommitConfig } from '~/Core/Shared/Domain/EngineConfig';
+import type { HarnessRuntimeError } from '~/Core/Shared/Domain/Exceptions/HarnessRuntimeError';
 import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
+import type { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCommandError';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
@@ -67,6 +69,18 @@ const landDone = (ticket: Ticket, worktree: Worktree) =>
     yield* ledger.release(ticket.id);
   });
 
+// A step after the Strategy that the Worktree Manager or the Harness cannot carry
+// out fails as its post-condition does: the error is logged and the step yields false.
+const failingOn =
+  (messages: { readonly worktree: string; readonly harness: string }) =>
+  <R>(step: Effect.Effect<boolean, WorktreeCommandError | HarnessRuntimeError, R>) =>
+    step.pipe(
+      Effect.catchTags({
+        WorktreeCommandError: () => Console.error(messages.worktree).pipe(Effect.as(false)),
+        HarnessRuntimeError: () => Console.error(messages.harness).pipe(Effect.as(false)),
+      })
+    );
+
 export const processTicket = ({
   ticket,
   runnerId,
@@ -107,11 +121,9 @@ export const processTicket = ({
     // A check command that cannot run, or a fix the Harness cannot carry out, fails
     // the check as a failing command does.
     const passed = yield* checkTicketWorktree(ticket, worktree, worktreeHarness, check).pipe(
-      Effect.catchTags({
-        WorktreeCommandError: () =>
-          Console.error(`${ticket.label} could not run its check command`).pipe(Effect.as(false)),
-        HarnessRuntimeError: () =>
-          Console.error(`${ticket.label} could not send the fix prompt to the Harness`).pipe(Effect.as(false)),
+      failingOn({
+        worktree: `${ticket.label} could not run its check command`,
+        harness: `${ticket.label} could not send the fix prompt to the Harness`,
       })
     );
     if (!passed) {
@@ -121,11 +133,9 @@ export const processTicket = ({
     // prompt, one whose state cannot be read, or a commit prompt the Harness fails
     // on fails Ticket Processing as a failed check does, with no fix attempt.
     const committed = yield* commitTicketWorktree(ticket, worktree, worktreeHarness, commit).pipe(
-      Effect.catchTags({
-        WorktreeCommandError: () =>
-          Console.error(`${ticket.label} could not read whether its worktree is clean`).pipe(Effect.as(false)),
-        HarnessRuntimeError: () =>
-          Console.error(`${ticket.label} could not send the commit prompt to the Harness`).pipe(Effect.as(false)),
+      failingOn({
+        worktree: `${ticket.label} could not read whether its worktree is clean`,
+        harness: `${ticket.label} could not send the commit prompt to the Harness`,
       })
     );
     if (!committed) {

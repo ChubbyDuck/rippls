@@ -11,6 +11,7 @@ import {
   defaultCommitPrompt,
   defaultFixPrompt,
 } from '~/Core/Shared/Domain/EngineConfig';
+import { HarnessRuntimeError } from '~/Core/Shared/Domain/Exceptions/HarnessRuntimeError';
 import { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import { runnerIdFrom } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
@@ -31,6 +32,7 @@ import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound'
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { renderPrompt } from '~/Core/Tickets/Domain/Services/promptTemplate';
 import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
+import { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCommandError';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource';
@@ -1896,4 +1898,61 @@ test('runEngine does not ask whether the Ticket Worktree is clean when the check
 
   expect(outcome).toEqual(Result.fail(new EngineHalted({ ticketId: id(1), reason: 'check failure' })));
   expect(timeline).toEqual([strategyRun(id(1)), `check \`pnpm typecheck && pnpm test\` in ${worktreeOf(id(1))} within 10m`]);
+});
+
+// Runs the Engine on one ticket whose Strategy succeeds, with the given Worktree
+// Manager and Harness, and no check command.
+const runWith = (worktrees: Layer.Layer<WorktreeManager>, harness: Layer.Layer<HarnessSelector>) => {
+  const ledger = makeLedgerMemory();
+  const layer = Layer.mergeAll(
+    EngineStartupTest,
+    worktrees,
+    ledger.layer,
+    fakeSource([sampleTicket(1)]).layer,
+    harness,
+    StrategySelectorNoop
+  );
+  return Effect.runPromise(
+    executeEngine({ project, limit: 1 }).pipe(Random.withSeed('test'), Effect.provide(layer), Effect.result)
+  ).then((outcome) => ({ outcome, ledger }));
+};
+
+test('runEngine escalates with no merge when the Harness fails on the commit prompt', async () => {
+  const timeline: string[] = [];
+  const failingCommit = Layer.succeed(HarnessSelector, {
+    select: Effect.succeed({
+      name: 'default',
+      model: 'default-model',
+      run: (_prompt, options) =>
+        options.label.endsWith('-commit')
+          ? Effect.fail(new HarnessRuntimeError())
+          : Effect.succeed({ completionSignal: undefined }),
+    } satisfies Harness),
+  });
+
+  const { outcome, ledger } = await runWith(checkingWorktrees(timeline, [], [false]), failingCommit);
+
+  expect(outcome).toEqual(Result.fail(new EngineHalted({ ticketId: id(1), reason: 'commit failure' })));
+  expect(timeline).toEqual([`${worktreeOf(id(1))} is dirty`]);
+  expect(ledger.done.size).toBe(0);
+});
+
+test('runEngine escalates with no merge when it cannot read whether the Ticket Worktree is clean', async () => {
+  const merged: string[] = [];
+  const unreadable = Layer.succeed(WorktreeManager, {
+    prepareProject: (value) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${value}`, branch: value }),
+    prepareTicket: ({ id: ticket }) => Effect.succeed({ path: worktreeOf(ticket), branch: `ticket-${ticket}` }),
+    runCommand: () => Effect.die('runCommand should not be called'),
+    isClean: () => Effect.fail(new WorktreeCommandError()),
+    mergeAndClose: (worktree) =>
+      Effect.sync(() => {
+        merged.push(worktree.path);
+      }),
+  });
+
+  const { outcome, ledger } = await runWith(unreadable, HarnessSelectorNoop);
+
+  expect(outcome).toEqual(Result.fail(new EngineHalted({ ticketId: id(1), reason: 'commit failure' })));
+  expect(merged).toEqual([]);
+  expect(ledger.done.size).toBe(0);
 });

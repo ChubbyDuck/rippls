@@ -8,6 +8,7 @@ export type ProcessTicketCommand = {
   readonly repositoryRoot: string;
   // The check that runs after the Strategy succeeds. Without it the check is skipped.
   readonly check?: CheckConfig;
-  // The commit prompt for a Ticket Worktree left dirty. Without it the default is used.
+  // The commit prompt and its model demand, for a Ticket Worktree left dirty. Without
+  // it the default is used.
   readonly commit?: CommitConfig;
 };

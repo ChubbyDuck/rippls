@@ -566,10 +566,7 @@ test('commitConfig takes a model demand that is set in place of the default one'
   });
 });
 
-test('commitConfig rejects an unknown placeholder in the prompt and an unknown model tier', () => {
-  expect(Effect.runSync(loadCommit({ commit: { prompt: 'Commit {{ticket}}' } }).pipe(Effect.flip)).cause.message).toContain(
-    'at ["commit"]["prompt"]'
-  );
+test('commitConfig rejects an unknown model tier', () => {
   expect(Effect.runSync(loadCommit({ commit: { model: { tier: 'top' } } }).pipe(Effect.flip)).cause.message).toContain(
     'at ["commit"]["model"]["tier"]'
   );

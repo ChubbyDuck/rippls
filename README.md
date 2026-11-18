@@ -572,14 +572,14 @@ clean: no uncommitted change, and no untracked file that Git does not ignore.
 
 ```ts
 commit: {
-  prompt: '/commit {{project}} ticket-{{id}}', // unset, a prose prompt that names no skill
+  prompt: '/commit ticket {{id}}: {{title}}', // unset, a prose prompt that names no skill
   model: { fast: true, tier: 'low' }, // the default
 },
 ```
 
 - **Prompt.** A template that can refer to the ticket with `{{id}}` (its identity),
   `{{title}}`, `{{body}}`, and `{{project}}`. `{{project}}` is empty for a ticket
-  without a Project. Any other placeholder is a config error. Unset, the prompt asks in
+  without a Project. Any other `{{…}}` stays as written. Unset, the prompt asks in
   plain prose to commit all work in the worktree with a conventional commit message
   that names the ticket.
 - **Model.** The model demand of the commit run, with `tier` (`low`, `mid`, or

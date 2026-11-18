@@ -11,6 +11,6 @@ export type RunEngineCommand = {
   readonly pollInterval?: Duration.Input;
   // The check that runs in each Ticket Worktree after its Strategy succeeds.
   readonly check?: CheckConfig;
-  // The commit prompt for a Ticket Worktree left dirty after the check.
+  // The commit prompt and its model demand, for a Ticket Worktree left dirty after the check.
   readonly commit?: CommitConfig;
 };

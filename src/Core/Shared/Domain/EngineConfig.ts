@@ -3,8 +3,7 @@ import { Config, ConfigProvider, Context, DateTime, Duration, Effect, Option, Sc
 import { Hitl } from '../../Tickets/Domain/Entities/Ticket/properties/Hitl.ts';
 import { Project } from '../../Tickets/Domain/Entities/Ticket/properties/Project.ts';
 import { defaultTicketKind, TicketKind } from '../../Tickets/Domain/Entities/Ticket/properties/TicketKind.ts';
-import { PromptTemplate } from '../../Tickets/Domain/Services/promptTemplate.ts';
-import type { ModelDemand } from '../Ports/Harness.ts';
+import { type ModelDemand, modelGenerations, modelTiers } from '../Ports/Harness.ts';
 
 import { HarnessName } from './Properties/HarnessName.ts';
 
@@ -218,16 +217,17 @@ export const checkCommandOf = (check: CheckConfig, project: Project | undefined)
 
 // The model demand of a Harness run, as config writes it.
 const ModelDemandConfig = Schema.Struct({
-  tier: Schema.optionalKey(Schema.Literals(['low', 'mid', 'high'])),
+  tier: Schema.optionalKey(Schema.Literals(modelTiers)),
   fast: Schema.optionalKey(Schema.Boolean),
-  generation: Schema.optionalKey(Schema.Literals(['current', 'previous'])),
+  generation: Schema.optionalKey(Schema.Literals(modelGenerations)),
 });
 
 // The prompt the Engine sends when a Ticket Worktree is dirty after the check, so
 // that the work is committed whichever skill did it. The prompt is a template over
-// the ticket; a model demand that is set replaces the default one whole.
+// the ticket (see `renderPrompt`); a model demand that is set replaces the default
+// one whole.
 export const CommitFileConfig = Schema.Struct({
-  prompt: Schema.optionalKey(PromptTemplate),
+  prompt: Schema.optionalKey(Schema.NonEmptyString),
   model: Schema.optionalKey(ModelDemandConfig),
 });
 

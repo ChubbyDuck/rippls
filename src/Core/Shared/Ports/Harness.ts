@@ -2,9 +2,13 @@ import type { Effect } from 'effect';
 
 import type { HarnessRuntimeError } from '~/Core/Shared/Domain/Exceptions/HarnessRuntimeError';
 
-export type ModelTier = 'low' | 'mid' | 'high';
+export const modelTiers = ['low', 'mid', 'high'] as const;
 
-export type ModelGeneration = 'current' | 'previous';
+export type ModelTier = (typeof modelTiers)[number];
+
+export const modelGenerations = ['current', 'previous'] as const;
+
+export type ModelGeneration = (typeof modelGenerations)[number];
 
 // Harness-agnostic filter. Each provided field must match. Omitted fields do not constrain.
 export interface ModelDemand {

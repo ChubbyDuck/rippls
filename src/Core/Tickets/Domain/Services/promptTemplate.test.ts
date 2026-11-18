@@ -1,10 +1,9 @@
-import { Schema } from 'effect';
 import { expect, test } from 'vitest';
 
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 
-import { PromptTemplate, renderPrompt } from './promptTemplate';
+import { renderPrompt } from './promptTemplate';
 
 const ticket = Ticket.create({
   id: formatTicketId('folder', 'auth/7'),
@@ -25,14 +24,6 @@ test('renderPrompt fills an empty Project for a ticket without one', () => {
   expect(renderPrompt('/commit {{project}} ticket-{{id}}', loose)).toBe('/commit  ticket-folder:7');
 });
 
-test('PromptTemplate accepts the known placeholders and rejects any other', () => {
-  const decode = Schema.decodeUnknownResult(PromptTemplate);
-
-  expect(decode('Commit ticket {{id}} of {{project}}: {{title}}\n{{body}}')._tag).toBe('Success');
-  expect(decode('Commit ticket {{ticket}} with {{label}}')).toMatchObject({
-    _tag: 'Failure',
-    failure: {
-      message: expect.stringContaining('Unknown placeholder {{ticket}}, {{label}}'),
-    },
-  });
+test('renderPrompt leaves any other placeholder as written', () => {
+  expect(renderPrompt('Commit {{ticket}} of {{id}} {{valueOf}}', ticket)).toBe('Commit {{ticket}} of folder:auth/7 {{valueOf}}');
 });
