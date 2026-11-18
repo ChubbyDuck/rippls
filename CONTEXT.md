@@ -46,8 +46,9 @@ Whether a human must be in the loop for a Ticket: yes or no.
 _Avoid_: Human review, interactive, AFK
 
 **Ticket Status**:
-A Ticket's position in its lifecycle: open, ready-for-agent, claiming, claimed, done,
-resolved, or blocked. Done records completed work; resolved is a separate status.
+A Ticket's position in its lifecycle: open, ready-for-agent, done, resolved, or
+blocked. Done records completed work; resolved is a separate status. A Ticket Status
+says nothing about a Claim: the Ledger holds the Claim.
 _Avoid_: State, phase
 
 **Project**:
@@ -68,8 +69,15 @@ escalation across Strategies.
 _Avoid_: Runner, run, execution, loop
 
 **Claim**:
-The exclusive assignment of a Ticket to a Runner.
+The exclusive assignment of a Ticket to an Engine, recorded in the Ledger. It names
+the Engine, its process, and its host, and gains the Runner when a Runner starts
+Ticket Processing.
 _Avoid_: Lock, take, checkout
+
+**Ledger**:
+The Engine's own record of Ticket Processing, keyed by ticket identity. It is local
+to the Repository Root for every Source; a Source is never the Ledger.
+_Avoid_: Database, store, registry
 
 **Strategy**:
 A named, reusable procedure for carrying out a Ticket's work through a Harness and
@@ -148,7 +156,7 @@ A Ticket whose blockers are all done. A blocker that cannot be found blocks.
 _Avoid_: Ready, free
 
 **Unclaimed**:
-A Ticket not assigned to a Runner and not currently being claimed.
+A Ticket with no Claim in the Ledger.
 _Avoid_: Available, free, open
 
 **Unattended**:

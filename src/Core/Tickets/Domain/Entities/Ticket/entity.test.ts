@@ -1,12 +1,9 @@
 import { Schema } from 'effect';
 import { describe, expect, it } from 'vitest';
 
-import { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
-
 import { Ticket } from './entity';
 import { formatTicketId } from './properties/TicketId';
 
-const runner = Schema.decodeSync(RunnerId)('runner');
 const id = (value: number) => formatTicketId('folder', String(value));
 
 const validImplementation = {
@@ -28,7 +25,6 @@ describe('Ticket', () => {
     expect(ticket.label).toBe(`Ticket ${id(14)} -- implementation`);
     expect(ticket.kind).toBe('implementation');
     expect(ticket.hitl).toBe('no');
-    expect(ticket.claimedBy).toBeUndefined();
   });
 
   it('creates a prototype ticket and fills implied hitl yes', () => {
@@ -49,68 +45,21 @@ describe('Ticket', () => {
     expect(ticket.hitl).toBe('yes');
   });
 
-  it('accepts a runner claim', () => {
-    const ticket = Ticket.create({
-      ...validImplementation,
-      status: 'claimed',
-      claimedBy: runner,
-    });
+  it('ignores a claim field that an earlier Engine wrote', () => {
+    const ticket = Ticket.create({ ...validImplementation, claimedBy: 'runner' });
 
-    expect(ticket.claimedBy).toBe('runner');
+    expect('claimedBy' in ticket).toBe(false);
   });
 
-  it('claims a ticket for a runner', () => {
-    const ticket = Ticket.create(validImplementation);
-    const claimed = ticket.claim({ by: runner });
-
-    expect(claimed.status).toBe('claimed');
-    expect(claimed.claimedBy).toBe('runner');
+  it('rejects a claim status, since the Claim lives in the Ledger', () => {
+    expect(() => Ticket.create({ ...validImplementation, status: 'claimed' })).toThrow(Schema.SchemaError);
+    expect(() => Ticket.create({ ...validImplementation, status: 'claiming' })).toThrow(Schema.SchemaError);
   });
 
-  it('marks a claimed ticket as done', () => {
-    const ticket = Ticket.create(validImplementation);
-    const done = ticket.claim({ by: runner }).done();
-
-    expect(done.status).toBe('done');
-    expect(done.claimedBy).toBe('runner');
-  });
-
-  it('marks an unclaimed ticket as done', () => {
+  it('marks a ticket as done', () => {
     const done = Ticket.create(validImplementation).done();
 
     expect(done.status).toBe('done');
-    expect(done.claimedBy).toBeUndefined();
-  });
-
-  it('marks a ticket as claiming without a runner', () => {
-    const ticket = Ticket.create(validImplementation);
-    const claiming = ticket.markClaiming();
-
-    expect(claiming.status).toBe('claiming');
-    expect(claiming.claimedBy).toBeUndefined();
-  });
-
-  it('releases a claiming ticket back to ready-for-agent', () => {
-    const ticket = Ticket.create(validImplementation);
-    const released = ticket.markClaiming().release();
-
-    expect(released.status).toBe('ready-for-agent');
-    expect(released.claimedBy).toBeUndefined();
-  });
-
-  it('releases a claimed ticket and clears the runner', () => {
-    const ticket = Ticket.create(validImplementation);
-    const released = ticket.claim({ by: runner }).release();
-
-    expect(released.status).toBe('ready-for-agent');
-    expect(released.claimedBy).toBeUndefined();
-  });
-
-  it('keeps the body when marking claiming and releasing', () => {
-    const ticket = Ticket.create({ ...validImplementation, body: 'Do the work.' });
-
-    expect(ticket.markClaiming().body).toBe('Do the work.');
-    expect(ticket.claim({ by: runner }).release().body).toBe('Do the work.');
   });
 
   it('rejects a non-positive id', () => {
@@ -132,11 +81,11 @@ describe('Ticket', () => {
     expect(ticket.project).toBeUndefined();
   });
 
-  it('keeps an omitted project when claiming', () => {
+  it('keeps an omitted project when completing', () => {
     const { project: _project, ...withoutProject } = validImplementation;
-    const claimed = Ticket.create(withoutProject).claim({ by: runner });
+    const done = Ticket.create(withoutProject).done();
 
-    expect(claimed.project).toBeUndefined();
+    expect(done.project).toBeUndefined();
   });
 
   it('ignores a provided hitl on implied kinds and uses the mapping', () => {
@@ -156,21 +105,19 @@ describe('Ticket', () => {
     expect(() => Ticket.create(withoutBody)).toThrow(Schema.SchemaError);
   });
 
-  it('keeps the body when claiming and completing', () => {
+  it('keeps the body when completing', () => {
     const ticket = Ticket.create({ ...validImplementation, body: 'Do the work.' });
     expect(ticket.body).toBe('Do the work.');
-    expect(ticket.claim({ by: runner }).body).toBe('Do the work.');
-    expect(ticket.claim({ by: runner }).done().body).toBe('Do the work.');
+    expect(ticket.done().body).toBe('Do the work.');
   });
 
   it('escalates a ticket to a human task', () => {
-    const ticket = Ticket.create({ ...validImplementation, body: 'Do the work.' }).claim({ by: runner });
+    const ticket = Ticket.create({ ...validImplementation, body: 'Do the work.' });
     const escalated = ticket.escalate();
 
     expect(escalated.kind).toBe('task');
     expect(escalated.hitl).toBe('yes');
     expect(escalated.status).toBe('ready-for-agent');
-    expect(escalated.claimedBy).toBeUndefined();
     expect(escalated.body).toBe('Do the work.');
   });
 

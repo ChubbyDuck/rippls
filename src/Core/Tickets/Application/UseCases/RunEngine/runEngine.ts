@@ -3,8 +3,8 @@ import { Console, Effect, Queue, Stream } from 'effect';
 import type { Runner } from '~/Core/Shared/Domain/Entities/Runner';
 import { defaultIdleTimeout, defaultPollInterval } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
-import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
-import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
+import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import { processTicket } from '../ProcessTicket/processTicket';
@@ -14,20 +14,22 @@ import { ensureWorktreesWritable } from './ensureWorktreesWritable';
 import { makeIdleClock } from './idleClock';
 import { ticketStream } from './ticketStream';
 
-const releaseTakenTickets = (project?: Project) =>
+// On exit the Engine releases only the Claims it holds, and reports each release
+// to the Source. The Claims of other Engines stay in place.
+const releaseOwnClaims = (engine: EngineId) =>
   Effect.gen(function* () {
+    const ledger = yield* Ledger;
     const source = yield* TicketSource;
-    const taken = project === undefined ? TicketQuery.claimed() : TicketQuery.claimed().byProject(project);
-    const stuck = yield* source.getManyBy(taken.build());
+    const released = yield* ledger.releaseAllOf(engine);
     yield* Effect.forEach(
-      stuck,
+      released,
       (ticket) =>
         source
-          .save(ticket.release())
-          .pipe(Effect.catch((error) => Console.error(`Failed to release ticket ${ticket.id} after the run`, error))),
+          .report(ticket, 'released')
+          .pipe(Effect.catch((error) => Console.error(`Failed to report the release of ticket ${ticket} after the run`, error))),
       { discard: true }
     );
-  });
+  }).pipe(Effect.catchTag('LedgerError', (error) => Console.error('Failed to release the Claims of the Engine after the run', error)));
 
 export const runEngine = Effect.fn('engine.run')(function* ({
   project,
@@ -45,7 +47,7 @@ export const runEngine = Effect.fn('engine.run')(function* ({
     Array.from({ length: concurrency }, () => engine.spawn())
   );
   const clock = yield* makeIdleClock(idleTimeout);
-  const tickets = ticketStream(project, clock, pollInterval);
+  const tickets = ticketStream(engine.id, project, clock, pollInterval);
   const limitedTickets = limit === undefined ? tickets : tickets.pipe(Stream.take(limit));
   yield* Effect.annotateCurrentSpan({
     'engine.id': engine.id,
@@ -69,6 +71,6 @@ export const runEngine = Effect.fn('engine.run')(function* ({
     Stream.runDrain,
     Effect.raceFirst(clock.awaitTimeout),
     Effect.catchTag('EngineIdleTimeout', (error) => Console.log(error.message)),
-    Effect.ensuring(releaseTakenTickets(project))
+    Effect.ensuring(releaseOwnClaims(engine.id))
   );
 });

@@ -11,7 +11,9 @@ const statusByStateType = {
   triage: 'open',
   backlog: 'open',
   unstarted: 'ready-for-agent',
-  started: 'claimed',
+  // A started Issue is claimed on Linear. The Ticket holds no Claim, so it reads
+  // as ready, and the Linear Source does not offer it for processing.
+  started: 'ready-for-agent',
   completed: 'done',
   canceled: 'resolved',
   duplicate: 'resolved',
@@ -122,17 +124,27 @@ const escalateLabelWrites = (
     : [{ op: 'setLabels', issueId, addedLabelIds, removedLabelIds }];
 };
 
+/** A Claim on Linear: assign the Issue to the API-key user and move it to the first `started` state. */
+export const claimWrites = (issueId: string, metadata: LinearMetadata): readonly LinearWrite[] => {
+  const stateId = firstStateId(metadata, 'started');
+  return [
+    { op: 'setAssignee', issueId, assigneeId: metadata.viewer.id },
+    ...(stateId === undefined ? [] : [{ op: 'setState' as const, issueId, stateId }]),
+  ];
+};
+
+/** A release on Linear: unassign the Issue and move it to the first `unstarted` state. */
+export const releaseWrites = (issueId: string, metadata: LinearMetadata): readonly LinearWrite[] => {
+  const stateId = firstStateId(metadata, 'unstarted');
+  return [
+    { op: 'setAssignee', issueId, assigneeId: null },
+    ...(stateId === undefined ? [] : [{ op: 'setState' as const, issueId, stateId }]),
+  ];
+};
+
 export const ticketToWrites = (ticket: Ticket, metadata: LinearMetadata): readonly LinearWrite[] => {
   const issueId = parseTicketId(ticket.id).native;
   const escalate = ticket.status === 'ready-for-agent' && ticket.kind === 'task' && ticket.hitl === 'yes';
-
-  if (ticket.status === 'claimed' || ticket.status === 'claiming') {
-    const stateId = firstStateId(metadata, 'started');
-    return [
-      { op: 'setAssignee', issueId, assigneeId: metadata.viewer.id },
-      ...(stateId === undefined ? [] : [{ op: 'setState' as const, issueId, stateId }]),
-    ];
-  }
 
   if (ticket.status === 'done') {
     const stateId = firstStateId(metadata, 'completed');
@@ -143,11 +155,6 @@ export const ticketToWrites = (ticket: Ticket, metadata: LinearMetadata): readon
     return [];
   }
 
-  const stateId = firstStateId(metadata, 'unstarted');
-  const writes: LinearWrite[] = [
-    { op: 'setAssignee', issueId, assigneeId: null },
-    ...(stateId === undefined ? [] : [{ op: 'setState' as const, issueId, stateId }]),
-  ];
-
+  const writes = releaseWrites(issueId, metadata);
   return escalate ? [...writes, ...escalateLabelWrites(issueId, metadata)] : writes;
 };

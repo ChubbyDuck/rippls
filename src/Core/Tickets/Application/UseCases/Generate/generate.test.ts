@@ -25,7 +25,7 @@ const runGenerate = (options: Partial<GenerateOptions>) => {
     saveMany: (tickets) =>
       Effect.sync(() => {
         saved.push(...tickets);
-      }),
+      }),    report: () => Effect.void,
   });
   return Effect.runPromise(
     generateTickets({ ...defaults, ...options }).pipe(
@@ -117,6 +117,7 @@ test('generateTickets fails when the kind and hitl constraints contradict', asyn
           getManyBy: () => Effect.succeed([]),
           save: () => Effect.void,
           saveMany: () => Effect.void,
+          report: () => Effect.void,
         })
       )
     )

@@ -3,22 +3,27 @@ import { Console, Effect, FileSystem, Fiber, Layer, Path, Random, Result, Schema
 import { TestClock } from 'effect/testing';
 import { expect, test } from 'vitest';
 
-import { RunnerId, runnerIdFrom } from '~/Core/Shared/Domain/Properties/RunnerId';
+import { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
+import { runnerIdFrom } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import type { Harness } from '~/Core/Shared/Ports/Harness';
 import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
+import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
-import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
 import { RepositoryRootNotFound } from '~/Core/Tickets/Domain/Exceptions/RepositoryRootNotFound';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
+import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import { TicketNotSaved } from '~/Core/Tickets/Domain/Exceptions/TicketNotSaved';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
+import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 import { StrategySelectorNoop } from '~/Infrastructure/Tickets/StrategySelector/noop';
 
 import type { RunEngineCommand } from './command';
@@ -42,8 +47,8 @@ const EngineStartupTest = Layer.mergeAll(
   WorktreeManagerNoop
 );
 
-const runEngine = (command: RunEngineCommand = {}) =>
-  executeEngine(command).pipe(Random.withSeed('test'), Effect.provide(EngineStartupTest));
+const runEngine = (command: RunEngineCommand = {}, ledger = makeLedgerMemory()) =>
+  executeEngine(command).pipe(Random.withSeed('test'), Effect.provide(Layer.merge(EngineStartupTest, ledger.layer)));
 const engineId = Effect.runSync(createEngine.pipe(Random.withSeed('test'))).id;
 
 const project = Schema.decodeSync(Project)('0003-sandboxed-local-ticket-loop.md');
@@ -52,24 +57,28 @@ const id = (value: number) => formatTicketId('folder', String(value));
 // A fake Source that keeps tickets in memory, in the order they were added. A read
 // for the tickets in scope returns every one of them, narrowed only by Project:
 // the Engine, not the Source, decides which ticket is Eligible. The other reads
-// (by identity, blocked-by, and claimed) answer as the real Sources do. A saved
-// ticket replaces the stored one, so a claimed ticket stays claimed.
+// (by identity and blocked-by) answer as the real Sources do. A saved ticket
+// replaces the stored one. Every reported event is recorded.
+type Reported = { readonly ticket: TicketId; readonly event: TicketEvent };
+
 const fakeSource = (
   seed: readonly Ticket[] = [],
-  options: { readonly save?: (ticket: Ticket) => Effect.Effect<void, TicketNotSaved> } = {}
+  options: {
+    readonly save?: (ticket: Ticket) => Effect.Effect<void, TicketNotSaved>;
+    readonly report?: (ticket: TicketId, event: TicketEvent) => Effect.Effect<void, TicketEventNotReported>;
+  } = {}
 ) => {
   const store = new Map(seed.map((ticket) => [ticket.id, ticket]));
   const scopeReads: TicketQuery[] = [];
+  const reports: Reported[] = [];
   const read = (query: TicketQuery) =>
     Array.from(store.values()).filter(
       (ticket) =>
         (query.id === undefined || ticket.id === query.id) &&
         (query.blockedBy === undefined || ticket.isBlockedBy(query.blockedBy)) &&
-        (query.claimed !== true || ticket.status === 'claiming' || ticket.status === 'claimed') &&
         (query.project === undefined || ticket.project === query.project)
     );
-  const isScopeRead = (query: TicketQuery) =>
-    query.id === undefined && query.blockedBy === undefined && query.claimed === undefined;
+  const isScopeRead = (query: TicketQuery) => query.id === undefined && query.blockedBy === undefined;
   const save = (ticket: Ticket): Effect.Effect<void, TicketNotSaved> =>
     (options.save ?? (() => Effect.void))(ticket).pipe(
       Effect.andThen(
@@ -93,25 +102,39 @@ const fakeSource = (
       }),
     save,
     saveMany: (tickets) => Effect.forEach(tickets, save, { discard: true }),
+    report: (ticket, event) =>
+      (options.report ?? (() => Effect.void))(ticket, event).pipe(
+        Effect.andThen(
+          Effect.sync(() => {
+            reports.push({ ticket, event });
+          })
+        )
+      ),
   });
   const add = (ticket: Ticket) => {
     store.set(ticket.id, ticket);
   };
-  return { layer, store, scopeReads, add };
+  return { layer, store, scopeReads, reports, add };
 };
 
-const sampleTicket = (value = 1) =>
-  Ticket.create({
-    id: id(value),
-    title: 'Random ticket',
-    project,
-    kind: 'implementation',
-    hitl: 'no',
-    status: 'ready-for-agent',
-    blockedBy: [],
-    blocks: [],
-    body: '',
-  });
+// A Claim that another Engine holds in the shared Ledger.
+const otherEngine = Schema.decodeSync(EngineId)('other-engine-0000');
+const heldByOther = (ticket: TicketId) =>
+  new Claim({ ticket, engine: otherEngine, process: 1, host: 'memory' });
+
+const sampleFields = (value = 1) => ({
+  id: id(value),
+  title: 'Random ticket',
+  project,
+  kind: 'implementation',
+  hitl: 'no',
+  status: 'ready-for-agent',
+  blockedBy: [],
+  blocks: [],
+  body: '',
+});
+
+const sampleTicket = (value = 1) => Ticket.create(sampleFields(value));
 
 const blockedTicket = (value: number, blockedBy: number) =>
   Ticket.create({
@@ -173,6 +196,24 @@ const capturingImplementation = (ran: Ticket[]) =>
       }),
   });
 
+// A strategy that records the Claim the Ledger holds on each ticket while a Runner
+// processes it.
+const claimRecordingImplementation = (
+  ledger: ReturnType<typeof makeLedgerMemory>,
+  seen: Array<Claim | undefined>,
+  run: Effect.Effect<void> = Effect.void
+) =>
+  Layer.succeed(StrategySelector, {
+    select: (kind) =>
+      Effect.succeed({
+        name: kind,
+        run: (ticket) =>
+          Effect.sync(() => {
+            seen.push(ledger.claims.get(ticket.id));
+          }).pipe(Effect.andThen(run), Effect.as(Result.succeed(undefined))),
+      }),
+  });
+
 test('runEngine runs each ready ticket and keeps polling when none remain', async () => {
   const first = sampleTicket(1);
   const second = sampleTicket(2);
@@ -184,7 +225,7 @@ test('runEngine runs each ready ticket and keeps polling when none remain', asyn
   );
 
   expect(await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => ran.length === 2)).toBeUndefined();
-  expect(ran).toEqual([first.claim({ by: claiming }), second.claim({ by: claiming })]);
+  expect(ran).toEqual([first, second]);
 });
 
 test('runEngine runs tickets that appear after an empty poll', async () => {
@@ -197,49 +238,47 @@ test('runEngine runs tickets that appear after an empty poll', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       yield* runEngine({ project }).pipe(Effect.forkChild({ startImmediately: true }));
-      expect(ran).toEqual([first.claim({ by: claiming })]);
+      expect(ran).toEqual([first]);
       source.add(second);
       yield* TestClock.adjust('10 seconds');
-      expect(ran).toEqual([first.claim({ by: claiming }), second.claim({ by: claiming })]);
+      expect(ran).toEqual([first, second]);
     }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer())))
   );
 });
 
-test('runEngine claims each ticket and writes the claim before continuing', async () => {
+test('runEngine claims each ticket and reports the Claim before a Runner takes it', async () => {
   const saved: Ticket[] = [];
   const messages: string[] = [];
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    save: (ticket) =>
+      Effect.sync(() => {
+        saved.push(ticket);
+      }),
+  });
   const layer = Layer.mergeAll(
-    fakeSource([sampleTicket(1), sampleTicket(2)], {
-      save: (ticket) =>
-        Effect.sync(() => {
-          saved.push(ticket);
-        }),
-    }).layer,
+    source.layer,
     HarnessSelectorNoop,
     StrategySelectorNoop,
     Layer.succeed(Console.Console, capturingConsole(messages))
   );
 
-  expect(await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => saved.length === 6)).toBeUndefined();
-  expect(saved).toEqual([
-    sampleTicket(1).markClaiming(),
-    sampleTicket(1).claim({ by: claiming }),
-    sampleTicket(1).claim({ by: claiming }).done(),
-    sampleTicket(2).markClaiming(),
-    sampleTicket(2).claim({ by: claiming }),
-    sampleTicket(2).claim({ by: claiming }).done(),
+  expect(await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => saved.length === 2)).toBeUndefined();
+  expect(saved).toEqual([sampleTicket(1).done(), sampleTicket(2).done()]);
+  expect(source.reports).toEqual([
+    { ticket: id(1), event: 'claimed' },
+    { ticket: id(2), event: 'claimed' },
   ]);
   expect(messages.filter((message) => message !== 'No tickets are found, continuing')).toEqual([
-    `Ticket folder:1 -- implementation is taken into the runner ${claiming}`,
     'Ticket folder:1 -- implementation is claimed',
+    `Ticket folder:1 -- implementation is taken into the runner ${claiming}`,
     "Ticket folder:1 -- implementation is processed by 'implementation' strategy and 'default' harness using 'default-model'",
     'Ticket folder:1 -- implementation is preparing worktree ticket-folder:1 from 0003-sandboxed-local-ticket-loop.md',
     'Ticket folder:1 -- implementation is opening worktree ticket-folder:1 at /repo/.sandcastle/worktrees/ticket-folder:1',
     '',
     'Ticket folder:1 -- implementation is merging worktree ticket-folder:1',
     'Ticket folder:1 -- implementation is done',
-    `Ticket folder:2 -- implementation is taken into the runner ${claiming}`,
     'Ticket folder:2 -- implementation is claimed',
+    `Ticket folder:2 -- implementation is taken into the runner ${claiming}`,
     "Ticket folder:2 -- implementation is processed by 'implementation' strategy and 'default' harness using 'default-model'",
     'Ticket folder:2 -- implementation is preparing worktree ticket-folder:2 from 0003-sandboxed-local-ticket-loop.md',
     'Ticket folder:2 -- implementation is opening worktree ticket-folder:2 at /repo/.sandcastle/worktrees/ticket-folder:2',
@@ -249,9 +288,10 @@ test('runEngine claims each ticket and writes the claim before continuing', asyn
   ]);
 });
 
-test('runEngine runs the matching strategy between claim and done', async () => {
+test('runEngine claims a ticket in the Ledger before a Runner processes it, and releases it once done', async () => {
+  const ledger = makeLedgerMemory();
+  const seen: Array<Claim | undefined> = [];
   const saved: Ticket[] = [];
-  const ran: Ticket[] = [];
   const layer = Layer.mergeAll(
     fakeSource([sampleTicket(1)], {
       save: (ticket) =>
@@ -260,16 +300,13 @@ test('runEngine runs the matching strategy between claim and done', async () => 
         }),
     }).layer,
     HarnessSelectorNoop,
-    capturingImplementation(ran)
+    claimRecordingImplementation(ledger, seen)
   );
 
-  expect(await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => ran.length === 1)).toBeUndefined();
-  expect(ran).toEqual([sampleTicket(1).claim({ by: claiming })]);
-  expect(saved).toEqual([
-    sampleTicket(1).markClaiming(),
-    sampleTicket(1).claim({ by: claiming }),
-    sampleTicket(1).claim({ by: claiming }).done(),
-  ]);
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(seen).toEqual([new Claim({ ticket: id(1), engine: engineId, process: 1, host: 'memory', runner: claiming })]);
+  expect(saved).toEqual([sampleTicket(1).done()]);
+  expect(ledger.claims.size).toBe(0);
 });
 
 test('runEngine narrates taking tickets and continuing after an empty poll', async () => {
@@ -317,7 +354,7 @@ test('runEngine does not scope the read when project is omitted', async () => {
 
 test('runEngine takes only Eligible tickets, in the order of the Source', async () => {
   const ran: Ticket[] = [];
-  const stale = Schema.decodeSync(RunnerId)('stale');
+  const ledger = makeLedgerMemory();
   const attended = Ticket.create({
     id: id(3),
     title: 'Attended ticket',
@@ -332,22 +369,39 @@ test('runEngine takes only Eligible tickets, in the order of the Source', async 
   const source = fakeSource([
     sampleTicket(6),
     blockedTicket(1, 99),
-    sampleTicket(2).claim({ by: stale }),
+    sampleTicket(2),
     attended,
-    sampleTicket(4).markClaiming(),
+    sampleTicket(4),
     sampleTicket(5),
   ]);
+  ledger.claims.set(id(2), heldByOther(id(2)));
+  ledger.claims.set(id(4), heldByOther(id(4)));
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const fiber = yield* runEngine({ project }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
+      const fiber = yield* runEngine({ project }, ledger).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true })
+      );
       yield* TestClock.adjust('0 millis');
       yield* Fiber.interrupt(fiber);
     }).pipe(Effect.provide(TestClock.layer()))
   );
 
   expect(ran.map((ticket) => ticket.id)).toEqual([id(6), id(5)]);
+});
+
+test('runEngine takes a ticket whose claim field an earlier Engine wrote, since the Ledger holds no Claim on it', async () => {
+  const ran: Ticket[] = [];
+  // An earlier Engine wrote its Claim into the ticket. The Ledger holds no Claim
+  // on it, so the ticket is Unclaimed.
+  const source = fakeSource([]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+  source.add(Ticket.create({ ...sampleFields(1), claimedBy: 'old-runner' }));
+
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(1)]);
 });
 
 test('runEngine takes the chosen ticket as the Source reads it by identity', async () => {
@@ -367,32 +421,33 @@ test('runEngine takes the chosen ticket as the Source reads it by identity', asy
   const headOnly = Layer.succeed(TicketSource, {
     ...Effect.runSync(TicketSource.pipe(Effect.provide(source.layer))),
     getManyBy: (query) =>
-      query.id === undefined && query.claimed === undefined && query.blockedBy === undefined
+      query.id === undefined && query.blockedBy === undefined
         ? Effect.succeed([head])
         : Effect.succeed([]),
   });
   const layer = Layer.mergeAll(headOnly, HarnessSelectorNoop, capturingImplementation(ran));
 
   expect(await Effect.runPromise(runEngine({ project, limit: 1 }).pipe(Effect.provide(layer)))).toBeUndefined();
-  expect(ran).toEqual([full.claim({ by: claiming })]);
+  expect(ran).toEqual([full]);
 });
 
 test('runEngine takes the next Eligible ticket when the chosen one is no longer Eligible by identity', async () => {
   const ran: Ticket[] = [];
-  const stale = Schema.decodeSync(RunnerId)('stale');
-  const source = fakeSource([sampleTicket(1).claim({ by: stale }), sampleTicket(2)]);
+  const ledger = makeLedgerMemory();
+  const attended = Ticket.create({ ...sampleFields(1), kind: 'task', hitl: 'yes' });
+  const source = fakeSource([attended, sampleTicket(2)]);
   const staleList = Layer.succeed(TicketSource, {
     ...Effect.runSync(TicketSource.pipe(Effect.provide(source.layer))),
     getManyBy: (query) =>
-      query.id === undefined && query.claimed === undefined && query.blockedBy === undefined
+      query.id === undefined && query.blockedBy === undefined
         ? Effect.succeed([sampleTicket(1), sampleTicket(2)])
         : Effect.succeed([]),
   });
   const layer = Layer.mergeAll(staleList, HarnessSelectorNoop, capturingImplementation(ran));
 
-  expect(await Effect.runPromise(runEngine({ project, limit: 1 }).pipe(Effect.provide(layer)))).toBeUndefined();
-  expect(ran).toEqual([sampleTicket(2).claim({ by: claiming })]);
-  expect(source.store.get(id(1))?.claimedBy).toBe(stale);
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(ran).toEqual([sampleTicket(2)]);
+  expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
 
 test('runEngine takes a blocked ticket once its blocker is done, without writing to it before', async () => {
@@ -420,15 +475,8 @@ test('runEngine takes a blocked ticket once its blocker is done, without writing
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
 
   expect(await Effect.runPromise(runEngine({ project, limit: 2 }).pipe(Effect.provide(layer)))).toBeUndefined();
-  expect(ran).toEqual([blocker.claim({ by: claiming }), dependent.claim({ by: claiming })]);
-  expect(saved).toEqual([
-    blocker.markClaiming(),
-    blocker.claim({ by: claiming }),
-    blocker.claim({ by: claiming }).done(),
-    dependent.markClaiming(),
-    dependent.claim({ by: claiming }),
-    dependent.claim({ by: claiming }).done(),
-  ]);
+  expect(ran).toEqual([blocker, dependent]);
+  expect(saved).toEqual([blocker.done(), dependent.done()]);
 });
 
 test('runEngine does not take a ticket while its blocker is not done, and takes it once the blocker is done', async () => {
@@ -462,12 +510,12 @@ test('runEngine does not take a ticket while its blocker is not done, and takes 
       expect(saved).toEqual([]);
       source.add(attendedBlocker.done());
       yield* TestClock.adjust('10 seconds');
-      expect(ran).toEqual([dependent.claim({ by: claiming })]);
+      expect(ran).toEqual([dependent]);
       yield* Fiber.interrupt(fiber);
     }).pipe(Effect.provide(TestClock.layer()))
   );
 
-  expect(saved.filter((ticket) => ticket.id === dependent.id)[0]).toEqual(dependent.markClaiming());
+  expect(saved).toEqual([dependent.done()]);
 });
 
 test('runEngine keeps a ticket blocked by a blocker that the Source cannot find', async () => {
@@ -516,18 +564,25 @@ test('runEngine resolves a blocker of another Project against every ticket of th
   expect(ran.map((ticket) => ticket.id)).toEqual([id(1)]);
 });
 
-test('runEngine fails when the claim cannot be saved', () => {
-  const ran: Ticket[] = [];
+test('runEngine releases a Claim the Source cannot confirm and takes another ticket', async () => {
+  const ledger = makeLedgerMemory();
+  const seen: Array<Claim | undefined> = [];
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    report: (ticket, event) =>
+      ticket === id(1) && event === 'claimed'
+        ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event }))
+        : Effect.void,
+  });
   const layer = Layer.mergeAll(
-    fakeSource([sampleTicket(1), sampleTicket(2)], { save: () => Effect.fail(new TicketNotSaved()) }).layer,
+    source.layer,
     HarnessSelectorNoop,
-    capturingImplementation(ran)
+    claimRecordingImplementation(ledger, seen)
   );
 
-  expect(Effect.runSync(runEngine({ project }).pipe(Effect.provide(layer), Effect.flip))).toEqual(
-    new TicketNotSaved()
-  );
-  expect(ran).toEqual([]);
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(seen.map((claim) => claim?.ticket)).toEqual([id(2)]);
+  expect(ledger.claims.has(id(1))).toBe(false);
+  expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
 
 test('runEngine escalates the ticket and halts when the strategy reports a failure', () => {
@@ -552,37 +607,32 @@ test('runEngine escalates the ticket and halts when the strategy reports a failu
   expect(Effect.runSync(runEngine({ project }).pipe(Effect.provide(layer), Effect.flip))).toBeInstanceOf(
     EngineHalted
   );
-  expect(saved).toEqual([
-    sampleTicket(1).markClaiming(),
-    sampleTicket(1).claim({ by: claiming }),
-    sampleTicket(1).claim({ by: claiming }).escalate(),
-  ]);
+  expect(saved).toEqual([sampleTicket(1).escalate()]);
 });
 
-test('runEngine fails when the done write cannot be saved', () => {
+test('runEngine fails when the done write cannot be saved, and releases its Claim on exit', () => {
   const saved: Ticket[] = [];
   const ran: Ticket[] = [];
-  const layer = Layer.mergeAll(
-    fakeSource([sampleTicket(1), sampleTicket(2)], {
-      save: (ticket) =>
-        ticket.status === 'done'
-          ? Effect.fail(new TicketNotSaved())
-          : Effect.sync(() => {
-              saved.push(ticket);
-            }),
-    }).layer,
-    HarnessSelectorNoop,
-    capturingImplementation(ran)
-  );
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    save: (ticket) =>
+      ticket.status === 'done'
+        ? Effect.fail(new TicketNotSaved())
+        : Effect.sync(() => {
+            saved.push(ticket);
+          }),
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
 
-  expect(Effect.runSync(runEngine({ project }).pipe(Effect.provide(layer), Effect.flip))).toEqual(
+  expect(Effect.runSync(runEngine({ project }, ledger).pipe(Effect.provide(layer), Effect.flip))).toEqual(
     new TicketNotSaved()
   );
-  expect(ran).toEqual([sampleTicket(1).claim({ by: claiming })]);
-  expect(saved).toEqual([
-    sampleTicket(1).markClaiming(),
-    sampleTicket(1).claim({ by: claiming }),
-    sampleTicket(1).claim({ by: claiming }).release(),
+  expect(ran).toEqual([sampleTicket(1)]);
+  expect(saved).toEqual([]);
+  expect(ledger.claims.size).toBe(0);
+  expect(source.reports).toEqual([
+    { ticket: id(1), event: 'claimed' },
+    { ticket: id(1), event: 'released' },
   ]);
 });
 
@@ -622,24 +672,16 @@ test('runEngine stops after processing the given limit length', async () => {
       runEngine({ project, limit: 2 }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer())))
     )
   ).toBeUndefined();
-  expect(ran).toEqual([first.claim({ by: claiming }), second.claim({ by: claiming })]);
+  expect(ran).toEqual([first, second]);
 });
 
-test('runEngine starts one runner by default and claims with an engine-derived id', async () => {
-  const saved: Ticket[] = [];
-  const layer = Layer.mergeAll(
-    fakeSource([sampleTicket(1)], {
-      save: (ticket) =>
-        Effect.sync(() => {
-          saved.push(ticket);
-        }),
-    }).layer,
-    HarnessSelectorNoop,
-    StrategySelectorNoop
-  );
+test('runEngine starts one runner by default and names it in the Claim with an engine-derived id', async () => {
+  const ledger = makeLedgerMemory();
+  const seen: Array<Claim | undefined> = [];
+  const layer = Layer.mergeAll(fakeSource([sampleTicket(1)]).layer, HarnessSelectorNoop, claimRecordingImplementation(ledger, seen));
 
-  expect(await Effect.runPromise(runEngine({ project, limit: 1 }).pipe(Effect.provide(layer)))).toBeUndefined();
-  expect(saved.map((ticket) => ticket.claimedBy)).toEqual([undefined, claiming, claiming]);
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(seen.map((claim) => [claim?.engine, claim?.runner])).toEqual([[engineId, claiming]]);
 });
 
 test('runEngine source.scopeReads.length at the given pollInterval when empty', async () => {
@@ -688,24 +730,18 @@ test('runEngine source.scopeReads.length once every 10 seconds when empty regard
 });
 
 test('runEngine claims queued tickets with distinct runners when concurrency allows', async () => {
-  const saved: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  const seen: Array<Claim | undefined> = [];
   const layer = Layer.mergeAll(
-    fakeSource([sampleTicket(1), sampleTicket(2)], {
-      save: (ticket) =>
-        Effect.sync(() => {
-          saved.push(ticket);
-        }),
-    }).layer,
+    fakeSource([sampleTicket(1), sampleTicket(2)]).layer,
     HarnessSelectorNoop,
-    StrategySelectorNoop
+    claimRecordingImplementation(ledger, seen)
   );
 
   expect(
-    await Effect.runPromise(runEngine({ project, limit: 2, concurrency: 2 }).pipe(Effect.provide(layer)))
+    await Effect.runPromise(runEngine({ project, limit: 2, concurrency: 2 }, ledger).pipe(Effect.provide(layer)))
   ).toBeUndefined();
-  expect(
-    new Set(saved.filter((ticket) => ticket.status === 'claimed').map((ticket) => ticket.claimedBy))
-  ).toEqual(new Set([claiming, runnerIdFrom(engineId, '1')]));
+  expect(new Set(seen.map((claim) => claim?.runner))).toEqual(new Set([claiming, runnerIdFrom(engineId, '1')]));
 });
 
 test('runEngine stops reading at the limit length', async () => {
@@ -724,7 +760,7 @@ test('runEngine stops reading at the limit length', async () => {
     await Effect.runPromise(runEngine({ project, limit: 2 }).pipe(Effect.provide(layer)))
   ).toBeUndefined();
   expect(ran).toHaveLength(2);
-  expect(ran).toEqual([first.claim({ by: claiming }), second.claim({ by: claiming })]);
+  expect(ran).toEqual([first, second]);
   expect(source.scopeReads).toHaveLength(2);
 });
 
@@ -751,10 +787,9 @@ test('runEngine claims a single unblocked ticket once', async () => {
   expect(store.get(id(2))?.status).toBe('ready-for-agent');
 });
 
-test('runEngine releases every claiming and claimed ticket when the run fails', async () => {
-  const stale = Schema.decodeSync(RunnerId)('stale');
-  const alreadyClaiming = sampleTicket(2).markClaiming();
-  const { layer: repo, store } = fakeSource([sampleTicket(1), alreadyClaiming, blockedTicket(3, 1)]);
+test('runEngine releases only its own Claims on exit and reports each release', async () => {
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2), blockedTicket(3, 1)]);
   const failingStrategy = Layer.succeed(StrategySelector, {
     select: () =>
       Effect.succeed({
@@ -762,23 +797,58 @@ test('runEngine releases every claiming and claimed ticket when the run fails', 
         run: () => Effect.succeed(Result.fail(new StrategyRuntimeError())),
       }),
   });
-  // Seed a second claimed ticket that no runner owns any more.
-  store.set(id(4), sampleTicket(4).claim({ by: stale }));
-  const layer = Layer.mergeAll(repo, HarnessSelectorNoop, failingStrategy);
+  ledger.claims.set(id(2), heldByOther(id(2)));
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, failingStrategy);
 
   const outcome = await Effect.runPromise(
-    runEngine({ project, concurrency: 1 }).pipe(Effect.provide(layer), Effect.flip)
+    runEngine({ project, concurrency: 1 }, ledger).pipe(Effect.provide(layer), Effect.flip)
   );
 
   expect(outcome).toBeInstanceOf(EngineHalted);
-  // The failed ticket 1 is escalated to a human, so it is no longer claimed.
-  expect(store.get(id(1))?.status).toBe('ready-for-agent');
-  expect(store.get(id(1))?.kind).toBe('task');
-  expect(store.get(id(1))?.claimedBy).toBeUndefined();
-  expect(store.get(id(2))?.status).toBe('ready-for-agent');
-  expect(store.get(id(4))?.status).toBe('ready-for-agent');
-  expect(store.get(id(4))?.claimedBy).toBeUndefined();
-  expect(store.get(id(3))?.status).toBe('ready-for-agent');
+  // The failed ticket 1 is escalated to a human, and its Claim is released.
+  expect(source.store.get(id(1))?.kind).toBe('task');
+  expect(ledger.claims.has(id(1))).toBe(false);
+  expect([...ledger.claims.values()]).toEqual([heldByOther(id(2))]);
+  expect(source.reports).toEqual([
+    { ticket: id(1), event: 'claimed' },
+    { ticket: id(1), event: 'released' },
+  ]);
+});
+
+test('the exit of one Engine leaves the Claim of another Engine on the same Ledger in place', async () => {
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+  const hangingImplementation = Layer.succeed(StrategySelector, {
+    select: () => Effect.succeed({ name: 'implementation', run: () => Effect.never }),
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, hangingImplementation);
+  const engineOf = (seed: string) =>
+    executeEngine({ project, limit: 1 }).pipe(
+      Random.withSeed(seed),
+      Effect.provide(Layer.mergeAll(EngineStartupTest, ledger.layer, layer))
+    );
+  const engineIdOf = (seed: string) => Effect.runSync(createEngine.pipe(Random.withSeed(seed))).id;
+
+  expect(engineIdOf('first')).not.toBe(engineIdOf('second'));
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const first = yield* engineOf('first').pipe(Effect.forkChild({ startImmediately: true }));
+      yield* until(() => ledger.claims.size === 1);
+      const second = yield* engineOf('second').pipe(Effect.forkChild({ startImmediately: true }));
+      yield* until(() => ledger.claims.size === 2);
+      yield* Fiber.interrupt(first);
+
+      expect([...ledger.claims.values()].map((claim) => [claim.ticket, claim.engine])).toEqual([
+        [id(2), engineIdOf('second')],
+      ]);
+      expect(source.reports).toEqual([
+        { ticket: id(1), event: 'claimed' },
+        { ticket: id(2), event: 'claimed' },
+        { ticket: id(1), event: 'released' },
+      ]);
+      yield* Fiber.interrupt(second);
+    })
+  );
 });
 
 test('runEngine stops the run when Idle for five minutes', async () => {
@@ -879,7 +949,7 @@ test('runEngine starts a fresh Idle window after Ticket Processing ends', async 
       yield* until(() => ran.length === 1);
       yield* TestClock.adjust('5 minutes');
       yield* Fiber.join(fiber);
-      expect(ran).toEqual([sampleTicket(1).claim({ by: claiming })]);
+      expect(ran).toEqual([sampleTicket(1)]);
     }).pipe(Effect.provide(TestClock.layer()))
   );
 });
@@ -903,7 +973,7 @@ test('runEngine zeros the Idle clock when a Claim starts', async () => {
       yield* TestClock.adjust('239 seconds');
       source.add(sampleTicket(1));
       yield* TestClock.adjust('2 seconds');
-      expect(emitted).toEqual([sampleTicket(1).claim({ by: claiming })]);
+      expect(emitted).toEqual([sampleTicket(1)]);
       yield* TestClock.adjust('4 minutes');
       expect(fiber.pollUnsafe()).toBeUndefined();
       yield* TestClock.adjust('1 minute');
@@ -925,6 +995,7 @@ test('runEngine creates a missing worktrees directory under the repository root'
         HarnessSelectorNoop,
         StrategySelectorNoop,
         gitRootOf(root),
+        makeLedgerMemory().layer,
         WorktreeManagerNoop,
         Layer.succeed(Console.Console, capturingConsole(messages))
       );
@@ -956,6 +1027,7 @@ test('runEngine stops before any ticket when the worktrees directory is not writ
         HarnessSelectorNoop,
         capturingImplementation(ran),
         gitRootOf(root),
+        makeLedgerMemory().layer,
         WorktreeManagerNoop,
         Layer.succeed(Console.Console, capturingConsole(messages))
       );
@@ -986,28 +1058,26 @@ test('runEngine proceeds when the worktrees directory is writable', async () => 
         HarnessSelectorNoop,
         capturingImplementation(ran),
         gitRootOf(root),
+        makeLedgerMemory().layer,
         WorktreeManagerNoop
       );
 
       yield* executeEngine({ project, limit: 1 }).pipe(Random.withSeed('test'), Effect.provide(layer));
-      expect(ran).toEqual([ticket.claim({ by: claiming })]);
+      expect(ran).toEqual([ticket]);
     }).pipe(Effect.provide(NodeServices.layer))
   );
 });
 
 test('runEngine does not claim a ticket when the Repository Root cannot be found', async () => {
-  const claimed: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1)]);
   const error = await Effect.runPromise(
     executeEngine({ project, limit: 1 }).pipe(
       Random.withSeed('test'),
       Effect.provide(
         Layer.mergeAll(
-          fakeSource([sampleTicket(1)], {
-            save: (ticket) =>
-              Effect.sync(() => {
-                claimed.push(ticket);
-              }),
-          }).layer,
+          source.layer,
+          ledger.layer,
           HarnessSelectorNoop,
           StrategySelectorNoop,
           WorktreeManagerNoop,
@@ -1023,5 +1093,6 @@ test('runEngine does not claim a ticket when the Repository Root cannot be found
     )
   );
   expect(error).toBeInstanceOf(RepositoryRootNotFound);
-  expect(claimed).toEqual([]);
+  expect(ledger.claims.size).toBe(0);
+  expect(source.reports).toEqual([]);
 });

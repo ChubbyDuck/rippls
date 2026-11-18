@@ -1,16 +1,28 @@
 import { Config, Effect, Layer, Option } from 'effect';
 
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
-import { parseTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import { TicketNotSaved } from '~/Core/Tickets/Domain/Exceptions/TicketNotSaved';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { LinearApi, type LinearIssue, type LinearMetadata } from '~/Core/Tickets/Ports/LinearApi';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
-import { issueToTicket, type LinearWrite, ticketToWrites } from '~/Infrastructure/Tickets/LinearApi/codec';
+import {
+  claimWrites,
+  issueToTicket,
+  type LinearWrite,
+  releaseWrites,
+  ticketToWrites,
+} from '~/Infrastructure/Tickets/LinearApi/codec';
 
-const READABLE_STATE_TYPES = new Set(['unstarted', 'started']);
+// A read by identity also finds a started Issue, so the Engine can complete the
+// Issue it claimed. A started Issue is already claimed on Linear, so the read of
+// every ticket in scope does not offer it for processing.
+const READABLE_STATE_TYPES: ReadonlySet<string> = new Set(['unstarted', 'started']);
+const OFFERED_STATE_TYPES: ReadonlySet<string> = new Set(['unstarted']);
 
 const isNoOp = (write: LinearWrite, issue: LinearIssue): boolean => {
   switch (write.op) {
@@ -36,9 +48,6 @@ const matchesQuery =
     if (query.blockedBy !== undefined && !ticket.isBlockedBy(query.blockedBy)) {
       return false;
     }
-    if (query.claimed === true && ticket.status !== 'claiming' && ticket.status !== 'claimed') {
-      return false;
-    }
     if (query.project !== undefined && ticket.project !== query.project) {
       return false;
     }
@@ -48,10 +57,11 @@ const matchesQuery =
 const toTickets = (
   issues: readonly LinearIssue[],
   metadata: LinearMetadata,
-  query: TicketQuery
+  query: TicketQuery,
+  stateTypes: ReadonlySet<string>
 ): readonly Ticket[] => {
   const ranked = issues.flatMap((issue) => {
-    if (!READABLE_STATE_TYPES.has(issue.state.type)) {
+    if (!stateTypes.has(issue.state.type)) {
       return [];
     }
     return Option.match(issueToTicket(issue, metadata), {
@@ -79,10 +89,10 @@ export const TicketSourceLinearLive = Layer.effect(
         const metadata = yield* api.metadata(teamId);
         if (query.id !== undefined) {
           const issue = yield* api.issue(parseTicketId(query.id).native);
-          return toTickets([issue], metadata, query);
+          return toTickets([issue], metadata, query, READABLE_STATE_TYPES);
         }
         const issues = yield* api.issues(teamId);
-        return toTickets(issues, metadata, query);
+        return toTickets(issues, metadata, query, OFFERED_STATE_TYPES);
       });
 
     const getOneBy = (query: TicketQuery): Effect.Effect<Ticket, TicketNotFound> =>
@@ -106,29 +116,45 @@ export const TicketSourceLinearLive = Layer.effect(
       }
     };
 
+    const applyNeeded = (issueId: string, writes: readonly LinearWrite[]) =>
+      writes.length === 0
+        ? Effect.void
+        : api.issue(issueId).pipe(
+            Effect.map((current) => writes.filter((write) => !isNoOp(write, current))),
+            Effect.flatMap((needed) => Effect.forEach(needed, applyWrite, { discard: true }))
+          );
+
     const save = (ticket: Ticket): Effect.Effect<void, TicketNotSaved> =>
+      api.metadata(teamId).pipe(
+        Effect.flatMap((metadata) => applyNeeded(parseTicketId(ticket.id).native, ticketToWrites(ticket, metadata))),
+        Effect.mapError(() => new TicketNotSaved())
+      );
+
+    // A Claim on Linear is confirmed by reading the Issue back: another user or
+    // workspace may have taken it in between, and then the report fails.
+    const confirmClaim = (issueId: string, metadata: LinearMetadata) =>
+      api.issue(issueId).pipe(
+        Effect.filterOrFail(
+          (confirmed) => confirmed.assigneeId === metadata.viewer.id && confirmed.state.type === 'started',
+          () => 'The Issue is not assigned to the API-key user in a started state'
+        )
+      );
+
+    const report = (ticket: TicketId, event: TicketEvent): Effect.Effect<void, TicketEventNotReported> =>
       Effect.gen(function* () {
         const metadata = yield* api.metadata(teamId);
-        const issueId = parseTicketId(ticket.id).native;
-        const writes = ticketToWrites(ticket, metadata);
-        if (writes.length === 0) {
+        const issueId = parseTicketId(ticket).native;
+        if (event === 'claimed') {
+          yield* applyNeeded(issueId, claimWrites(issueId, metadata));
+          yield* confirmClaim(issueId, metadata);
           return;
         }
-        const current = yield* api.issue(issueId);
-        const needed = writes.filter((write) => !isNoOp(write, current));
-        yield* Effect.forEach(needed, applyWrite, { discard: true });
-        if (ticket.status !== 'claiming') {
-          return;
-        }
-        const confirmed = yield* api.issue(issueId);
-        if (confirmed.assigneeId !== metadata.viewer.id || confirmed.state.type !== 'started') {
-          return yield* new TicketNotSaved();
-        }
-      }).pipe(Effect.mapError(() => new TicketNotSaved()));
+        yield* applyNeeded(issueId, releaseWrites(issueId, metadata));
+      }).pipe(Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event })));
 
     const saveMany = (tickets: readonly Ticket[]): Effect.Effect<void, TicketNotSaved> =>
       Effect.forEach(tickets, save, { discard: true });
 
-    return { getOneBy, getManyBy, save, saveMany };
+    return { getOneBy, getManyBy, save, saveMany, report };
   })
 );

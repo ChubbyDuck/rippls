@@ -29,7 +29,8 @@ you want it to process. No clone of this project is required.
 | --- | --- |
 | **Engine** | Coordinates the Runners processing Tickets. |
 | **Runner** | A named worker reused across successive Tickets. |
-| **Ticket Source** | Reads external records, converts them into Tickets, and saves Ticket changes. |
+| **Ticket Source** | Reads external records, converts them into Tickets, saves Ticket changes, and receives reports of each Claim and release. |
+| **Ledger** | The Engine's own local record of Ticket Processing, where each Claim lives. |
 | **Ticket Stream** | The ongoing sequence of uniform Tickets supplied for processing. |
 | **Ticket Processing** | The shared lifecycle: claim, apply a Strategy, then complete or escalate. |
 | **Strategy** | A reusable procedure for performing a Ticket's work through a Harness. |
@@ -51,13 +52,14 @@ successful Ticket Worktrees.
 
 ## What a run does
 
-1. Acquires the next eligible **Ticket** through the **Ticket Stream**, which polls the configured **Source**.
-2. Claims it for a stable, named **Runner**.
+1. Acquires the next eligible **Ticket** through the **Ticket Stream**, which polls the configured **Source**,
+  claims it in the **Ledger**, and reports the **Claim** to the Source.
+2. Hands it to a stable, named **Runner**, which the Claim then names.
 3. Selects a configured **Harness**.
 4. Creates a `ticket-<source>-<id>` branch and **Ticket Worktree**.
 5. Installs workspace dependencies with `corepack pnpm install` when needed.
 6. Runs the selected **Strategy**, which invokes the **Harness** to create Agents for its steps.
-7. On success, merges the ticket branch and marks the ticket `done`.
+7. On success, merges the ticket branch, marks the ticket `done`, and releases its Claim.
 8. On Strategy failure, retains the worktree and raises the ticket to a human as
   `kind: task`, `hitl: yes`.
 
@@ -140,7 +142,8 @@ branch. Review that branch and merge it into your main branch when ready.
 A ticket is **Eligible** when all three conditions hold:
 
 - **Unblocked**: every ticket in `blockedBy` is done. An empty `blockedBy` is Unblocked.
-- **Unclaimed**: it has no Runner and is not currently being claimed.
+- **Unclaimed**: the **Ledger** holds no Claim on it. A `claimedBy` field or a
+  `claiming`/`claimed` status that an earlier Rippls wrote into a ticket is ignored.
 - **Unattended**: `hitl` is `no`.
 
 A done ticket is never Eligible. Eligibility does not mean “every ticket with
@@ -207,8 +210,25 @@ npx rippls --poll-interval "30 seconds"
 npx rippls --help
 ```
 
-Use `Ctrl-C` to stop a run. On normal finalization Rippls attempts to return claimed
-tickets in the selected project to `ready-for-agent`.
+Use `Ctrl-C` to stop a run. On exit an Engine releases only the Claims it holds and
+reports each release to the Source. The Claims of another Engine on the same
+Repository Root stay in place, so two Engines can run side by side.
+
+## Claims and the Ledger
+
+The Engine records each Claim in its **Ledger**, not in the ticket. The Ledger keeps one
+record per ticket in `rippls/ledger/` inside the Git common directory of the Repository
+Root (usually `.git/rippls/ledger/`). Every worktree shares it, it never appears in a
+merge, and it needs no ignore rule. The Ledger is local for every Source, Linear
+included.
+
+A Claim is made by creating its record exclusively, so only one Engine can claim a
+ticket. The record names the Engine, its process ID, and its host, and the Runner once
+the ticket is handed to one. The Engine claims a ticket when it takes it from the
+Ticket Stream, and releases the Claim when the ticket is done or when the Engine exits.
+
+A Claim left by an Engine that stopped without releasing it keeps its ticket
+unclaimable. Remove that ticket's record from the Ledger folder to free it.
 
 ## Configuration
 
@@ -435,12 +455,15 @@ Issue data maps into tickets as follows:
 - The title and description become the ticket title and body.
 - The Linear project name becomes a lowercase, hyphenated project.
 - Linear `blocks` relations become `blockedBy` and `blocks`.
-- `unstarted` workflow states map to `ready-for-agent`.
-- `started` states map to `claimed`.
+- `unstarted` and `started` workflow states map to `ready-for-agent`.
 
-The Linear Source currently reads issues in `unstarted` and `started` states. Claiming
-assigns the issue to the API-key user and moves it to a `started` state. Completion
-moves it to a `completed` state.
+The Linear Source offers only issues in an `unstarted` state for processing. An issue in
+a `started` state is already claimed on Linear, so Rippls does not take it.
+
+When the Engine claims an issue, the Linear Source assigns it to the API-key user, moves
+it to a `started` state, and reads it back to confirm. If someone else took the issue in
+between, the Engine releases its Claim and takes another ticket. A release unassigns the
+issue and returns it to an `unstarted` state. Completion moves it to a `completed` state.
 
 If a Strategy fails, Rippls unassigns the issue, returns it to an `unstarted` state,
 and changes its grouped labels to `kind:task` and `hitl:yes` when those labels exist.

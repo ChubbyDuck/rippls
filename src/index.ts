@@ -1,5 +1,6 @@
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime';
 import * as NodeServices from '@effect/platform-node/NodeServices';
+import { hostname } from 'node:os';
 import { Config, Effect, Layer, Option, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 
@@ -18,6 +19,7 @@ import { runEngine } from '~/Core/Tickets/Application/UseCases/RunEngine/runEngi
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import { ConfiguredHarnessesLive } from '~/Infrastructure/Shared/HarnessSelector/configured';
 import { makeTracingLayer } from '~/Infrastructure/Shared/Tracing/otlp';
+import { LedgerFolderLive } from '~/Infrastructure/Tickets/Ledger/folder';
 import { StrategySelectorDefault } from '~/Infrastructure/Tickets/StrategySelector/default';
 import { liveTicketSource } from '~/Infrastructure/Tickets/TicketSource/fromSource';
 import { WorktreeManagerLive } from '~/Infrastructure/Tickets/WorktreeManager/sandcastle';
@@ -30,6 +32,7 @@ const AppLive = Layer.mergeAll(
   StrategySelectorDefault,
   ConfiguredHarnessesLive,
   Layer.unwrap(RepositoryRoot.pipe(Effect.map(WorktreeManagerLive))),
+  LedgerFolderLive({ process: process.pid, host: hostname() }),
   TracingLive
 ).pipe(Layer.provideMerge(EngineFileConfigLive), Layer.provideMerge(RepositoryRootLive));
 

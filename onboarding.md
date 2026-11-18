@@ -8,13 +8,13 @@
 rippls ──► RunEngine ─────────────────────────────────────────────┐
            spawn N Runners, build a Ticket Stream                 │
                 │                                                 │
-     poll Source for next Eligible ticket ──► mark `claiming`     │
-     (unblocked + unclaimed + hitl:no)                            │
+     poll Source for next Eligible ticket ──► claim in Ledger,    │
+     (unblocked + unclaimed + hitl:no)        report `claimed`    │
                 │                                                 │
                 ▼                                                 │
            ProcessTicket (one Runner, one Ticket)                 │
            1. HarnessSelector picks a Harness (rotation/schedule) │
-           2. save as `claimed`                                   │
+           2. name the Runner in the Claim                        │
            3. StrategySelector picks a Strategy by Ticket Kind    │
            4. WorktreeManager creates branch `ticket-<src>-<id>`  │
            5. Strategy runs the Harness inside that worktree      │
@@ -22,14 +22,15 @@ rippls ──► RunEngine ─────────────────�
         ┌───────┴────────┐                                        │
      success           failure                                    │
      merge + close     keep worktree, rewrite ticket as           │
-     mark `done`       kind:task + hitl:yes,                      │
-     (dependents       HALT THE WHOLE ENGINE                      │
+     mark `done`,      kind:task + hitl:yes,                      │
+     release Claim     HALT THE WHOLE ENGINE                      │
+     (dependents                                                  │
      not edited)                                                  │
                                                                   │
-   on exit: every claiming/claimed ticket → `ready-for-agent` ◄───┘
+   on exit: release this Engine's Claims, report `released` ◄─────┘
 ```
 
-## Layout: hexagonal, four ports
+## Layout: hexagonal, five ports
 
 The code lives in three places: `src/Core` (domain, use cases and port interfaces, with no infrastructure imports), `src/Infrastructure` (adapters) and `src/config` (config file loading).
 
@@ -39,6 +40,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 | `StrategySelector` | [default.ts](src/Infrastructure/Tickets/StrategySelector/default.ts) | Kind → Strategy map |
 | `HarnessSelector` | [configured.ts](src/Infrastructure/Shared/HarnessSelector/configured.ts), [registered.ts](src/Infrastructure/Shared/HarnessSelector/registered.ts) | Sandcastle agent providers |
 | `WorktreeManager` | [sandcastle.ts](src/Infrastructure/Tickets/WorktreeManager/sandcastle.ts) | Sandcastle `createWorktree` + `git merge --no-ff` |
+| `Ledger` | [folder.ts](src/Infrastructure/Tickets/Ledger/folder.ts) | One record per ticket in `<git-common-dir>/rippls/ledger/` ([ADR 0004](docs/adr/0004-read-only-tickets-and-the-ledger.md)) |
 
 `Engine` and `Runner` are plain entities with identities and deliberately have no ports; the orchestration lives in the use cases ([ADR 0001](docs/adr/0001-separate-engine-and-runner-from-orchestration.md)).
 
@@ -48,7 +50,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 2. [src/index.ts](src/index.ts) defines the CLI flags and wires all the layers together.
 3. [runEngine.ts](src/Core/Tickets/Application/UseCases/RunEngine/runEngine.ts) holds the runner pool, the stream, the idle timeout and the release on exit.
 4. [processTicket.ts](src/Core/Tickets/Application/UseCases/ProcessTicket/processTicket.ts) is the lifecycle in the diagram above.
-5. [entity.ts](src/Core/Tickets/Domain/Entities/Ticket/entity.ts) is the Ticket and its transitions (`markClaiming`, `claim`, `done`, `escalate`, `release`).
+5. [entity.ts](src/Core/Tickets/Domain/Entities/Ticket/entity.ts) is the Ticket and its transitions (`done`, `escalate`). The Claim is not in the Ticket: it lives in the Ledger.
 6. [implementation.ts](src/Infrastructure/Tickets/StrategySelector/implementation.ts) is the only real Strategy: implement, then gate (10 minutes, one retry), then commit.
 
 After that, read whichever adapter you need. The tests sit next to the source and show the style: fake each port with `Layer.succeed`, as in [processTicket.test.ts](src/Core/Tickets/Application/UseCases/ProcessTicket/processTicket.test.ts).
@@ -62,8 +64,7 @@ After that, read whichever adapter you need. The tests sit next to the source an
 - **The implementation Strategy depends on things outside this repo.** It sends `/implement-bare`, `/acceptance-gate` and `/commit`, which must exist as slash commands in the target repo's Harness. [circumstances.ts](src/Infrastructure/Tickets/StrategySelector/circumstances.ts) also tells agents to use `pnx chubby <alias> <script>`, a leftover from the monorepo this was extracted from.
 - **Hidden coupling between two adapters.** The Harness adapter looks up the Sandcastle worktree handle by path in a module-level `Map` owned by the WorktreeManager adapter ([registered.ts:124-128](src/Infrastructure/Shared/HarnessSelector/registered.ts#L124-L128)). A `cwd` with no registered handle fails with `HarnessRuntimeError`.
 - **Model IDs are hard-coded.** The catalog is in [registered.ts:23-53](src/Infrastructure/Shared/HarnessSelector/registered.ts#L23-L53); a Strategy asks for a tier/fast/generation and falls back to the Harness default when nothing matches.
-- **Claiming is two writes with no atomicity in the folder Source.** The poller writes `claiming`, the Runner writes `claimed` (see the TODO at [folder.ts:131](src/Infrastructure/Tickets/TicketSource/folder.ts#L131)). Linear re-reads to confirm it won the race.
-- **Two engines on one Source will fight.** The release on exit resets every claiming/claimed ticket in scope, with no filter by engine.
+- **A Claim left by a crashed Engine stays.** The Ledger record keeps the ticket claimed until someone removes it; stale Claims are not detected yet.
 - **Ticket IDs are namespaced strings** (`folder:42`, `linear:<uuid>`), and the domain never branches on the source ([ADR 0002](docs/adr/0002-source-namespaced-string-ticket-id.md)). On disk the folder Source still uses plain numbers.
 - **Loose ends:**
   - `TicketQuery.afk()` uses a term CONTEXT.md says to avoid (it should be "Unattended").

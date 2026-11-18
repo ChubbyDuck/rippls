@@ -1,9 +1,11 @@
 import { Effect, Layer, Result, Schema } from 'effect';
 import { expect, test } from 'vitest';
 
+import { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import type { Harness } from '~/Core/Shared/Ports/Harness';
 import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
+import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
@@ -15,10 +17,11 @@ import { WorktreeCreationError } from '~/Core/Tickets/Domain/Exceptions/Worktree
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
+import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 
 import { processTicket } from './processTicket';
 
-const ticket = Ticket.create({
+const ticketFields = {
   id: formatTicketId('folder', '1'),
   title: 'Process a ticket',
   project: 'test',
@@ -27,8 +30,10 @@ const ticket = Ticket.create({
   blockedBy: [],
   blocks: [],
   body: 'Ticket instructions',
-});
-const runnerId = Schema.decodeSync(RunnerId)('standalone');
+} as const;
+const ticket = Ticket.create(ticketFields);
+const engine = Schema.decodeSync(EngineId)('standalone');
+const runnerId = Schema.decodeSync(RunnerId)('standalone:0');
 const repositoryRoot = '/repo';
 const projectWorktree = { path: '/repo/.sandcastle/worktrees/test', branch: 'test' };
 const ticketWorktreeOf = (id: string) => ({
@@ -45,6 +50,21 @@ const recordingWorktrees = (closed: string[] = []) =>
       }),
   });
 const WorktreeManagerNoop = recordingWorktrees();
+
+// processTicket starts on a ticket that the Engine has claimed in the Ledger.
+const ledgerClaiming = (...tickets: readonly Ticket[]) => {
+  const ledger = makeLedgerMemory();
+  for (const claimed of tickets) {
+    ledger.claims.set(claimed.id, new Claim({ ticket: claimed.id, engine, process: 1, host: 'memory' }));
+  }
+  return ledger;
+};
+const secondTicketId = formatTicketId('folder', '2');
+const withClaims = <A, E, R>(services: Layer.Layer<A, E, R>) =>
+  Layer.merge(
+    services,
+    ledgerClaiming(ticket, Ticket.create({ ...ticketFields, id: secondTicketId })).layer
+  );
 
 test('processTicket can be reused independently with the services supplied by each caller', () => {
   const work = processTicket({ ticket, runnerId, repositoryRoot });
@@ -65,7 +85,7 @@ test('processTicket can be reused independently with the services supplied by ea
         }),
       }),
       Layer.succeed(TicketSource, {
-        getOneBy: () => Effect.succeed(ticket.claim({ by: runnerId })),
+        getOneBy: () => Effect.succeed(ticket),
         getManyBy: () => Effect.succeed([]),
         save: (value) =>
           Effect.sync(() => {
@@ -79,6 +99,7 @@ test('processTicket can be reused independently with the services supplied by ea
               saved.push(value);
             }
           }),
+        report: () => Effect.void,
       }),
       Layer.succeed(StrategySelector, {
         select: (kind) =>
@@ -88,7 +109,7 @@ test('processTicket can be reused independently with the services supplied by ea
               name: 'implementation',
               run: (claimed, selectedHarness) =>
                 Effect.sync(() => {
-                  expect(claimed).toEqual(ticket.claim({ by: runnerId }));
+                  expect(claimed).toEqual(ticket);
                   expect(selectedHarness.name).toBe(harness.name);
                   events.push('run strategy');
                   return Result.succeed(undefined);
@@ -99,11 +120,10 @@ test('processTicket can be reused independently with the services supplied by ea
       WorktreeManagerNoop
     );
 
-    expect(Effect.runSync(work.pipe(Effect.provide(services)))).toBeUndefined();
-    expect(events).toEqual(['select harness', 'save claimed', 'select implementation', 'run strategy', 'save done']);
-    expect(saved).toEqual([ticket.claim({ by: runnerId }), ticket.claim({ by: runnerId }).done()]);
+    expect(Effect.runSync(work.pipe(Effect.provide(withClaims(services))))).toBeUndefined();
+    expect(events).toEqual(['select harness', 'select implementation', 'run strategy', 'save done']);
+    expect(saved).toEqual([ticket.done()]);
     expect(ticket.status).toBe('ready-for-agent');
-    expect(ticket.claimedBy).toBeUndefined();
   }
 });
 
@@ -127,13 +147,14 @@ test('processTicket runs a ticket that omits project', () => {
       }),
     }),
     Layer.succeed(TicketSource, {
-      getOneBy: () => Effect.succeed(withoutProject.claim({ by: runnerId })),
+      getOneBy: () => Effect.succeed(withoutProject),
       getManyBy: () => Effect.succeed([]),
       save: (value) =>
         Effect.sync(() => {
           saved.push(value);
         }),
       saveMany: () => Effect.void,
+      report: () => Effect.void,
     }),
     Layer.succeed(StrategySelector, {
       select: () =>
@@ -146,9 +167,9 @@ test('processTicket runs a ticket that omits project', () => {
   );
 
   expect(
-    Effect.runSync(processTicket({ ticket: withoutProject, runnerId, repositoryRoot }).pipe(Effect.provide(services)))
+    Effect.runSync(processTicket({ ticket: withoutProject, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))))
   ).toBeUndefined();
-  expect(saved.map((value) => value.project)).toEqual([undefined, undefined]);
+  expect(saved.map((value) => value.project)).toEqual([undefined]);
 });
 
 test('processTicket escalates the ticket and halts the run when the strategy fails', () => {
@@ -163,7 +184,7 @@ test('processTicket escalates the ticket and halts the run when the strategy fai
       select: Effect.succeed(harness),
     }),
     Layer.succeed(TicketSource, {
-      getOneBy: () => Effect.succeed(ticket.claim({ by: runnerId })),
+      getOneBy: () => Effect.succeed(ticket),
       getManyBy: () => Effect.succeed([]),
       save: (value) =>
         Effect.sync(() => {
@@ -173,6 +194,7 @@ test('processTicket escalates the ticket and halts the run when the strategy fai
         Effect.sync(() => {
           saved.push(...values);
         }),
+      report: () => Effect.void,
     }),
     Layer.succeed(StrategySelector, {
       select: () =>
@@ -185,11 +207,11 @@ test('processTicket escalates the ticket and halts the run when the strategy fai
   );
 
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(services), Effect.flip)
+    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip)
   );
 
   expect(halt).toBeInstanceOf(EngineHalted);
-  expect(saved).toEqual([ticket.claim({ by: runnerId }), ticket.escalate()]);
+  expect(saved).toEqual([ticket.escalate()]);
 });
 
 test('processTicket propagates a missing strategy and does not mark the ticket done', () => {
@@ -215,6 +237,7 @@ test('processTicket propagates a missing strategy and does not mark the ticket d
         Effect.sync(() => {
           saved.push(...values);
         }),
+      report: () => Effect.void,
     }),
     Layer.succeed(StrategySelector, {
       select: () => Effect.fail(failure),
@@ -223,9 +246,9 @@ test('processTicket propagates a missing strategy and does not mark the ticket d
   );
 
   expect(
-    Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(services), Effect.flip))
+    Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip))
   ).toBe(failure);
-  expect(saved).toEqual([ticket.claim({ by: runnerId })]);
+  expect(saved).toEqual([]);
 });
 
 const harnessRecordingCwd = (cwds: Array<string | undefined>): Harness => ({
@@ -248,10 +271,11 @@ const probingStrategy = Layer.succeed(StrategySelector, {
 });
 
 const ticketRepoIgnoringReads = Layer.succeed(TicketSource, {
-  getOneBy: () => Effect.succeed(ticket.claim({ by: runnerId })),
+  getOneBy: () => Effect.succeed(ticket),
   getManyBy: () => Effect.succeed([]),
   save: () => Effect.void,
   saveMany: () => Effect.void,
+  report: () => Effect.void,
 });
 
 test('processTicket hands the strategy a harness bound to the ticket worktree', () => {
@@ -271,16 +295,17 @@ test('processTicket hands the strategy a harness bound to the ticket worktree', 
       select: Effect.succeed(harness),
     }),
     Layer.succeed(TicketSource, {
-      getOneBy: () => Effect.succeed(withoutProject.claim({ by: runnerId })),
+      getOneBy: () => Effect.succeed(withoutProject),
       getManyBy: () => Effect.succeed([]),
       save: () => Effect.void,
       saveMany: () => Effect.void,
+      report: () => Effect.void,
     }),
     probingStrategy,
     WorktreeManagerNoop
   );
 
-  Effect.runSync(processTicket({ ticket: withoutProject, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
+  Effect.runSync(processTicket({ ticket: withoutProject, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
   expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1']);
 });
@@ -297,7 +322,7 @@ test('processTicket hands the strategy a harness bound to the ticket worktree of
     WorktreeManagerNoop
   );
 
-  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
+  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
   expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1']);
 });
@@ -316,7 +341,7 @@ test('two tickets that name the same project run in distinct ticket worktrees', 
     body: 'Ticket instructions',
   });
   const harness = harnessRecordingCwd(cwds);
-  const store = new Map();
+  const store = new Map([first, second].map((value) => [value.id, value]));
   const services = Layer.mergeAll(
     Layer.succeed(HarnessSelector, {
       select: Effect.succeed(harness),
@@ -332,13 +357,14 @@ test('two tickets that name the same project run in distinct ticket worktrees', 
           store.set(value.id, value);
         }),
       saveMany: () => Effect.void,
+      report: () => Effect.void,
     }),
     probingStrategy,
     recordingWorktrees()
   );
 
-  Effect.runSync(processTicket({ ticket: first, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
-  Effect.runSync(processTicket({ ticket: second, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
+  Effect.runSync(processTicket({ ticket: first, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
+  Effect.runSync(processTicket({ ticket: second, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
   expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1', '/repo/.sandcastle/worktrees/ticket-folder:2']);
 });
@@ -364,7 +390,7 @@ test('processTicket closes the ticket worktree after a successful strategy', () 
     recordingWorktrees(closed)
   );
 
-  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
+  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
   expect(closed).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1']);
 });
@@ -390,7 +416,7 @@ test('processTicket retains the ticket worktree when the strategy fails', () => 
     recordingWorktrees(closed)
   );
 
-  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(services), Effect.flip));
+  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip));
 
   expect(closed).toEqual([]);
 });
@@ -407,13 +433,14 @@ test('a project-worktree create failure is retried once and then halts without e
       }),
     }),
     Layer.succeed(TicketSource, {
-      getOneBy: () => Effect.succeed(ticket.claim({ by: runnerId })),
+      getOneBy: () => Effect.succeed(ticket),
       getManyBy: () => Effect.succeed([]),
       save: (value) =>
         Effect.sync(() => {
           saved.push(value);
         }),
       saveMany: () => Effect.void,
+      report: () => Effect.void,
     }),
     Layer.succeed(StrategySelector, {
       select: () =>
@@ -433,12 +460,12 @@ test('a project-worktree create failure is retried once and then halts without e
   );
 
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(services), Effect.flip)
+    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip)
   );
 
   expect(halt).toBeInstanceOf(EngineHalted);
   expect(attempts).toBe(2);
-  expect(saved).toEqual([ticket.claim({ by: runnerId })]);
+  expect(saved).toEqual([]);
 });
 
 test('a project-worktree create failure that succeeds on retry processes the ticket', () => {
@@ -461,7 +488,7 @@ test('a project-worktree create failure that succeeds on retry processes the tic
     })
   );
 
-  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
+  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
 
   expect(attempts).toBe(2);
   expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1']);
@@ -479,13 +506,14 @@ test('a ticket-worktree close failure is retried once and then halts without esc
       }),
     }),
     Layer.succeed(TicketSource, {
-      getOneBy: () => Effect.succeed(ticket.claim({ by: runnerId })),
+      getOneBy: () => Effect.succeed(ticket),
       getManyBy: () => Effect.succeed([]),
       save: (value) =>
         Effect.sync(() => {
           saved.push(value);
         }),
       saveMany: () => Effect.void,
+      report: () => Effect.void,
     }),
     Layer.succeed(StrategySelector, {
       select: () =>
@@ -505,10 +533,53 @@ test('a ticket-worktree close failure is retried once and then halts without esc
   );
 
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(services), Effect.flip)
+    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip)
   );
 
   expect(halt).toBeInstanceOf(EngineHalted);
   expect(attempts).toBe(2);
-  expect(saved).toEqual([ticket.claim({ by: runnerId })]);
+  expect(saved).toEqual([]);
+});
+
+const succeedingServices = (strategyRun: () => Effect.Effect<Result.Result<void, StrategyRuntimeError>>) =>
+  Layer.mergeAll(
+    Layer.succeed(HarnessSelector, {
+      select: Effect.succeed({
+        name: 'test-harness',
+        model: 'test-model',
+        run: () => Effect.succeed({ completionSignal: undefined }),
+      }),
+    }),
+    ticketRepoIgnoringReads,
+    Layer.succeed(StrategySelector, {
+      select: () => Effect.succeed({ name: 'implementation', run: strategyRun }),
+    }),
+    WorktreeManagerNoop
+  );
+
+test('processTicket names its Runner in the Claim and releases the Claim once the ticket is done', () => {
+  const ledger = ledgerClaiming(ticket);
+  const seen: Array<Claim | undefined> = [];
+  const services = succeedingServices(() =>
+    Effect.sync(() => {
+      seen.push(ledger.claims.get(ticket.id));
+      return Result.succeed(undefined);
+    })
+  );
+
+  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(Layer.merge(services, ledger.layer))));
+
+  expect(seen).toEqual([new Claim({ ticket: ticket.id, engine, process: 1, host: 'memory', runner: runnerId })]);
+  expect(ledger.claims.has(ticket.id)).toBe(false);
+});
+
+test('processTicket keeps the Claim when the strategy fails, for the Engine to release on exit', () => {
+  const ledger = ledgerClaiming(ticket);
+  const services = succeedingServices(() => Effect.succeed(Result.fail(new StrategyRuntimeError())));
+
+  Effect.runSync(
+    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(Layer.merge(services, ledger.layer)), Effect.flip)
+  );
+
+  expect(ledger.claims.get(ticket.id)?.runner).toBe(runnerId);
 });

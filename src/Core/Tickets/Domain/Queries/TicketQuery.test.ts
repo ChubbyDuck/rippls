@@ -9,9 +9,9 @@ const project = Schema.decodeSync(Project)('0003-sandboxed-local-ticket-loop.md'
 
 describe('TicketQuery', () => {
   it('builds a frozen object from the chosen chain', () => {
-    const query = TicketQuery.claimed().byProject(project).sort('ASC').limit(1).build();
+    const query = TicketQuery.byProject(project).sort('ASC').limit(1).build();
 
-    expect(query).toEqual({ claimed: true, project, sort: 'ASC', limit: 1 });
+    expect(query).toEqual({ project, sort: 'ASC', limit: 1 });
     expect(Object.isFrozen(query)).toBe(true);
   });
 
@@ -24,12 +24,8 @@ describe('TicketQuery', () => {
     const inProject = TicketQuery.byProject(project);
 
     expect(inProject.build()).toEqual({ project });
-    expect(inProject.claimed().build()).toEqual({ project, claimed: true });
+    expect(inProject.sort('DESC').build()).toEqual({ project, sort: 'DESC' });
     expect(inProject.build()).toEqual({ project });
-  });
-
-  it('selects claimed and claiming tickets when claimed is chosen', () => {
-    expect(TicketQuery.claimed().byProject(project).build()).toEqual({ claimed: true, project });
   });
 
   it('rejects a non-positive limit', () => {

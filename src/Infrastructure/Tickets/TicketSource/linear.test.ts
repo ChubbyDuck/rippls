@@ -1,9 +1,9 @@
-import { ConfigProvider, Effect, Layer, Schema } from 'effect';
+import { ConfigProvider, Effect, Layer } from 'effect';
 import { expect, test } from 'vitest';
 
-import { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
-import { TicketNotSaved } from '~/Core/Tickets/Domain/Exceptions/TicketNotSaved';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import {
   LinearApi,
@@ -18,7 +18,6 @@ import { toLinearId } from '~/Infrastructure/Tickets/LinearApi/codec';
 import { TicketSourceLinearLive } from './linear';
 
 const uuid = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
-const runner = Schema.decodeSync(RunnerId)('runner-1');
 
 const metadata: LinearMetadata = {
   viewer: { id: 'viewer-1', name: 'Dev' },
@@ -178,10 +177,22 @@ const saveManyIn = (api: ReturnType<typeof fakeLinear>, tickets: readonly Ticket
     Effect.provide(withRepo(api))
   );
 
-test('save of a claiming ticket sets assignee and the first started state, then confirms', async () => {
+const reportIn = (api: ReturnType<typeof fakeLinear>, event: TicketEvent) =>
+  TicketSource.pipe(
+    Effect.flatMap((source) => source.report(toLinearId(uuid), event)),
+    Effect.provide(withRepo(api))
+  );
+
+const getOneIn = (api: ReturnType<typeof fakeLinear>, query: TicketQuery) =>
+  TicketSource.pipe(
+    Effect.flatMap((source) => source.getOneBy(query)),
+    Effect.provide(withRepo(api))
+  );
+
+test('report of claimed assigns the API-key user and the first started state, then confirms', async () => {
   const api = fakeLinear([issue({})]);
 
-  await Effect.runPromise(saveIn(api, readyTicket.markClaiming()));
+  await Effect.runPromise(reportIn(api, 'claimed'));
 
   expect(api.calls).toEqual([
     { op: 'setAssignee', issueId: uuid, assigneeId: 'viewer-1' },
@@ -191,44 +202,54 @@ test('save of a claiming ticket sets assignee and the first started state, then 
   expect(api.issues.get(uuid)?.state.type).toBe('started');
 });
 
-test('save of a claiming ticket fails when the re-read shows a lost race', async () => {
+test('report of claimed fails when the read back shows a lost Claim', async () => {
   const api = fakeLinear([issue({})], { steal: true });
 
-  const error = await Effect.runPromise(saveIn(api, readyTicket.markClaiming()).pipe(Effect.flip));
+  const error = await Effect.runPromise(reportIn(api, 'claimed').pipe(Effect.flip));
 
-  expect(error).toEqual(new TicketNotSaved());
+  expect(error).toEqual(new TicketEventNotReported({ ticketId: toLinearId(uuid), event: 'claimed' }));
 });
 
-test('save of a claimed ticket is idempotent', async () => {
-  const api = fakeLinear([issue({})]);
-  const claimed = readyTicket.claim({ by: runner });
-
-  await Effect.runPromise(saveIn(api, claimed));
-  await Effect.runPromise(saveIn(api, claimed));
-
-  expect(api.calls).toEqual([
-    { op: 'setAssignee', issueId: uuid, assigneeId: 'viewer-1' },
-    { op: 'setState', issueId: uuid, stateId: 'state-started' },
-  ]);
-});
-
-test('save of a done ticket moves it to the completed state', async () => {
+test('report of claimed writes nothing for an Issue that is already claimed by the API-key user', async () => {
   const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 
-  await Effect.runPromise(saveIn(api, readyTicket.claim({ by: runner }).done()));
+  await Effect.runPromise(reportIn(api, 'claimed'));
 
-  expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
+  expect(api.calls).toEqual([]);
 });
 
-test('save of a released ticket unassigns and moves it to unstarted', async () => {
+test('report of released unassigns the Issue and moves it to the first unstarted state', async () => {
   const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 
-  await Effect.runPromise(saveIn(api, readyTicket.claim({ by: runner }).release()));
+  await Effect.runPromise(reportIn(api, 'released'));
 
   expect(api.calls).toEqual([
     { op: 'setAssignee', issueId: uuid, assigneeId: null },
     { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
   ]);
+  expect(api.issues.get(uuid)?.assigneeId).toBeNull();
+  expect(api.issues.get(uuid)?.state.type).toBe('unstarted');
+});
+
+test('a started Issue is not offered for processing, and its read by identity still finds it', async () => {
+  const api = fakeLinear([
+    issue({ id: 'started', createdAt: '2026-01-01T00:00:00.000Z', stateType: 'started', assigneeId: 'other-user' }),
+    issue({ id: 'unstarted', createdAt: '2026-02-01T00:00:00.000Z' }),
+  ]);
+
+  const offered = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+  const byIdentity = await Effect.runPromise(getOneIn(api, TicketQuery.byId(toLinearId('started')).build()));
+
+  expect(offered.map((ticket) => ticket.id)).toEqual([toLinearId('unstarted')]);
+  expect(byIdentity.id).toBe(toLinearId('started'));
+});
+
+test('save of a done ticket moves it to the completed state', async () => {
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
+
+  await Effect.runPromise(saveIn(api, readyTicket.done()));
+
+  expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
 });
 
 test('save of an escalated ticket unassigns, unstarts, and edits grouped labels without dropping human labels', async () => {
@@ -243,7 +264,7 @@ test('save of an escalated ticket unassigns, unstarts, and edits grouped labels 
     }),
   ]);
 
-  await Effect.runPromise(saveIn(api, readyTicket.claim({ by: runner }).escalate()));
+  await Effect.runPromise(saveIn(api, readyTicket.escalate()));
 
   expect(api.calls).toEqual([
     { op: 'setAssignee', issueId: uuid, assigneeId: null },
@@ -265,12 +286,12 @@ test('save of an escalated ticket unassigns, unstarts, and edits grouped labels 
 test('saveMany applies the writes of each ticket', async () => {
   const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 
-  await Effect.runPromise(saveManyIn(api, [readyTicket.claim({ by: runner }).done()]));
+  await Effect.runPromise(saveManyIn(api, [readyTicket.done()]));
 
   expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
 });
 
-test('getManyBy returns every readable issue in scope by creation time, oldest first', async () => {
+test('getManyBy offers every unstarted issue in scope by creation time, oldest first', async () => {
   const api = fakeLinear([
     issue({ id: 'newest', createdAt: '2026-03-01T00:00:00.000Z' }),
     issue({ id: 'claimed', createdAt: '2026-01-01T00:00:00.000Z', stateType: 'started', assigneeId: 'viewer-1' }),
@@ -289,7 +310,7 @@ test('getManyBy returns every readable issue in scope by creation time, oldest f
   const tickets = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
 
   expect(tickets.map((ticket) => ticket.id)).toEqual(
-    ['claimed', 'blocked', 'attended', 'newest'].map((native) => toLinearId(native))
+    ['blocked', 'attended', 'newest'].map((native) => toLinearId(native))
   );
 });
 
@@ -299,7 +320,7 @@ test('getManyBy narrows by Project and keeps the creation order', async () => {
     issue({ id: 'later', createdAt: '2026-03-01T00:00:00.000Z' }),
     issue({ id: 'other', createdAt: '2026-01-01T00:00:00.000Z', project: other }),
     issue({ id: 'none', createdAt: '2026-01-15T00:00:00.000Z', project: null }),
-    issue({ id: 'earlier', createdAt: '2026-02-01T00:00:00.000Z', stateType: 'started', assigneeId: 'viewer-1' }),
+    issue({ id: 'earlier', createdAt: '2026-02-01T00:00:00.000Z' }),
   ]);
 
   const tickets = await Effect.runPromise(getManyIn(api, TicketQuery.byProject('chubby-engine' as never).build()));

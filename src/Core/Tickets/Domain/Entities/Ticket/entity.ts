@@ -1,7 +1,5 @@
 import { Schema, SchemaGetter } from 'effect';
 
-import { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
-
 import { Hitl } from './properties/Hitl';
 import { Project } from './properties/Project';
 import { TicketId } from './properties/TicketId';
@@ -16,7 +14,6 @@ const ticketBase = {
   status: TicketStatus,
   blockedBy: Schema.Array(TicketId),
   blocks: Schema.Array(TicketId),
-  claimedBy: Schema.optionalKey(RunnerId),
   body: Schema.String,
 };
 
@@ -54,49 +51,6 @@ export class Ticket extends Schema.Class<Ticket>('Ticket')({
     return `Ticket ${this.id} -- ${this.kind}`;
   }
 
-  claim({ by }: { by: RunnerId }): Ticket {
-    return new Ticket({
-      id: this.id,
-      title: this.title,
-      project: this.project,
-      status: 'claimed',
-      blockedBy: this.blockedBy,
-      blocks: this.blocks,
-      claimedBy: by,
-      kind: this.kind,
-      hitl: this.hitl,
-      body: this.body,
-    });
-  }
-
-  markClaiming(): Ticket {
-    return new Ticket({
-      id: this.id,
-      title: this.title,
-      project: this.project,
-      status: 'claiming',
-      blockedBy: this.blockedBy,
-      blocks: this.blocks,
-      kind: this.kind,
-      hitl: this.hitl,
-      body: this.body,
-    });
-  }
-
-  release(): Ticket {
-    return new Ticket({
-      id: this.id,
-      title: this.title,
-      project: this.project,
-      status: 'ready-for-agent',
-      blockedBy: this.blockedBy,
-      blocks: this.blocks,
-      kind: this.kind,
-      hitl: this.hitl,
-      body: this.body,
-    });
-  }
-
   done(): Ticket {
     return new Ticket({
       id: this.id,
@@ -105,7 +59,6 @@ export class Ticket extends Schema.Class<Ticket>('Ticket')({
       status: 'done',
       blockedBy: this.blockedBy,
       blocks: this.blocks,
-      ...(this.claimedBy !== undefined ? { claimedBy: this.claimedBy } : {}),
       kind: this.kind,
       hitl: this.hitl,
       body: this.body,

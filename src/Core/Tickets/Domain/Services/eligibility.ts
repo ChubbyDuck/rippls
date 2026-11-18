@@ -15,18 +15,26 @@ export const doneTicketIds = (tickets: readonly Ticket[]): ReadonlySet<TicketId>
 export const isUnblocked = (ticket: Ticket, done: ReadonlySet<TicketId>): boolean =>
   ticket.blockedBy.every((blocker) => done.has(blocker));
 
-/** A Ticket not assigned to a Runner and not currently being claimed. */
-export const isUnclaimed = (ticket: Ticket): boolean =>
-  ticket.claimedBy === undefined && ticket.status !== 'claiming' && ticket.status !== 'claimed';
+/**
+ * A Ticket with no Claim in the Ledger. A claim field or a claim status that an
+ * earlier Engine wrote into the ticket is ignored.
+ */
+export const isUnclaimed = (ticket: Ticket, claimed: ReadonlySet<TicketId>): boolean => !claimed.has(ticket.id);
 
 /** A Ticket whose HITL is no, allowing it to proceed without a human. */
 export const isUnattended = (ticket: Ticket): boolean => ticket.hitl === 'no';
 
+/** What the Engine knows of other tickets: which are done, and which hold a Claim in the Ledger. */
+export type EligibilityFacts = {
+  readonly done: ReadonlySet<TicketId>;
+  readonly claimed: ReadonlySet<TicketId>;
+};
+
 /**
  * The one eligibility rule of the Engine: an Unblocked, Unclaimed, Unattended
  * Ticket that is not done, which the Engine may take next. A Ticket Source
- * returns every ticket in scope, done ones included; this rule decides which of
- * them the Engine may take.
+ * returns every ticket in scope, done ones included, and the Ledger holds the
+ * Claims; this rule decides which of the tickets the Engine may take.
  */
-export const isEligible = (ticket: Ticket, done: ReadonlySet<TicketId>): boolean =>
-  !isDone(ticket) && isUnblocked(ticket, done) && isUnclaimed(ticket) && isUnattended(ticket);
+export const isEligible = (ticket: Ticket, { done, claimed }: EligibilityFacts): boolean =>
+  !isDone(ticket) && isUnblocked(ticket, done) && isUnclaimed(ticket, claimed) && isUnattended(ticket);

@@ -1,7 +1,6 @@
-import { Effect, Layer, Schema } from 'effect';
+import { Effect, Layer } from 'effect';
 import { expect, test } from 'vitest';
 
-import { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
@@ -9,7 +8,6 @@ import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import { completeTicket } from './completeTicket';
 
-const runner = Schema.decodeSync(RunnerId)('runner');
 const id = (value: number) => formatTicketId('folder', String(value));
 
 const blocked = (ticketId: number, blockedBy: number[]) =>
@@ -24,7 +22,7 @@ const blocked = (ticketId: number, blockedBy: number[]) =>
     body: '',
   });
 
-const claimed = (ticketId: number, blocks: number[]) =>
+const taken = (ticketId: number, blocks: number[]) =>
   Ticket.create({
     id: id(ticketId),
     title: 'Ticket',
@@ -34,7 +32,7 @@ const claimed = (ticketId: number, blocks: number[]) =>
     blockedBy: [],
     blocks: blocks.map(id),
     body: '',
-  }).claim({ by: runner });
+  });
 
 const repoFrom = (seed: readonly Ticket[], saved: Ticket[]) => {
   const byId = new Map(seed.map((ticket) => [ticket.id, ticket]));
@@ -55,11 +53,12 @@ const repoFrom = (seed: readonly Ticket[], saved: Ticket[]) => {
       Effect.sync(() => {
         saved.push(...tickets);
       }),
+    report: () => Effect.void,
   });
 };
 
 test('completeTicket marks the ticket done and writes no other ticket', () => {
-  const completed = claimed(1, [2, 3]);
+  const completed = taken(1, [2, 3]);
   const two = blocked(2, [1]);
   const three = blocked(3, [1, 4]);
 
@@ -75,7 +74,7 @@ test('completeTicket fails when the ticket id is not found', () => {
   const saved: Ticket[] = [];
   const source = repoFrom([], saved);
 
-  const exit = Effect.runSyncExit(completeTicket({ ticketId: claimed(1, []).id }).pipe(Effect.provide(source)));
+  const exit = Effect.runSyncExit(completeTicket({ ticketId: taken(1, []).id }).pipe(Effect.provide(source)));
 
   expect(exit._tag).toBe('Failure');
   expect(saved).toEqual([]);

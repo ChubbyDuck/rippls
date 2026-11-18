@@ -4,6 +4,7 @@ import { parse, stringify } from 'yaml';
 import { TicketsDir } from '~/Core/Shared/Domain/EngineConfig';
 import { Ticket, TicketFromInput } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import { TicketNotSaved } from '~/Core/Tickets/Domain/Exceptions/TicketNotSaved';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -43,6 +44,14 @@ const parseFrontMatter = (text: string): unknown => {
   }
 };
 
+// An earlier Engine wrote its Claim into the ticket. The Claim lives in the Ledger
+// now, so a claim status reads as the readiness it replaced and `claimedBy` is
+// ignored.
+const CLAIM_STATUSES = new Set(['claiming', 'claimed']);
+
+const withoutClaim = (status: unknown): unknown =>
+  typeof status === 'string' && CLAIM_STATUSES.has(status) ? 'ready-for-agent' : status;
+
 const headToTicket = (text: string, fileId: number): Option.Option<Ticket> => {
   const fields = parseFrontMatter(text);
   if (fields === undefined || typeof fields !== 'object' || fields === null || Array.isArray(fields)) {
@@ -52,6 +61,7 @@ const headToTicket = (text: string, fileId: number): Option.Option<Ticket> => {
   return Schema.decodeUnknownOption(TicketFromInput)({
     ...record,
     id: toFolderId(fileId),
+    status: withoutClaim(record.status),
     blockedBy: namespaceIds(record.blockedBy),
     blocks: namespaceIds(record.blocks),
     body: '',
@@ -71,7 +81,6 @@ const withBody = (ticket: Ticket, body: string): Ticket =>
     status: ticket.status,
     blockedBy: ticket.blockedBy,
     blocks: ticket.blocks,
-    ...(ticket.claimedBy !== undefined ? { claimedBy: ticket.claimedBy } : {}),
     kind: ticket.kind,
     hitl: ticket.hitl,
     body,
@@ -86,7 +95,6 @@ const toFrontMatter = (ticket: Ticket) => ({
   hitl: ticket.hitl,
   blockedBy: ticket.blockedBy.map(toNativeNumber),
   blocks: ticket.blocks.map(toNativeNumber),
-  ...(ticket.claimedBy !== undefined ? { claimedBy: ticket.claimedBy } : {}),
 });
 
 const matchesQuery =
@@ -96,9 +104,6 @@ const matchesQuery =
       return false;
     }
     if (query.blockedBy !== undefined && !ticket.isBlockedBy(query.blockedBy)) {
-      return false;
-    }
-    if (query.claimed === true && ticket.status !== 'claiming' && ticket.status !== 'claimed') {
       return false;
     }
     if (query.project !== undefined && ticket.project !== query.project) {
@@ -244,7 +249,10 @@ export const TicketSourceFolderLive = Layer.effect(
       const saveMany = (tickets: readonly Ticket[]): Effect.Effect<void, TicketNotSaved> =>
         Effect.forEach(tickets, save, { discard: true });
 
-      return { getOneBy, getManyBy, save, saveMany };
+      // The folder Source keeps no trace of a Claim: the Ledger holds it.
+      const report = (_ticket: TicketId, _event: TicketEvent): Effect.Effect<void> => Effect.void;
+
+      return { getOneBy, getManyBy, save, saveMany, report };
     })
   )
 );

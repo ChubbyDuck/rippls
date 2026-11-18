@@ -1,14 +1,15 @@
-import { Option, Schema } from 'effect';
+import { Option } from 'effect';
 import { expect, test } from 'vitest';
 
-import { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { LinearIssue, LinearLabel, LinearMetadata } from '~/Core/Tickets/Ports/LinearApi';
 
 import {
+  claimWrites,
   issueToTicket,
   labelsToHitl,
   labelsToKind,
+  releaseWrites,
   slugify,
   stateTypeToStatus,
   ticketToWrites,
@@ -25,7 +26,7 @@ test('stateTypeToStatus covers every WorkflowState.type', () => {
   expect(Option.getOrThrow(stateTypeToStatus('triage'))).toBe('open');
   expect(Option.getOrThrow(stateTypeToStatus('backlog'))).toBe('open');
   expect(Option.getOrThrow(stateTypeToStatus('unstarted'))).toBe('ready-for-agent');
-  expect(Option.getOrThrow(stateTypeToStatus('started'))).toBe('claimed');
+  expect(Option.getOrThrow(stateTypeToStatus('started'))).toBe('ready-for-agent');
   expect(Option.getOrThrow(stateTypeToStatus('completed'))).toBe('done');
   expect(Option.getOrThrow(stateTypeToStatus('canceled'))).toBe('resolved');
   expect(Option.getOrThrow(stateTypeToStatus('duplicate'))).toBe('resolved');
@@ -149,10 +150,7 @@ test('issueToTicket maps native fields and incomplete blockers', () => {
   expect(ticket.status).toBe('blocked');
   expect(ticket.blockedBy).toEqual([`linear:${blocker}`]);
   expect(ticket.blocks).toEqual([`linear:${blocked}`]);
-  expect(ticket.claimedBy).toBeUndefined();
 });
-
-const runner = Schema.decodeSync(RunnerId)('runner-1');
 
 const readyTicket = Ticket.create({
   id: toLinearId(uuid),
@@ -165,21 +163,25 @@ const readyTicket = Ticket.create({
   body: 'Convert an issue to a Ticket.',
 });
 
-test('ticketToWrites covers claim, done, release, and escalate', () => {
-  const claimWrites = [
+test('claimWrites assign the Issue to the API-key user and move it to the first started state', () => {
+  expect(claimWrites(uuid, metadata)).toEqual([
     { op: 'setAssignee', issueId: uuid, assigneeId: 'viewer-1' },
     { op: 'setState', issueId: uuid, stateId: 'state-started' },
-  ];
-  expect(ticketToWrites(readyTicket.markClaiming(), metadata)).toEqual(claimWrites);
-  expect(ticketToWrites(readyTicket.claim({ by: runner }), metadata)).toEqual(claimWrites);
-  expect(ticketToWrites(readyTicket.claim({ by: runner }).done(), metadata)).toEqual([
-    { op: 'setState', issueId: uuid, stateId: 'state-completed' },
   ]);
-  expect(ticketToWrites(readyTicket.claim({ by: runner }).release(), metadata)).toEqual([
+});
+
+test('releaseWrites unassign the Issue and move it to the first unstarted state', () => {
+  expect(releaseWrites(uuid, metadata)).toEqual([
     { op: 'setAssignee', issueId: uuid, assigneeId: null },
     { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
   ]);
-  expect(ticketToWrites(readyTicket.claim({ by: runner }).escalate(), metadata)).toEqual([
+});
+
+test('ticketToWrites covers done and escalate', () => {
+  expect(ticketToWrites(readyTicket.done(), metadata)).toEqual([
+    { op: 'setState', issueId: uuid, stateId: 'state-completed' },
+  ]);
+  expect(ticketToWrites(readyTicket.escalate(), metadata)).toEqual([
     { op: 'setAssignee', issueId: uuid, assigneeId: null },
     { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
     {

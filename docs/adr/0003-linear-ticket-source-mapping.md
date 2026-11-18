@@ -7,13 +7,13 @@ We added Linear as a second Source behind the existing `TicketSource` port, so t
 - Identity: the issue UUID (stable). The `identifier` (`ENG-123`) is display-only.
 - Native fields: `title`, `description` → body, Linear project → Project (slugified to a branch-safe string), issue relations → `blockedBy`/`blocks` (blockers from `inverseRelations(type: blocks)`, incomplete only).
 - No native slot: `kind` and the `task` `hitl` are grouped labels. An issue without exactly one `kind` label is not a valid Ticket, so the source skips it.
-- Status by `WorkflowState.type`, per team: `triage`/`backlog` → `open`, `unstarted` → `ready-for-agent`, `started` → `claimed`, `completed` → `done`, `canceled`/`duplicate` → `resolved`. `blocked` is derived from `blockedBy`; `claiming` is transient.
+- Status by `WorkflowState.type`, per team: `triage`/`backlog` → `open`, `unstarted` → `ready-for-agent`, `started` → `ready-for-agent`, `completed` → `done`, `canceled`/`duplicate` → `resolved`. `blocked` is derived from `blockedBy`. A Ticket Status holds no Claim (see ADR-0004).
 
 ## Reads and writes
 
-- The pull is team-scoped (config `teamId`). The `--project` flag narrows it to one Linear project by slug. The source surfaces only `unstarted` and `started` issues, so a human moves an issue to Todo to make it ready — the readiness gate needs no extra label.
-- Claim sets assignee = viewer and the first `started` state, then re-reads to confirm. A lost race fails the save. `claimedBy` (the `RunnerId`) is not stored durably on Linear.
-- Complete → `completed` state; release → unassign + `unstarted`; escalate → unassign + `unstarted` + labels `hitl:yes` and `kind:task`. Unblock needs no write, because Linear derives blockers from live relations.
+- The pull is team-scoped (config `teamId`). The `--project` flag narrows it to one Linear project by slug. The source offers only `unstarted` issues for processing, so a human moves an issue to Todo to make it ready — the readiness gate needs no extra label. An issue in a `started` state is already claimed on Linear, so it is not offered; a read by identity still finds it, so the Engine can complete the issue it claimed.
+- The Claim lives in the local Ledger (ADR-0004), not on Linear. The Engine reports it to the source: claimed sets assignee = viewer and the first `started` state, then re-reads to confirm. A lost race fails the report, and the Engine releases the Claim in the Ledger and takes another ticket. Released unassigns the issue and moves it to the first `unstarted` state.
+- Complete → `completed` state; escalate → unassign + `unstarted` + labels `hitl:yes` and `kind:task`. Unblock needs no write, because Linear derives blockers from live relations.
 
 ## Consequences
 

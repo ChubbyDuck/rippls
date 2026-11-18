@@ -35,5 +35,6 @@ export const TicketSourceLive = Layer.sync(TicketSource, () => {
     getManyBy: () => Effect.succeed([]),
     save: () => Effect.void,
     saveMany: () => Effect.void,
+    report: () => Effect.void,
   };
 });

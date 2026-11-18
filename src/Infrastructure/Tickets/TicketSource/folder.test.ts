@@ -5,6 +5,7 @@ import { expect, test } from 'vitest';
 
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { completeTicket } from '~/Core/Tickets/Application/UseCases/CompleteTicket/completeTicket';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
@@ -48,7 +49,7 @@ const getManyIn = (dir: string, query = TicketQuery.build()) =>
   );
 
 test('folder source namespaces ids in memory and writes numbers on disk', async () => {
-  const claimed = Ticket.create({
+  const saved = Ticket.create({
     id: formatTicketId('folder', '6'),
     title: 'Namespaced',
     project: 'demo',
@@ -57,7 +58,7 @@ test('folder source namespaces ids in memory and writes numbers on disk', async 
     blockedBy: [formatTicketId('folder', '5')],
     blocks: [],
     body: '',
-  }).claim({ by: 'runner-1' as never });
+  }).escalate();
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
@@ -80,7 +81,7 @@ test('folder source namespaces ids in memory and writes numbers on disk', async 
 
       const before = yield* getOneIn(dir);
       yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(claimed)),
+        Effect.flatMap((source) => source.save(saved)),
         Effect.provide(withDir(dir))
       );
       const content = yield* fs.readFileString(path.join(dir, '6.md'));
@@ -97,7 +98,7 @@ test('folder source namespaces ids in memory and writes numbers on disk', async 
   expect(result.content).toContain('Keep the body.');
   expect(Option.getOrThrow(result.after).id).toBe('folder:6');
   expect(Option.getOrThrow(result.after).blockedBy).toEqual(['folder:5']);
-  expect(Option.getOrThrow(result.after).status).toBe('claimed');
+  expect(Option.getOrThrow(result.after).kind).toBe('task');
 });
 
 test('getOneBy decodes a schema-shaped front matter file', async () => {
@@ -207,7 +208,7 @@ test('save updates a slugged filename in place and moves it to done with the sam
     blocks: [],
     body: '',
   });
-  const done = created.claim({ by: 'runner-1' as never }).done();
+  const done = created.done();
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
@@ -229,11 +230,11 @@ test('save updates a slugged filename in place and moves it to done with the sam
       ]);
 
       yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(created.claim({ by: 'runner-1' as never }))),
+        Effect.flatMap((source) => source.save(created.escalate())),
         Effect.provide(withDir(dir))
       );
-      const claimed = yield* fs.readFileString(path.join(dir, '9-slugged-save.md'));
-      const numericExistsAfterClaim = yield* fs.exists(path.join(dir, '9.md'));
+      const escalated = yield* fs.readFileString(path.join(dir, '9-slugged-save.md'));
+      const numericExistsAfterEscalation = yield* fs.exists(path.join(dir, '9.md'));
 
       yield* TicketSource.pipe(
         Effect.flatMap((source) => source.save(done)),
@@ -241,13 +242,13 @@ test('save updates a slugged filename in place and moves it to done with the sam
       );
       const originalExists = yield* fs.exists(path.join(dir, '9-slugged-save.md'));
       const doneContent = yield* fs.readFileString(path.join(dir, 'done', '9-slugged-save.md'));
-      return { claimed, numericExistsAfterClaim, originalExists, doneContent };
+      return { escalated, numericExistsAfterEscalation, originalExists, doneContent };
     }).pipe(Effect.provide(NodeFs))
   );
 
-  expect(result.claimed).toContain('status: claimed');
-  expect(result.claimed).toContain('Keep this body.');
-  expect(result.numericExistsAfterClaim).toBe(false);
+  expect(result.escalated).toContain('kind: task');
+  expect(result.escalated).toContain('Keep this body.');
+  expect(result.numericExistsAfterEscalation).toBe(false);
   expect(result.originalExists).toBe(false);
   expect(result.doneContent).toContain('status: done');
   expect(result.doneContent).toContain('Keep this body.');
@@ -455,7 +456,7 @@ test('getOneBy yields no ticket when the folder is missing', async () => {
 });
 
 test('save writes the front matter back and keeps the body', async () => {
-  const claimed = Ticket.create({
+  const escalated = Ticket.create({
     id: formatTicketId('folder', '5'),
     title: 'Save me',
     project: 'demo',
@@ -464,7 +465,7 @@ test('save writes the front matter back and keeps the body', async () => {
     blockedBy: [],
     blocks: [],
     body: '',
-  }).claim({ by: 'runner-1' as never });
+  }).escalate();
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
@@ -486,7 +487,7 @@ test('save writes the front matter back and keeps the body', async () => {
       ]);
 
       yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(claimed)),
+        Effect.flatMap((source) => source.save(escalated)),
         Effect.provide(withDir(dir))
       );
 
@@ -497,9 +498,10 @@ test('save writes the front matter back and keeps the body', async () => {
   );
 
   expect(result.content).toContain('Original body text.');
-  expect(result.content).toContain('status: claimed');
-  expect(Option.getOrThrow(result.reread).status).toBe('claimed');
-  expect(Option.getOrThrow(result.reread).claimedBy).toBe('runner-1');
+  expect(result.content).toContain('kind: task');
+  expect(result.content).toContain('hitl: yes');
+  expect(Option.getOrThrow(result.reread).kind).toBe('task');
+  expect(Option.getOrThrow(result.reread).hitl).toBe('yes');
   expect(Option.getOrThrow(result.reread).body).toContain('Original body text.');
 });
 
@@ -513,9 +515,7 @@ test('save places a done ticket in the done subfolder and removes the original',
     blockedBy: [],
     blocks: [],
     body: '',
-  })
-    .claim({ by: 'runner-1' as never })
-    .done();
+  }).done();
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
@@ -614,24 +614,6 @@ test('save round-trips a ticket that omits project', async () => {
   expect(Option.getOrThrow(result.reread).project).toBeUndefined();
 });
 
-test('getManyBy returns every claiming and claimed ticket, head only', async () => {
-  const common = { project: 'demo', kind: 'implementation', blocks: [], blockedBy: [] };
-  const tickets = await Effect.runPromise(
-    Effect.gen(function* () {
-      const dir = yield* setup([
-        ['1.md', frontMatter({ id: 1, title: 'claiming', status: 'claiming', ...common }) + 'Body one.\n'],
-        ['2.md', frontMatter({ id: 2, title: 'claimed', status: 'claimed', claimedBy: 'runner-1', ...common }) + 'Body two.\n'],
-        ['3.md', frontMatter({ id: 3, title: 'ready', status: 'ready-for-agent', ...common })],
-        ['4.md', frontMatter({ id: 4, title: 'done', status: 'done', ...common })],
-      ]);
-      return yield* getManyIn(dir, TicketQuery.claimed().sort('ASC').build());
-    }).pipe(Effect.provide(NodeFs))
-  );
-
-  expect(tickets.map((ticket) => ticket.id)).toEqual(['folder:1', 'folder:2']);
-  expect(tickets.map((ticket) => ticket.body)).toEqual(['', '']);
-});
-
 test('getManyBy scopes to the project and returns an empty array when none match', async () => {
   const common = { kind: 'implementation', blocks: [], blockedBy: [] };
   const tickets = await Effect.runPromise(
@@ -639,7 +621,7 @@ test('getManyBy scopes to the project and returns an empty array when none match
       const dir = yield* setup([
         ['1.md', frontMatter({ id: 1, title: 'other project', project: 'other', status: 'claimed', claimedBy: 'runner-1', ...common })],
       ]);
-      return yield* getManyIn(dir, TicketQuery.claimed().byProject('wanted' as never).build());
+      return yield* getManyIn(dir, TicketQuery.byProject('wanted' as never).build());
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -660,4 +642,54 @@ test('getOneBy by identity fills the body of the returned ticket only', async ()
 
   expect(Option.getOrThrow(ticket).id).toBe('folder:2');
   expect(Option.getOrThrow(ticket).body).toBe('Returned body.\n');
+});
+
+const reportIn = (dir: string, event: TicketEvent) =>
+  TicketSource.pipe(
+    Effect.flatMap((source) => source.report(formatTicketId('folder', '1'), event)),
+    Effect.provide(withDir(dir))
+  );
+
+test('after claimed and after released the ticket file is byte-for-byte unchanged', async () => {
+  const content =
+    frontMatter({ id: 1, title: 'reported', project: 'demo', kind: 'implementation', status: 'ready-for-agent', blockedBy: [], blocks: [] }) +
+    '# Reported\n\n- [ ] Keep me.\n';
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* setup([['1-reported.md', content]]);
+      yield* reportIn(dir, 'claimed');
+      const afterClaimed = yield* fs.readFileString(path.join(dir, '1-reported.md'));
+      yield* reportIn(dir, 'released');
+      const afterReleased = yield* fs.readFileString(path.join(dir, '1-reported.md'));
+      const files = yield* fs.readDirectory(dir);
+      return { afterClaimed, afterReleased, files };
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(result.afterClaimed).toBe(content);
+  expect(result.afterReleased).toBe(content);
+  expect(result.files).toEqual(['1-reported.md']);
+});
+
+test('a file with claimedBy or a claim status is read and those values are ignored', async () => {
+  const common = { project: 'demo', kind: 'implementation', blocks: [], blockedBy: [] };
+  const tickets = await Effect.runPromise(
+    Effect.gen(function* () {
+      const dir = yield* setup([
+        ['1-claiming.md', frontMatter({ id: 1, title: 'claiming', status: 'claiming', ...common })],
+        ['2-claimed.md', frontMatter({ id: 2, title: 'claimed', status: 'claimed', claimedBy: 'runner-1', ...common })],
+        ['3-ready.md', frontMatter({ id: 3, title: 'ready', status: 'ready-for-agent', claimedBy: 'runner-2', ...common })],
+      ]);
+      return yield* getManyIn(dir);
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(tickets.map((ticket) => [ticket.id, ticket.status])).toEqual([
+    ['folder:1', 'ready-for-agent'],
+    ['folder:2', 'ready-for-agent'],
+    ['folder:3', 'ready-for-agent'],
+  ]);
+  expect(tickets.some((ticket) => 'claimedBy' in ticket)).toBe(false);
 });

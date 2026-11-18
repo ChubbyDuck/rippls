@@ -2,6 +2,7 @@ import { Console, Effect, Result } from 'effect';
 
 import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
+import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
@@ -17,31 +18,30 @@ export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
     const harnessSelector = yield* HarnessSelector;
     const harness = yield* harnessSelector.select;
     yield* Effect.annotateCurrentSpan('harness', harness.name);
-    yield* Console.log(`${ticket.label} is claimed`);
     const source = yield* TicketSource;
+    const ledger = yield* Ledger;
     const strategies = yield* StrategySelector;
     const worktrees = yield* WorktreeManager;
-    const claimedTicket = ticket.claim({ by: runnerId });
-    yield* source.save(claimedTicket).pipe(Effect.withSpan('runner.claim'));
-    const strategy = yield* strategies.select(claimedTicket.kind);
+    yield* ledger.assignRunner(ticket.id, runnerId).pipe(Effect.withSpan('runner.claim'));
+    const strategy = yield* strategies.select(ticket.kind);
     yield* Effect.annotateCurrentSpan('strategy', strategy.name);
     yield* Console.log(
       `${ticket.label} is processed by '${strategy.name}' strategy and '${harness.name}' harness using '${harness.model}'`
     );
     yield* Console.log(
-      claimedTicket.project === undefined
-        ? `${ticket.label} is preparing worktree ticket-${claimedTicket.id} from HEAD`
-        : `${ticket.label} is preparing worktree ticket-${claimedTicket.id} from ${claimedTicket.project}`
+      ticket.project === undefined
+        ? `${ticket.label} is preparing worktree ticket-${ticket.id} from HEAD`
+        : `${ticket.label} is preparing worktree ticket-${ticket.id} from ${ticket.project}`
     );
-    const worktree = yield* prepareTicketWorktree({ ticket: claimedTicket }).pipe(
+    const worktree = yield* prepareTicketWorktree({ ticket }).pipe(
       Effect.retry({ times: 1 }),
       Effect.catchTag('WorktreeCreationError', () =>
-        Effect.fail(new EngineHalted({ ticketId: claimedTicket.id, reason: 'worktree creation failure' }))
+        Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'worktree creation failure' }))
       )
     );
     yield* Console.log(`${ticket.label} is opening worktree ${worktree.branch} at ${worktree.path}`);
     const outcome = yield* strategy
-      .run(claimedTicket, harnessInWorktree(harness, worktree.path))
+      .run(ticket, harnessInWorktree(harness, worktree.path))
       .pipe(Effect.withSpan('strategy.run', { attributes: { harness: harness.name, strategy: strategy.name } }));
     yield* Result.match(outcome, {
       onSuccess: () =>
@@ -52,15 +52,16 @@ export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
         ).pipe(
           Effect.retry({ times: 1 }),
           Effect.catchTag('WorktreeCloseError', () =>
-            Effect.fail(new EngineHalted({ ticketId: claimedTicket.id, reason: 'worktree close failure' }))
+            Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'worktree close failure' }))
           ),
           Effect.andThen(Console.log(`${ticket.label} is done`)),
-          Effect.andThen(completeTicket({ ticketId: claimedTicket.id }))
+          Effect.andThen(completeTicket({ ticketId: ticket.id })),
+          Effect.andThen(ledger.release(ticket.id))
         ),
       onFailure: () =>
         Console.error(`${ticket.label} failed and is raised to a human`).pipe(
-          Effect.andThen(source.save(claimedTicket.escalate())),
-          Effect.andThen(Effect.fail(new EngineHalted({ ticketId: claimedTicket.id, reason: 'strategy failure' })))
+          Effect.andThen(source.save(ticket.escalate())),
+          Effect.andThen(Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'strategy failure' })))
         ),
     });
   }).pipe(
