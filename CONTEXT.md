@@ -22,7 +22,7 @@ _Avoid_: Agent, Model, Runner
 
 **Agent**:
 A running instance of a Harness's Model on a Runner. Each Harness invocation creates
-a new Agent, including retries.
+a new Agent, including a Step's repeated attempts.
 _Avoid_: Harness, Model, Runner
 
 **Model**:
@@ -78,7 +78,8 @@ _Avoid_: Summary, subject
 
 **Ticket Processing**:
 The shared lifecycle a Runner carries out for one Ticket: claim, apply a Strategy,
-then record completion or escalate to a human. It owns claiming, completion, and
+run the check command, make sure the work is committed, then record completion or
+escalate to a human. It owns claiming, the check, the commit, completion, and
 escalation across Strategies.
 _Avoid_: Runner, run, execution, loop
 
@@ -117,8 +118,40 @@ _Avoid_: Database, store, registry
 
 **Strategy**:
 A named, reusable procedure for carrying out a Ticket's work through a Harness and
-returning an outcome. Different Strategies may serve the same Ticket Kind.
+returning an outcome: a list of Steps from config, run in order in one Ticket
+Worktree. A failed Step fails the Strategy, and no further Step runs. Each Ticket
+Kind has one configured Strategy, named after it.
 _Avoid_: Handler, workflow, prompt
+
+**Step**:
+One prompt of a Strategy that the Engine sends to the Harness, with an optional prompt
+per Harness, model demand, time limit, and retry count. A Step fails on a Harness
+error or its time limit, and a failed Step runs again up to its retry count before
+it fails the Strategy.
+_Avoid_: Stage, slash command
+
+**Verdict step**:
+A Step that judges the work. The Engine appends the pass and fail signals to its
+prompt and reads the signal back; any outcome other than the pass signal fails it.
+_Avoid_: Gate, review
+
+**Check command**:
+The repository's own command that the Engine runs in the Ticket Worktree, through the
+Worktree Manager and within a time limit, after the Strategy succeeds. Exit code zero
+passes; any other exit code, or the time limit, fails the check. A Project may have
+its own check command. With no check command, the check is skipped.
+_Avoid_: Verify script, test command, gate
+
+**Fix prompt**:
+The prompt the Engine sends to the Harness after a failed check, with the end of the
+check command's output, so that an Agent can fix the work before the check runs
+again.
+_Avoid_: Retry, repair prompt
+
+**Fix attempts**:
+How many times the Engine sends the fix prompt and runs the check command again
+before a failed check escalates the Ticket. One unless config sets it.
+_Avoid_: Retries, attempt count
 
 **Strategy Selector**:
 The selection policy that determines which Strategy applies to a Ticket.
@@ -164,8 +197,9 @@ reused after a Retry.
 _Avoid_: Project Worktree, per-prompt worktree
 
 **Worktree Manager**:
-The service responsible for preparing Project Worktrees and Ticket Worktrees, and
-merging and closing successful Ticket Worktrees.
+The service responsible for preparing Project Worktrees and Ticket Worktrees,
+running a command in a worktree, telling whether a worktree is clean, and merging
+and closing successful Ticket Worktrees.
 _Avoid_: Worktree Repository
 
 ## Sources

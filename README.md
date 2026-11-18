@@ -29,7 +29,7 @@ you want it to process. No clone of this project is required.
 | --- | --- |
 | **Engine** | Coordinates the Runners processing Tickets. |
 | **Runner** | A named worker reused across successive Tickets. |
-| **Ticket Source** | Reads external records, converts them into Tickets, saves Ticket changes, and receives reports of each Claim, release, escalation, and retry. |
+| **Ticket Source** | Reads external records and converts them into Tickets, and receives reports of what happened to them: each Claim, release, escalation, retry, and done. Rippls never saves a Ticket to it. |
 | **Ledger** | The Engine's own local record of Ticket Processing, where each Claim and Escalation lives. |
 | **Ticket Stream** | The ongoing sequence of uniform Tickets supplied for processing. |
 | **Ticket Processing** | The shared lifecycle: claim, apply a Strategy, then complete or escalate. |
@@ -39,12 +39,12 @@ you want it to process. No clone of this project is required.
 
 Tickets have the same domain shape before entering the Ticket Stream. The Engine and
 Runners apply the same processing rules regardless of whether a Ticket came from a
-folder or Linear; the Source handles conversion and persistence.
+folder or Linear; the Source handles conversion and expresses each reported event in its own way.
 
 The **Strategy Selector** chooses the procedure for a Ticket, while the
 **Harness Selector** chooses the coding integration. A Ticket Kind describes the work; a Strategy
-describes how to perform it. Different Strategies can serve the same Kind, although the
-current selector maps each Kind to one Strategy. Ticket Processing owns claiming,
+describes how to perform it. Each Ticket Kind has one configured Strategy, named after
+it. Ticket Processing owns claiming,
 completion, and escalation across Strategies.
 
 The **Worktree Manager** prepares Project and Ticket Worktrees and merges and closes
@@ -67,15 +67,16 @@ successful Ticket Worktrees.
 9. Once the Ticket Worktree is clean, reports done to the Source, merges the ticket
   branch, records done in the Ledger, and releases its Claim (see
   [Completion and `done/`](#completion-and-done)).
-10. On Strategy failure, a check that still fails after its fix attempts, or work that is
-  still uncommitted after the commit prompt, retains the worktree, records an
+10. On Strategy failure, a check that still fails after its fix attempts, work that is
+  still uncommitted after the commit prompt, or a done report the Source does not
+  accept, retains the worktree, records an
   **Escalation** in the Ledger, releases the Claim, and reports the escalation to the
   Source. The ticket keeps its kind and `hitl`.
 
 The **Limit** caps Tickets taken from the stream, rather than successful completions.
 The Engine finishes processing the Tickets it has taken, or stops after the configured
-idle timeout. A Strategy failure, a failed check, or uncommitted work escalates the Ticket
-and halts the run.
+idle timeout. A Strategy failure, a failed check, uncommitted work, or a failed done report
+escalates the Ticket and halts the run.
 
 ## Before you start
 
@@ -342,8 +343,38 @@ ticket. The record names the Engine, its process ID, and its host, and the Runne
 the ticket is handed to one. The Engine claims a ticket when it takes it from the
 Ticket Stream, and releases the Claim when the ticket is done or when the Engine exits.
 
-A Claim left by an Engine that stopped without releasing it keeps its ticket
-unclaimable. Remove that ticket's record from the Ledger folder to free it.
+### Stale Claims
+
+A Claim is **stale** when its process no longer runs on this host, for example after an
+Engine was killed. A Claim whose process still runs is never stale, and a Claim from
+another host is never stale either: the Engine cannot see the processes of another host.
+
+A ticket whose only Claim is stale is Unclaimed, so a Claim left on this host never needs
+removing by hand. When the Engine looks for its next ticket and meets a Stale Claim, it replaces it:
+
+1. It removes the stale record and claims the ticket in the Ledger. Of several Engines
+   that meet the same Stale Claim, only one wins the removal; the others take another
+   ticket.
+2. It reports released to the Source.
+3. It reports claimed to the Source, as for any Claim.
+
+- **Folder Source:** released and claimed change nothing, so the ticket is simply
+  taken again.
+- **Linear Source:** the Engine stopped while the issue was in a `started` state, which
+  reads as claimed on Linear. Rippls takes a started issue only when this host's Ledger
+  holds a Stale Claim on it. The released report unassigns the issue and returns it to an
+  `unstarted` state; the claimed report assigns it and moves it to a `started` state
+  again.
+
+If the released report fails, the Engine still holds its new Claim and goes on to the
+claimed report. If that report fails too, as it does on Linear for an issue that is still
+started, the ticket is not processed, and the Engine reports the release again when it
+exits.
+
+On exit, an Engine removes the record of each of its Claims only after the Source accepts
+its released report. When the report fails, the record stays, and it becomes a Stale
+Claim that a later run replaces. A Claim from another host stays until someone removes its
+record from the Ledger folder.
 
 ## Completion and `done/`
 
@@ -390,13 +421,13 @@ becomes Eligible again.
 
 ## Escalation
 
-When a Strategy fails, the check command still fails after its fix attempts, or the
-Ticket Worktree still has uncommitted work after the commit prompt, the Engine
-escalates the ticket and halts the run:
+When a Strategy fails, the check command still fails after its fix attempts, the
+Ticket Worktree still has uncommitted work after the commit prompt, or the Source does
+not accept the done report, the Engine escalates the ticket and halts the run:
 
 1. It records an **Escalation** in the Ledger with the reason, the attempt count, and
    the path of the retained Ticket Worktree. The reason is `check failure`,
-   `commit failure`, or, for a failed Strategy, the step that failed, by its position,
+   `commit failure`, `done report failure`, or, for a failed Strategy, the step that failed, by its position,
    and how its last run failed:
    - `strategy failure: step 2, Harness error`
    - `strategy failure: step 2, time limit reached`
@@ -927,14 +958,15 @@ Issue data maps into tickets as follows:
 - Linear `blocks` relations become `blockedBy`.
 - An issue in a `completed` state is done.
 
-The Linear Source offers only issues in an `unstarted` state for processing. An issue in
-a `started` state is already claimed on Linear, so Rippls does not take it.
+The Linear Source offers issues in an `unstarted` state for processing. An issue in a
+`started` state is already claimed on Linear, so Rippls does not take it, unless this
+host's Ledger holds a Stale Claim on it (see [Stale Claims](#stale-claims)).
 
 When the Engine claims an issue, the Linear Source assigns it to the API-key user, moves
 it to a `started` state, and reads it back to confirm. If someone else took the issue in
 between, the Engine releases its Claim and takes another ticket. A release unassigns the
-issue and returns it to an `unstarted` state. Done moves it to a `completed` state, before
-the merge of its ticket branch.
+issue and returns it to an `unstarted` state. Done moves it to a `completed` state, after
+the merge of its ticket branch succeeds.
 
 If a Strategy fails, Rippls records the Escalation in its Ledger, unassigns the issue,
 returns it to an `unstarted` state, and adds the `needs-human` label. It does not change
