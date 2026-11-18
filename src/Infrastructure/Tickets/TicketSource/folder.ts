@@ -128,6 +128,54 @@ const markerInBody = (body: string): Marker | undefined => {
   return undefined;
 };
 
+const BLOCKED_BY_LINE = /^\s*(?:[-*+]\s+)?[*_]*blocked by[*_]*\s*:[*_]*\s*(.*)$/i;
+const NONE = /^none\b/i;
+const LEADING_NUMBER = /^(\d+)/;
+
+// The items of a "Blocked by" line, split at the commas outside parentheses, so
+// that a title in parentheses stays with its item.
+const blockedByItems = (line: string): readonly string[] => {
+  const items: string[] = [];
+  let depth = 0;
+  let item = '';
+  for (const char of line) {
+    if (char === ',' && depth === 0) {
+      items.push(item);
+      item = '';
+      continue;
+    }
+    if (char === '(') {
+      depth += 1;
+    } else if (char === ')') {
+      depth = Math.max(0, depth - 1);
+    }
+    item += char;
+  }
+  items.push(item);
+  return items.map((each) => each.trim()).filter((each) => each !== '');
+};
+
+// The blocker an item names: the ticket of the same folder with its leading number,
+// whatever text follows. An item without a leading number keeps its text, so it
+// resolves to no ticket and blocks.
+const blockerOf = (item: string): TicketId => {
+  const match = LEADING_NUMBER.exec(item);
+  return toFolderId(match === null ? item : Number(match[1]));
+};
+
+// The blockers of the first "Blocked by" line of the body, such as
+// `**Blocked by:** 02 (A title), 10`. "None", with or without a remark, names none.
+const blockersInBody = (body: string): readonly TicketId[] | undefined => {
+  for (const line of proseLines(body)) {
+    const match = BLOCKED_BY_LINE.exec(line);
+    if (match !== null) {
+      const value = (match[1] ?? '').trim();
+      return NONE.test(value) ? [] : blockedByItems(value).map(blockerOf);
+    }
+  }
+  return undefined;
+};
+
 // A key with no value states nothing, like a missing key.
 const emptyAsMissing = (value: unknown): unknown => (value === null ? undefined : value);
 
@@ -135,7 +183,8 @@ const emptyAsMissing = (value: unknown): unknown => (value === null ? undefined 
  * The Ticket a file reads as, or none when it is unreadable. A Ticket needs an
  * identity, from the numeric filename prefix, and text. Every other value is a
  * hint: the Title comes from the `title` field, the first heading, or the
- * filename; the Marker from a `status` field or a "Status" line. A `status` value
+ * filename; the Marker from a `status` field or a "Status" line; the blockers
+ * from a `blockedBy` field or a "Blocked by" line. A `status` value
  * is read only as a Marker; `blocks`, `claimedBy`, and unknown keys are ignored.
  * An invalid value for a known hint makes the file unreadable. A ticket in
  * `done/` is done.
@@ -153,7 +202,7 @@ const fileToTicket = (
       title: emptyAsMissing(fields.title) ?? headingTitle(body) ?? filenameTitle(file),
       body,
       project: emptyAsMissing(fields.project),
-      blockedBy: namespaceIds(emptyAsMissing(fields.blockedBy)),
+      blockedBy: namespaceIds(emptyAsMissing(fields.blockedBy)) ?? blockersInBody(body),
       kind: emptyAsMissing(fields.kind),
       hitl: emptyAsMissing(fields.hitl),
       marker: markerOf(fields.status) ?? markerInBody(body),

@@ -1,5 +1,5 @@
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { Console, Effect, FileSystem, Fiber, Layer, Path, Random, Result, Schema } from 'effect';
+import { ConfigProvider, Console, Effect, FileSystem, Fiber, Layer, Path, Random, Result, Schema } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, test } from 'vitest';
 
@@ -27,6 +27,7 @@ import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource
 import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 import { StrategySelectorNoop } from '~/Infrastructure/Tickets/StrategySelector/noop';
+import { TicketSourceFolderLive } from '~/Infrastructure/Tickets/TicketSource/folder';
 
 import { retryTicket } from '../RetryTicket/retryTicket';
 
@@ -518,6 +519,53 @@ test('runEngine keeps a ticket blocked by a blocker that the Source cannot find'
   );
 
   expect(ran).toEqual([]);
+});
+
+// A ticket in the template of a standard ticket-writing skill, with no front matter.
+const standardTemplate = (number: string, title: string, blockedBy: string) =>
+  [
+    `# ${number}: ${title}`,
+    '',
+    `**What to build:** ${title.toLowerCase()}.`,
+    '',
+    `**Blocked by:** ${blockedBy}`,
+    '',
+    '**Status:** ready-for-agent',
+    '',
+    '- [ ] It is built.',
+    '',
+  ].join('\n');
+
+test('runEngine processes a chain of tickets in the standard template in dependency order', async () => {
+  const ran: Ticket[] = [];
+  const ticketsDir = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectory({ prefix: 'engine-chain-' });
+      yield* fs.writeFileString(path.join(dir, '01-last.md'), standardTemplate('01', 'Last', '02 (Middle)'));
+      yield* fs.writeFileString(path.join(dir, '02-middle.md'), standardTemplate('02', 'Middle', '03 (First)'));
+      yield* fs.writeFileString(path.join(dir, '03-first.md'), standardTemplate('03', 'First', 'None (can start immediately)'));
+      return dir;
+    }).pipe(Effect.provide(NodeServices.layer))
+  );
+  const folderSource = TicketSourceFolderLive.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ ticketsDir })),
+        Layer.succeed(RepositoryRoot, '/repo'),
+        NodeServices.layer
+      )
+    )
+  );
+  const layer = Layer.mergeAll(folderSource, HarnessSelectorNoop, capturingImplementation(ran));
+
+  expect(await Effect.runPromise(runEngine({ limit: 3 }).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(ran.map((ticket) => [ticket.id, ticket.title])).toEqual([
+    [id(3), 'First'],
+    [id(2), 'Middle'],
+    [id(1), 'Last'],
+  ]);
 });
 
 test('runEngine resolves a blocker of another Project against every ticket of the Source', async () => {

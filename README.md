@@ -147,7 +147,9 @@ ticket moves into `done/` as soon as the ticket branch is merged (see
 
 A ticket is **Eligible** when all three conditions hold:
 
-- **Unblocked**: every ticket in `blockedBy` is done. An empty `blockedBy` is Unblocked.
+- **Unblocked**: every blocker of the ticket is done. A ticket with no blockers is
+  Unblocked. A folder ticket names its blockers in a `blockedBy` field or a "Blocked by"
+  line (see [What a ticket needs](#what-a-ticket-needs)).
 - **Unclaimed**: the **Ledger** holds no Claim on it. A `claimedBy` field or a
   `claiming`/`claimed` status that an earlier Rippls wrote into a ticket is ignored.
 - **Unattended**: its HITL is `no` (see [Ticket kinds and HITL](#ticket-kinds-and-hitl)).
@@ -258,7 +260,7 @@ the ticket, the Ledger, and the done tickets; the ticket file does not hold it.
 | `escalated` | The Ledger holds an Escalation for it (see [Escalation](#escalation)). |
 | `claimed` | The Ledger holds a Claim on it that is not stale. |
 | `not ready` | Its `hitl` is `yes`. |
-| `blocked` | A ticket in its `blockedBy` is not done. |
+| `blocked` | One of its blockers is not done. |
 | `eligible` | The Engine may take it next (see [Which tickets are eligible?](#which-tickets-are-eligible)). |
 
 When several values apply to one ticket, the first in this table is shown. A ticket
@@ -529,7 +531,7 @@ prefix; the text is the file. Everything else is a hint with a fallback:
 | Title | The `title` field, then the first heading without a leading ticket number and separator (`# 02: Add login` gives `Add login`), then the filename without its numeric prefix and extension (`2-add-login.md` gives `add-login`) | Always present |
 | Kind | The `kind` field | `defaultKind` from config, `implementation` by default |
 | HITL | The `hitl` field, then a marker, then a stated kind (see [Ticket kinds and HITL](#ticket-kinds-and-hitl)) | `defaultHitl` of the folder Source, `yes` by default |
-| Blockers | The `blockedBy` field, with numeric folder ticket IDs | None |
+| Blockers | The `blockedBy` field, with numeric folder ticket IDs, then a "Blocked by" line of the body (see [Blockers in a "Blocked by" line](#blockers-in-a-blocked-by-line)) | None |
 | Project | The `project` field | None |
 
 Front matter is optional, and so is a heading. The body is passed to the Strategy
@@ -547,12 +549,14 @@ A ticket in the template of a standard ticket-writing skill, with no front matte
 
 **What to build:** a section in the guide for `GET /health`.
 
+**Blocked by:** 01 (Add a health endpoint)
+
 **Status:** ready-for-agent
 
 - [ ] The guide shows the endpoint.
 ```
 
-Its kind is the default, and its marker makes it Unattended.
+Its kind is the default, its marker makes it Unattended, and ticket 1 blocks it.
 
 A bare note is a ticket too. Its Title is the filename, and it is HITL `yes` until it
 says it is ready, or `defaultHitl` is `no`:
@@ -597,6 +601,31 @@ Unblocked. Rippls does not edit ticket 13: it reads the tickets in `done/` as do
 derives Unblocked on every poll. The stored `status: blocked` does not gate ticket 13.
 A blocker that Rippls finds neither in the tickets folder nor in `done/` keeps its ticket
 blocked.
+
+#### Blockers in a "Blocked by" line
+
+A ticket with no `blockedBy` field can name its blockers in a "Blocked by" line of its
+body, as the template of a standard ticket-writing skill does. Rippls reads the first
+such line outside a code block; the label may be bold, as in `**Blocked by:**`, and its
+case does not matter.
+
+```md
+**Blocked by:** 02 (Unblocked is derived from done), 10 (A ticket needs only an identity and text).
+```
+
+- The line holds items separated by commas. An item starts with a ticket number; the
+  text after the number, such as a title in parentheses, is ignored. A comma or a
+  number inside parentheses belongs to its item, so `2 (after 5, 6)` names ticket 2
+  only.
+- A number refers to a ticket in the same folder. Leading zeros do not matter: `02` is
+  ticket 2.
+- `None`, with or without a remark, as in `None (can start immediately)`, means no
+  blockers.
+- An item that does not start with a number, such as a bare title, cannot be resolved
+  and keeps the ticket blocked. So does a number that matches no ticket, open or in
+  `done/`.
+- When a ticket has both a `blockedBy` field and a "Blocked by" line, the field wins.
+  A `blockedBy` key with no value states nothing, so the line is read.
 
 Completed files move to `ticketsDir/done/` unchanged (see
 [Completion and `done/`](#completion-and-done)).

@@ -4,6 +4,7 @@ import { expect, test } from 'vitest';
 
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
+import { doneInSourceIds, isUnblocked } from '~/Core/Tickets/Domain/Services/eligibility';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -44,7 +45,11 @@ const setup = (files: ReadonlyArray<readonly [string, string]>) =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const dir = yield* fs.makeTempDirectory({ prefix: 'engine-tickets-' });
-    yield* Effect.forEach(files, ([name, content]) => fs.writeFileString(path.join(dir, name), content));
+    yield* Effect.forEach(files, ([name, content]) =>
+      fs
+        .makeDirectory(path.dirname(path.join(dir, name)), { recursive: true })
+        .pipe(Effect.andThen(fs.writeFileString(path.join(dir, name), content)))
+    );
     return dir;
   });
 
@@ -605,6 +610,7 @@ test('the folder Source reads a front matter ticket, a ticket in the standard te
       title: 'Document the health endpoint',
       kind: 'implementation',
       hitl: 'no',
+      blockedBy: [folderId(1)],
       body: standardTemplate,
     }),
     Ticket.create({
@@ -745,4 +751,50 @@ test('a file with unparseable front matter, or an invalid value for a known hint
   ]);
 
   expect([...tickets.keys()]).toEqual([folderId(6)]);
+});
+
+test('a "Blocked by" line names blockers by number, ignores the text after each number, and reads none as no blockers', async () => {
+  const tickets = await readAll([
+    ['1.md', '# One number\n\n**Blocked by:** 7\n'],
+    ['2.md', '# Titles\n\n**Blocked by:** 02 (Unblocked is derived from done), 010 (A ticket needs only an identity and text).\n'],
+    ['3.md', '# None\n\n**Blocked by:** none\n'],
+    ['4.md', '# None with a remark\n\n**Blocked by:** None (can start immediately)\n'],
+    ['5.md', '# Plain\n\n- Blocked by: 3, 4\n'],
+  ]);
+
+  expect([...tickets.values()].map((ticket) => [ticket.id, ticket.blockedBy])).toEqual([
+    [folderId(1), [folderId(7)]],
+    [folderId(2), [folderId(2), folderId(10)]],
+    [folderId(3), []],
+    [folderId(4), []],
+    [folderId(5), [folderId(3), folderId(4)]],
+  ]);
+});
+
+test('a number inside the parentheses of another item is not read as a blocker', async () => {
+  const tickets = await readAll([['1.md', '**Blocked by:** 2 (after 5, then 6), 3 (see 4)\n']]);
+
+  expect(tickets.get(folderId(1))?.blockedBy).toEqual([folderId(2), folderId(3)]);
+});
+
+test('an item without a leading number, or a number with no ticket, keeps the ticket blocked', async () => {
+  const tickets = await readAll([
+    ['done/1-first.md', '# First\n'],
+    ['2.md', '**Blocked by:** 01 (First)\n'],
+    ['3.md', '**Blocked by:** 01 (First), First\n'],
+    ['4.md', '**Blocked by:** 99\n'],
+  ]);
+  const done = doneInSourceIds([...tickets.values()]);
+
+  expect([2, 3, 4].map((value) => isUnblocked(tickets.get(folderId(value))!, done))).toEqual([true, false, false]);
+});
+
+test('the blockedBy field wins over a "Blocked by" line', async () => {
+  const tickets = await readAll([
+    ['1.md', frontMatter({ blockedBy: [2] }) + '**Blocked by:** 3\n'],
+    ['2.md', frontMatter({ blockedBy: [] }) + '**Blocked by:** 3\n'],
+    ['3.md', '---\nblockedBy:\n---\n**Blocked by:** 4\n'],
+  ]);
+
+  expect([...tickets.values()].map((ticket) => ticket.blockedBy)).toEqual([[folderId(2)], [], [folderId(4)]]);
 });
