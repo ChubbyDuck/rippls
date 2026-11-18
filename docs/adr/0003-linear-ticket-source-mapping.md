@@ -5,9 +5,9 @@ We added Linear as a second Source behind the existing `TicketSource` port, so t
 ## Mapping
 
 - Identity: the issue UUID (stable). The `identifier` (`ENG-123`) is display-only.
-- Native fields: `title`, `description` → body, Linear project → Project (slugified to a branch-safe string), issue relations → `blockedBy`/`blocks` (blockers from `inverseRelations(type: blocks)`, incomplete only).
-- No native slot: `kind` and the `task` `hitl` are grouped labels. An issue without exactly one `kind` label is not a valid Ticket, so the source skips it.
-- Status by `WorkflowState.type`, per team: `triage`/`backlog` → `open`, `unstarted` → `ready-for-agent`, `started` → `ready-for-agent`, `completed` → `done`, `canceled`/`duplicate` → `resolved`. `blocked` is derived from `blockedBy`. A Ticket Status holds no Claim (see ADR-0004).
+- Native fields: `title`, `description` → body, Linear project → Project (slugified to a branch-safe string), issue relations → `blockedBy` (blockers from `inverseRelations(type: blocks)`).
+- No native slot: `kind` and `hitl` are grouped labels, and both are hints. An issue without exactly one valid `kind` label has the default Ticket Kind from config. Its HITL is the `hitl` label, else the HITL its stated `kind` implies, else yes. Linear has no readiness marker.
+- A Ticket stores no status. The source sees an issue in a `completed` state as done; its workflow state means nothing else to the Ticket.
 
 ## Reads and writes
 

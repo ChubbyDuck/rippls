@@ -2,9 +2,16 @@ import { Config, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from 
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { parse } from 'yaml';
 
-import { TicketsDir } from '~/Core/Shared/Domain/EngineConfig';
+import { defaultKindConfig, TicketsDir } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
-import { Ticket, TicketFromInput } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
+import {
+  type Ticket,
+  type TicketFallbacks,
+  TicketHints,
+  ticketFromHints,
+} from '~/Core/Tickets/Domain/Entities/Ticket/entity';
+import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
+import { Marker } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Marker';
 import { formatTicketId, parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
@@ -22,7 +29,6 @@ const toNativeNumber = (id: TicketId): number => Number(parseTicketId(id).native
 const namespaceIds = (value: unknown): unknown =>
   Array.isArray(value) ? value.map((item) => (typeof item === 'number' ? toFolderId(item) : item)) : value;
 
-const FRONT_MATTER = /^---\r?\n([\s\S]*?)\r?\n---/;
 const ID_FILE = /^(\d+).*\.md$/;
 
 const idFromFilename = (file: string): number | undefined => {
@@ -33,62 +39,126 @@ const idFromFilename = (file: string): number | undefined => {
 const findFileForId = (files: readonly string[], id: number): string | undefined =>
   files.find((file) => idFromFilename(file) === id);
 
-const hasClosingDelimiter = (text: string): boolean => FRONT_MATTER.test(text);
+const OPENING_DELIMITER = /^---[ \t]*\r?\n/;
+const FRONT_MATTER = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?=\r?\n|$)/;
 
-const parseFrontMatter = (text: string): unknown => {
+type Split = { readonly fields: { readonly [key: string]: unknown }; readonly body: string };
+
+const isRecord = (value: unknown): value is { readonly [key: string]: unknown } =>
+  typeof value === 'object' && value !== null && !Array.isArray(value);
+
+// The front matter and the body of a ticket file. A file without front matter is
+// all body. Front matter without a closing delimiter, or that does not parse to a
+// mapping, cannot be read.
+const splitFrontMatter = (text: string): Option.Option<Split> => {
+  if (!OPENING_DELIMITER.test(text)) {
+    return Option.some({ fields: {}, body: text });
+  }
   const match = FRONT_MATTER.exec(text);
   if (match === null) {
-    return undefined;
-  }
-  try {
-    return parse(match[1]);
-  } catch {
-    return undefined;
-  }
-};
-
-// An earlier Engine wrote its Claim into the ticket. The Claim lives in the Ledger
-// now, so a claim status reads as the readiness it replaced and `claimedBy` is
-// ignored.
-const CLAIM_STATUSES = new Set(['claiming', 'claimed']);
-
-const withoutClaim = (status: unknown): unknown =>
-  typeof status === 'string' && CLAIM_STATUSES.has(status) ? 'ready-for-agent' : status;
-
-// A ticket in `done/` is done, whatever its front matter says.
-const headToTicket = (text: string, fileId: number, inDone: boolean): Option.Option<Ticket> => {
-  const fields = parseFrontMatter(text);
-  if (fields === undefined || typeof fields !== 'object' || fields === null || Array.isArray(fields)) {
     return Option.none();
   }
-  const record = fields as { readonly [key: string]: unknown };
-  return Schema.decodeUnknownOption(TicketFromInput)({
-    ...record,
-    id: toFolderId(fileId),
-    status: inDone ? 'done' : withoutClaim(record.status),
-    blockedBy: namespaceIds(record.blockedBy),
-    blocks: namespaceIds(record.blocks),
-    body: '',
+  let fields: unknown;
+  try {
+    fields = parse(match[1] ?? '');
+  } catch {
+    return Option.none();
+  }
+  if (fields === null || fields === undefined) {
+    fields = {};
+  }
+  if (!isRecord(fields)) {
+    return Option.none();
+  }
+  return Option.some({ fields, body: text.slice(match[0].length).replace(/^(?:\r?\n)+/, '') });
+};
+
+const FENCE = /^\s*(?:```|~~~)/;
+
+// The lines of a body outside fenced code blocks.
+const proseLines = (body: string): readonly string[] => {
+  let fenced = false;
+  return body.split(/\r?\n/).filter((line) => {
+    if (FENCE.test(line)) {
+      fenced = !fenced;
+      return false;
+    }
+    return !fenced;
   });
 };
 
-const bodyAfterFrontMatter = (text: string): string => {
-  const match = FRONT_MATTER.exec(text);
-  return (match === null ? text : text.slice(match[0].length)).replace(/^(?:\r?\n)+/, '');
+const HEADING = /^\s{0,3}#{1,6}\s+(.*?)(?:\s+#+)?\s*$/;
+const LEADING_TICKET_NUMBER = /^\d+\s*[-–—:.)](?:\s+|$)/;
+
+// The first heading of the body, without a leading ticket number and separator,
+// such as the `10 — ` of `# 10 — A ticket`.
+const headingTitle = (body: string): string | undefined => {
+  for (const line of proseLines(body)) {
+    const match = HEADING.exec(line);
+    if (match !== null) {
+      const title = (match[1] ?? '').replace(LEADING_TICKET_NUMBER, '').trim();
+      return title === '' ? undefined : title;
+    }
+  }
+  return undefined;
 };
 
-const withBody = (ticket: Ticket, body: string): Ticket =>
-  new Ticket({
-    id: ticket.id,
-    title: ticket.title,
-    project: ticket.project,
-    status: ticket.status,
-    blockedBy: ticket.blockedBy,
-    blocks: ticket.blocks,
-    kind: ticket.kind,
-    hitl: ticket.hitl,
-    body,
-  });
+// The filename without its numeric prefix, the separator after it, and the
+// extension. A name that is only a number stays whole, so the Title is never empty.
+const filenameTitle = (file: string): string => {
+  const stem = file.replace(/\.md$/, '');
+  const title = stem.replace(/^\d+[-_.\s]*/, '').trim();
+  return title === '' ? stem : title;
+};
+
+const STATUS_LINE = /^\s*(?:[-*+]\s+)?[*_]*status[*_]*\s*:[*_]*\s*`?([\w-]+)`?/i;
+
+const markerOf = (value: unknown): Marker | undefined =>
+  Option.getOrUndefined(Schema.decodeUnknownOption(Marker)(value));
+
+// The marker of the first "Status" line of the body, such as `**Status:** ready-for-agent`.
+const markerInBody = (body: string): Marker | undefined => {
+  for (const line of proseLines(body)) {
+    const match = STATUS_LINE.exec(line);
+    if (match !== null) {
+      return markerOf(match[1]?.toLowerCase());
+    }
+  }
+  return undefined;
+};
+
+// A key with no value states nothing, like a missing key.
+const stated = (value: unknown): unknown => (value === null ? undefined : value);
+
+/**
+ * The Ticket a file reads as, or none when it is unreadable. A Ticket needs an
+ * identity, from the numeric filename prefix, and text. Every other value is a
+ * hint: the Title comes from the `title` field, the first heading, or the
+ * filename; the marker from a `status` field or a "Status" line. A `status` value
+ * is read only as a marker; `blocks`, `claimedBy`, and unknown keys are ignored.
+ * An invalid value for a known hint makes the file unreadable. A ticket in
+ * `done/` is done.
+ */
+const fileToTicket = (
+  text: string,
+  file: string,
+  fileId: number,
+  inDone: boolean,
+  fallbacks: TicketFallbacks
+): Option.Option<Ticket> =>
+  Option.flatMap(splitFrontMatter(text), ({ fields, body }) =>
+    Schema.decodeUnknownOption(TicketHints)({
+      id: toFolderId(fileId),
+      title: stated(fields.title) ?? headingTitle(body) ?? filenameTitle(file),
+      body,
+      project: stated(fields.project),
+      blockedBy: namespaceIds(stated(fields.blockedBy)),
+      kind: stated(fields.kind),
+      hitl: stated(fields.hitl),
+      marker: markerOf(fields.status) ?? markerInBody(body),
+      doneInSource: inDone,
+    }).pipe(Option.map((hints) => ticketFromHints(hints, fallbacks)))
+  );
 
 /** The fixed message of the commit that moves a ticket into `done/` on its ticket branch. */
 export const doneMoveMessage = (ticket: TicketId): string => `chore: move ticket ${ticket} to done`;
@@ -128,85 +198,54 @@ export const TicketSourceFolderLive = Layer.effect(
     spawner: ChildProcessSpawner.ChildProcessSpawner,
     root: RepositoryRoot,
     dir: Config.schema(TicketsDir, 'ticketsDir'),
+    kind: defaultKindConfig,
+    hitl: Config.schema(Hitl, 'defaultHitl').pipe(Config.withDefault('yes')),
   }).pipe(
-    Effect.map(({ fs, path, spawner, root, dir }) => {
+    Effect.map(({ fs, path, spawner, root, dir, kind, hitl }) => {
       const doneDir = path.join(dir, 'done');
+      const fallbacks: TicketFallbacks = { kind, hitl };
 
-      const readHeadIn = (folder: string, inDone: boolean) => (file: string): Effect.Effect<Option.Option<Ticket>> => {
-        const fileId = idFromFilename(file);
-        if (fileId === undefined) {
-          return Effect.succeedNone;
-        }
-        return fs.stream(path.join(folder, file), { chunkSize: 4096 }).pipe(
-          Stream.decodeText(),
-          Stream.scan('', (accumulated, chunk) => accumulated + chunk),
-          Stream.takeUntil(hasClosingDelimiter),
-          Stream.runLast,
-          Effect.map(Option.flatMap((text) => headToTicket(text, fileId, inDone))),
-          Effect.catchCause(() => Effect.succeedNone)
+      const readIn =
+        (folder: string, inDone: boolean) =>
+        (file: string): Effect.Effect<Option.Option<Ticket>> => {
+          const fileId = idFromFilename(file);
+          if (fileId === undefined) {
+            return Effect.succeedNone;
+          }
+          return fs.readFileString(path.join(folder, file)).pipe(
+            Effect.map((text) => fileToTicket(text, file, fileId, inDone, fallbacks)),
+            Effect.catchCause(() => Effect.succeedNone)
+          );
+        };
+
+      // The readable tickets of one folder that match the query, in its order.
+      const ticketsIn = (folder: string, inDone: boolean, query: TicketQuery): Stream.Stream<Ticket> =>
+        Stream.fromEffect(fs.readDirectory(folder).pipe(Effect.map(sortByIdName(query)))).pipe(
+          Stream.flatMap(Stream.fromIterable),
+          Stream.mapEffect(readIn(folder, inDone), { concurrency: 1 }),
+          Stream.filter((option): option is Option.Some<Ticket> => Option.isSome(option) && matchesQuery(query)(option.value)),
+          Stream.map((option) => option.value),
+          Stream.catchCause(() => Stream.empty)
         );
-      };
-
-      const readHead = readHeadIn(dir, false);
-      const readDoneHead = readHeadIn(doneDir, true);
 
       const getOneBy = (query: TicketQuery): Effect.Effect<Ticket, TicketNotFound> =>
-        fs.readDirectory(dir).pipe(
-          Effect.map(sortByIdName(query)),
-          Effect.flatMap((files) =>
-            Stream.fromIterable(files).pipe(
-              Stream.mapEffect(
-                (file) =>
-                  readHead(file).pipe(Effect.map((option) => Option.map(option, (ticket) => ({ file, ticket })))),
-                { concurrency: 1 }
-              ),
-              Stream.filter(
-                (option): option is Option.Some<{ file: string; ticket: Ticket }> =>
-                  Option.isSome(option) && matchesQuery(query)(option.value.ticket)
-              ),
-              Stream.map((option) => option.value),
-              Stream.runHead
-            )
-          ),
-          Effect.catchCause(() => Effect.succeed(Option.none<{ file: string; ticket: Ticket }>())),
+        ticketsIn(dir, false, query).pipe(
+          Stream.runHead,
           Effect.flatMap(
             Option.match({
               onNone: () => Effect.fail(new TicketNotFound()),
-              onSome: ({ file, ticket }) =>
-                fs.readFileString(path.join(dir, file)).pipe(
-                  Effect.map((text) => withBody(ticket, bodyAfterFrontMatter(text))),
-                  Effect.catchCause(() => Effect.succeed(ticket))
-                ),
+              onSome: Effect.succeed,
             })
           )
-        );
-
-      const readManyIn = (
-        folder: string,
-        read: (file: string) => Effect.Effect<Option.Option<Ticket>>,
-        query: TicketQuery
-      ): Effect.Effect<readonly Ticket[]> =>
-        fs.readDirectory(folder).pipe(
-          Effect.map(sortByIdName(query)),
-          Effect.flatMap((files) =>
-            Stream.fromIterable(files).pipe(
-              Stream.mapEffect(read, { concurrency: 1 }),
-              Stream.filter(
-                (option): option is Option.Some<Ticket> => Option.isSome(option) && matchesQuery(query)(option.value)
-              ),
-              Stream.map((option) => option.value),
-              Stream.runCollect
-            )
-          ),
-          Effect.catchCause(() => Effect.succeed<readonly Ticket[]>([]))
         );
 
       // The tickets of the tickets folder in processing order, then those of `done/`,
       // so the core eligibility rule can tell which blockers are done.
       const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
-        Effect.all([readManyIn(dir, readHead, query), readManyIn(doneDir, readDoneHead, query)]).pipe(
-          Effect.map(([current, done]) => [...current, ...done])
-        );
+        Effect.all([
+          Stream.runCollect(ticketsIn(dir, false, query)),
+          Stream.runCollect(ticketsIn(doneDir, true, query)),
+        ]).pipe(Effect.map(([current, done]) => [...current, ...done]));
 
       // The folder Source keeps no trace of a Claim or an escalation: the Ledger holds them.
       const report = (_ticket: TicketId, _event: ReportedEvent): Effect.Effect<void> => Effect.void;

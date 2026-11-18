@@ -46,6 +46,34 @@ test('ticketSourceLive reads from the folder source', async () => {
   expect(result).toEqual(['From folder']);
 });
 
+test('ticketSourceLive gives the folder source the default Ticket Kind and its HITL fallback', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectory({ prefix: 'engine-source-' });
+      yield* fs.writeFileString(path.join(dir, '1-bare-note.md'), 'A bare note.\n');
+      const config = yield* engineConfig.parse(
+        ConfigProvider.fromUnknown({
+          harnesses: [{ name: 'Codex' }],
+          defaultKind: 'research',
+          source: { _tag: 'folder', ticketsDir: dir, defaultHitl: 'no' },
+        })
+      );
+      const resolved = yield* resolveTicketSource(config.source, 'folder');
+      const tickets = yield* TicketSource.pipe(
+        Effect.flatMap((source) => source.getManyBy(TicketQuery.build())),
+        Effect.provide(
+          ticketSourceLive(resolved, config.defaultKind).pipe(Layer.provide(Layer.succeed(RepositoryRoot, dir)))
+        )
+      );
+      return tickets.map((ticket) => [ticket.kind, ticket.hitl]);
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(result).toEqual([['research', 'no']]);
+});
+
 const linearIssue: LinearIssue = {
   id: 'a1b2c3d4-e5f6-7890-abcd-ef1234567890',
   identifier: 'ENG-1',

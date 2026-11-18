@@ -1,6 +1,8 @@
 import { Config, Console, Effect, Layer, Option } from 'effect';
 
+import { defaultKindConfig } from '~/Core/Shared/Domain/EngineConfig';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
+import type { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import { parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
@@ -60,7 +62,7 @@ const matchesQuery =
 
 const toTickets = (
   issues: readonly LinearIssue[],
-  metadata: LinearMetadata,
+  defaultKind: TicketKind,
   query: TicketQuery,
   stateTypes: ReadonlySet<string>
 ): readonly Ticket[] => {
@@ -68,7 +70,7 @@ const toTickets = (
     if (!stateTypes.has(issue.state.type)) {
       return [];
     }
-    return Option.match(issueToTicket(issue, metadata), {
+    return Option.match(issueToTicket(issue, defaultKind), {
       onNone: () => [],
       onSome: (ticket) => (matchesQuery(query)(ticket) ? [{ ticket, createdAt: issue.createdAt }] : []),
     });
@@ -87,16 +89,16 @@ export const TicketSourceLinearLive = Layer.effect(
   Effect.gen(function* () {
     const api = yield* LinearApi;
     const teamId = yield* Config.nonEmptyString('teamId');
+    const defaultKind = yield* defaultKindConfig;
 
     const pull = (query: TicketQuery) =>
       Effect.gen(function* () {
-        const metadata = yield* api.metadata(teamId);
         if (query.id !== undefined) {
           const issue = yield* api.issue(parseTicketId(query.id).native);
-          return toTickets([issue], metadata, query, READABLE_STATE_TYPES);
+          return toTickets([issue], defaultKind, query, READABLE_STATE_TYPES);
         }
         const issues = yield* api.issues(teamId);
-        return toTickets(issues, metadata, query, OFFERED_STATE_TYPES);
+        return toTickets(issues, defaultKind, query, OFFERED_STATE_TYPES);
       });
 
     const getOneBy = (query: TicketQuery): Effect.Effect<Ticket, TicketNotFound> =>

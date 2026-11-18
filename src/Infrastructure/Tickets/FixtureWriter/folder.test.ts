@@ -3,32 +3,31 @@ import * as NodePath from '@effect/platform-node/NodePath';
 import { Effect, FileSystem, Layer } from 'effect';
 import { expect, test } from 'vitest';
 
-import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import { FixtureWriter } from '~/Core/Tickets/Ports/FixtureWriter';
+import { type Fixture, FixtureWriter } from '~/Core/Tickets/Ports/FixtureWriter';
 
 import { fixtureWriterFolderLive } from './folder';
 
 const NodeFs = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
 
-const ticket = (status: 'open' | 'done') =>
-  Ticket.create({
-    id: formatTicketId('folder', '1'),
-    title: 'Fixture',
-    project: 'generated',
-    status,
-    kind: 'research',
-    blockedBy: [],
-    blocks: [],
-    body: 'Body.',
-  });
+const ticket = (status: 'open' | 'done'): Fixture => ({
+  id: formatTicketId('folder', '1'),
+  title: 'Fixture',
+  project: 'generated',
+  status,
+  kind: 'research',
+  hitl: 'no',
+  blockedBy: [],
+  blocks: [],
+  body: 'Body.',
+});
 
 test('a done fixture replaces the open fixture of the same number', async () => {
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const dir = yield* fs.makeTempDirectory({ prefix: 'rippls-fixtures-' });
-      const write = (tickets: readonly Ticket[]) =>
+      const write = (tickets: readonly Fixture[]) =>
         FixtureWriter.pipe(
           Effect.flatMap((writer) => writer.write(tickets)),
           Effect.provide(fixtureWriterFolderLive(dir))

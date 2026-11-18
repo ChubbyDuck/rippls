@@ -12,7 +12,6 @@ import {
   labelsToKind,
   releaseWrites,
   slugify,
-  stateTypeToStatus,
   toLinearId,
 } from './codec';
 
@@ -20,17 +19,6 @@ test('slugify turns a Linear project name into a branch-safe string', () => {
   expect(slugify('Chubby Engine')).toBe('chubby-engine');
   expect(slugify('Foo/Bar Baz!')).toBe('foo-bar-baz');
   expect(slugify('  Already-Slug  ')).toBe('already-slug');
-});
-
-test('stateTypeToStatus covers every WorkflowState.type', () => {
-  expect(Option.getOrThrow(stateTypeToStatus('triage'))).toBe('open');
-  expect(Option.getOrThrow(stateTypeToStatus('backlog'))).toBe('open');
-  expect(Option.getOrThrow(stateTypeToStatus('unstarted'))).toBe('ready-for-agent');
-  expect(Option.getOrThrow(stateTypeToStatus('started'))).toBe('ready-for-agent');
-  expect(Option.getOrThrow(stateTypeToStatus('completed'))).toBe('done');
-  expect(Option.getOrThrow(stateTypeToStatus('canceled'))).toBe('resolved');
-  expect(Option.getOrThrow(stateTypeToStatus('duplicate'))).toBe('resolved');
-  expect(Option.isNone(stateTypeToStatus('unknown'))).toBe(true);
 });
 
 test('labelsToKind reads exactly one kind label', () => {
@@ -110,21 +98,45 @@ const issue = (fields: {
   })),
 });
 
-test('issueToTicket skips an issue that does not have a single kind label', () => {
-  expect(Option.isNone(issueToTicket(issue({ labels: [] }), metadata))).toBe(true);
-  expect(
-    Option.isNone(
-      issueToTicket(
-        issue({
-          labels: [
-            { id: '1', name: 'kind:implementation' },
-            { id: '2', name: 'kind:task' },
-          ],
-        }),
-        metadata
-      )
+test('issueToTicket reads an issue with no labels with the default Ticket Kind and HITL yes', () => {
+  const ticket = Option.getOrThrow(issueToTicket(issue({ labels: [] }), 'implementation'));
+
+  expect(ticket.kind).toBe('implementation');
+  expect(ticket.hitl).toBe('yes');
+  expect(Option.getOrThrow(issueToTicket(issue({ labels: [] }), 'research')).kind).toBe('research');
+});
+
+test('issueToTicket reads an issue without a single kind label as one that states no Ticket Kind', () => {
+  const ticket = Option.getOrThrow(
+    issueToTicket(
+      issue({
+        labels: [
+          { id: '1', name: 'kind:implementation' },
+          { id: '2', name: 'kind:task' },
+        ],
+      }),
+      'research'
     )
-  ).toBe(true);
+  );
+
+  expect(ticket.kind).toBe('research');
+  expect(ticket.hitl).toBe('yes');
+});
+
+test('issueToTicket takes the HITL that a stated kind label implies, and a hitl label over it', () => {
+  const read = (labels: readonly LinearLabel[]) => Option.getOrThrow(issueToTicket(issue({ labels }), 'implementation'));
+
+  expect(read([{ id: '1', name: 'kind:implementation' }]).hitl).toBe('no');
+  expect(read([{ id: '1', name: 'kind:prototype' }]).hitl).toBe('yes');
+  expect(read([{ id: '1', name: 'kind:task' }]).hitl).toBe('yes');
+  expect(read([{ id: '1', name: 'kind:task' }, { id: '2', name: 'hitl:no' }]).hitl).toBe('no');
+  expect(read([{ id: '2', name: 'hitl:no' }]).hitl).toBe('no');
+});
+
+test('issueToTicket does not read the workflow state as a marker', () => {
+  expect(Option.getOrThrow(issueToTicket(issue({ labels: [], stateType: 'unstarted' }), 'implementation')).hitl).toBe(
+    'yes'
+  );
 });
 
 test('issueToTicket maps native fields and incomplete blockers', () => {
@@ -137,7 +149,7 @@ test('issueToTicket maps native fields and incomplete blockers', () => {
         ],
         outgoing: [{ issueId: blocked, type: 'blocks' }],
       }),
-      metadata
+      'implementation'
     )
   );
 
@@ -147,9 +159,12 @@ test('issueToTicket maps native fields and incomplete blockers', () => {
   expect(ticket.project).toBe('chubby-engine');
   expect(ticket.kind).toBe('implementation');
   expect(ticket.hitl).toBe('no');
-  expect(ticket.status).toBe('blocked');
+  expect(ticket.doneInSource).toBe(false);
   expect(ticket.blockedBy).toEqual([`linear:${blocker}`]);
-  expect(ticket.blocks).toEqual([`linear:${blocked}`]);
+});
+
+test('issueToTicket reads a completed issue as done in its Source', () => {
+  expect(Option.getOrThrow(issueToTicket(issue({ stateType: 'completed' }), 'implementation')).doneInSource).toBe(true);
 });
 
 test('claimWrites assign the Issue to the API-key user and move it to the first started state', () => {

@@ -29,9 +29,7 @@ const ticketFields = {
   title: 'Process a ticket',
   project: 'test',
   kind: 'implementation',
-  status: 'ready-for-agent',
   blockedBy: [],
-  blocks: [],
   body: 'Ticket instructions',
 } as const;
 const ticket = Ticket.create(ticketFields);
@@ -120,7 +118,7 @@ test('processTicket can be reused independently with the services supplied by ea
     expect(Effect.runSync(work.pipe(Effect.provide(withClaims(services))))).toBeUndefined();
     expect(events).toEqual(['select harness', 'select implementation', 'run strategy', 'report done']);
     expect(doneReported).toEqual([ticket.id]);
-    expect(ticket.status).toBe('ready-for-agent');
+    expect(ticket.doneInSource).toBe(false);
   }
 });
 
@@ -129,9 +127,7 @@ test('processTicket runs a ticket that omits project', () => {
     id: formatTicketId('folder', '1'),
     title: 'Process a ticket',
     kind: 'implementation',
-    status: 'ready-for-agent',
     blockedBy: [],
-    blocks: [],
     body: 'Ticket instructions',
   });
   const doneReported: TicketId[] = [];
@@ -318,9 +314,7 @@ test('processTicket hands the strategy a harness bound to the ticket worktree', 
     id: formatTicketId('folder', '1'),
     title: 'Process a ticket',
     kind: 'implementation',
-    status: 'ready-for-agent',
     blockedBy: [],
-    blocks: [],
     body: 'Ticket instructions',
   });
   const harness = harnessRecordingCwd(cwds);
@@ -368,9 +362,7 @@ test('two tickets that name the same project run in distinct ticket worktrees', 
     title: 'Process another ticket',
     project: 'test',
     kind: 'implementation',
-    status: 'ready-for-agent',
     blockedBy: [],
-    blocks: [],
     body: 'Ticket instructions',
   });
   const harness = harnessRecordingCwd(cwds);

@@ -17,6 +17,7 @@ import { toLinearId } from '~/Infrastructure/Tickets/LinearApi/codec';
 import { TicketSourceLinearLive } from './linear';
 
 const uuid = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+const other = 'd4e5f6a7-b8c9-0123-def0-234567890123';
 
 const metadata: LinearMetadata = {
   viewer: { id: 'viewer-1', name: 'Dev' },
@@ -147,16 +148,20 @@ const fakeLinear = (
   return { calls, issues, layer };
 };
 
-const withRepo = (api: ReturnType<typeof fakeLinear>) =>
+const withRepo = (api: ReturnType<typeof fakeLinear>, config: { readonly defaultKind?: string } = {}) =>
   TicketSourceLinearLive.pipe(
     Layer.provide(api.layer),
-    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ teamId: 'team-1' })))
+    Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown({ teamId: 'team-1', ...config })))
   );
 
-const getManyIn = (api: ReturnType<typeof fakeLinear>, query: TicketQuery) =>
+const getManyIn = (
+  api: ReturnType<typeof fakeLinear>,
+  query: TicketQuery,
+  config: { readonly defaultKind?: string } = {}
+) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.getManyBy(query)),
-    Effect.provide(withRepo(api))
+    Effect.provide(withRepo(api, config))
   );
 
 const reportDoneIn = (api: ReturnType<typeof fakeLinear>) =>
@@ -288,6 +293,32 @@ test('an Issue with the needs-human label is read as HITL yes, and keeps its kin
 
   expect(read?.kind).toBe('implementation');
   expect(read?.hitl).toBe('yes');
+});
+
+test('an Issue with no labels is read with the default Ticket Kind and HITL yes', async () => {
+  const api = fakeLinear([issue({ labels: [] })]);
+
+  const [read] = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+  const [configured] = await Effect.runPromise(getManyIn(api, TicketQuery.build(), { defaultKind: 'research' }));
+
+  expect(read?.kind).toBe('implementation');
+  expect(read?.hitl).toBe('yes');
+  expect(configured?.kind).toBe('research');
+  expect(configured?.hitl).toBe('yes');
+});
+
+test('a stated kind label implies the HITL of its Ticket Kind', async () => {
+  const api = fakeLinear([
+    issue({ id: uuid, labels: [{ id: 'label-impl', name: 'kind:implementation' }], createdAt: '2026-01-01T00:00:00.000Z' }),
+    issue({ id: other, labels: [{ id: 'label-proto', name: 'kind:prototype' }], createdAt: '2026-01-02T00:00:00.000Z' }),
+  ]);
+
+  const tickets = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+
+  expect(tickets.map((ticket) => [ticket.kind, ticket.hitl])).toEqual([
+    ['implementation', 'no'],
+    ['prototype', 'yes'],
+  ]);
 });
 
 test('report of escalated in a team without a needs-human label warns and succeeds', async () => {

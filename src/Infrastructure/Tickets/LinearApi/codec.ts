@@ -1,23 +1,10 @@
 import { Option, Schema } from 'effect';
 
-import { Ticket, TicketFromInput } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
+import { type Ticket, TicketHints, ticketFromHints } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
-import type { TicketStatus } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketStatus';
 import type { LinearIssue, LinearLabel, LinearMetadata } from '~/Core/Tickets/Ports/LinearApi';
-
-const statusByStateType = {
-  triage: 'open',
-  backlog: 'open',
-  unstarted: 'ready-for-agent',
-  // A started Issue is claimed on Linear. The Ticket holds no Claim, so it reads
-  // as ready, and the Linear Source does not offer it for processing.
-  started: 'ready-for-agent',
-  completed: 'done',
-  canceled: 'resolved',
-  duplicate: 'resolved',
-} as const satisfies Record<string, TicketStatus>;
 
 export const slugify = (name: string): string =>
   name
@@ -25,13 +12,6 @@ export const slugify = (name: string): string =>
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '');
-
-export const stateTypeToStatus = (type: string): Option.Option<TicketStatus> => {
-  if (!(type in statusByStateType)) {
-    return Option.none();
-  }
-  return Option.some(statusByStateType[type as keyof typeof statusByStateType]);
-};
 
 const LINEAR_SOURCE = 'linear';
 
@@ -61,49 +41,28 @@ export const NEEDS_HUMAN_LABEL = 'needs-human';
 
 const needsHuman = (labels: readonly LinearLabel[]): boolean => labels.some((label) => label.name === NEEDS_HUMAN_LABEL);
 
-// An Issue that needs a human keeps its Ticket Kind and reads as HITL yes.
-const attended = (ticket: Ticket): Ticket =>
-  new Ticket({
-    id: ticket.id,
-    title: ticket.title,
-    project: ticket.project,
-    status: ticket.status,
-    blockedBy: ticket.blockedBy,
-    blocks: ticket.blocks,
-    kind: ticket.kind,
-    hitl: 'yes',
-    body: ticket.body,
-  });
 const relatedIds = (relations: LinearIssue['relations'], type: 'blocks'): readonly TicketId[] =>
   relations.filter((relation) => relation.type === type).map((relation) => toLinearId(relation.issueId));
 
-export const issueToTicket = (issue: LinearIssue, _metadata: LinearMetadata) => {
-  const kind = labelsToKind(issue.labels);
-  if (Option.isNone(kind)) {
-    return Option.none();
-  }
-
-  const blockedBy = relatedIds(issue.inverseRelations, 'blocks');
-  const status = blockedBy.length > 0 ? Option.some('blocked' as const) : stateTypeToStatus(issue.state.type);
-  if (Option.isNone(status)) {
-    return Option.none();
-  }
-
+/**
+ * The Ticket an Issue reads as. An Issue without a single valid `kind` label has
+ * the default Ticket Kind. An Issue that needs a human keeps its Ticket Kind and
+ * states HITL yes. Linear has no marker, and its workflow state does not make an
+ * Issue Unattended, so an Issue that states no HITL and no Ticket Kind that
+ * implies one is HITL yes.
+ */
+export const issueToTicket = (issue: LinearIssue, defaultKind: TicketKind): Option.Option<Ticket> => {
   const project = issue.project === null ? '' : slugify(issue.project.name);
-  const hitl = labelsToHitl(issue.labels);
-
-  const ticket = Schema.decodeUnknownOption(TicketFromInput)({
+  return Schema.decodeOption(TicketHints)({
     id: toLinearId(issue.id),
     title: issue.title,
     ...(project === '' ? {} : { project }),
-    status: status.value,
-    blockedBy,
-    blocks: relatedIds(issue.relations, 'blocks'),
-    kind: kind.value,
-    ...(kind.value === 'task' ? { hitl: Option.getOrUndefined(hitl) } : {}),
+    blockedBy: relatedIds(issue.inverseRelations, 'blocks'),
+    kind: Option.getOrUndefined(labelsToKind(issue.labels)),
+    hitl: needsHuman(issue.labels) ? 'yes' : Option.getOrUndefined(labelsToHitl(issue.labels)),
     body: issue.description ?? '',
-  });
-  return needsHuman(issue.labels) ? Option.map(ticket, attended) : ticket;
+    doneInSource: issue.state.type === 'completed',
+  }).pipe(Option.map((hints) => ticketFromHints(hints, { kind: defaultKind, hitl: 'yes' })));
 };
 
 export type LinearWrite =

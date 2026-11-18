@@ -45,6 +45,7 @@ test('defaults to a folder source under the repository root when no config file 
     source: { _tag: 'folder', ticketsDir: path.resolve(root, '.agents/tickets') },
     idleTimeout: defaultIdleTimeout,
     pollInterval: defaultPollInterval,
+    defaultKind: 'implementation',
   });
 });
 

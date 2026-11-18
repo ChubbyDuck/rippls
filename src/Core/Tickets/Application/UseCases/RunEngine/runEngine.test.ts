@@ -136,9 +136,7 @@ const sampleFields = (value = 1) => ({
   project,
   kind: 'implementation',
   hitl: 'no',
-  status: 'ready-for-agent',
   blockedBy: [],
-  blocks: [],
   body: '',
 });
 
@@ -150,12 +148,11 @@ const seenAsDone = (ticket: Ticket) =>
     id: ticket.id,
     title: ticket.title,
     project: ticket.project,
-    status: 'done',
-    blockedBy: ticket.blockedBy,
-    blocks: ticket.blocks,
     kind: ticket.kind,
     hitl: ticket.hitl,
+    blockedBy: ticket.blockedBy,
     body: ticket.body,
+    doneInSource: true,
   });
 
 const blockedTicket = (value: number, blockedBy: number) =>
@@ -165,9 +162,7 @@ const blockedTicket = (value: number, blockedBy: number) =>
     project,
     kind: 'implementation',
     hitl: 'no',
-    status: 'ready-for-agent',
     blockedBy: [id(blockedBy)],
-    blocks: [],
     body: '',
   });
 
@@ -371,9 +366,7 @@ test('runEngine takes only Eligible tickets, in the order of the Source', async 
     project,
     kind: 'task',
     hitl: 'yes',
-    status: 'ready-for-agent',
     blockedBy: [],
-    blocks: [],
     body: '',
   });
   const source = fakeSource([
@@ -421,9 +414,7 @@ test('runEngine takes the chosen ticket as the Source reads it by identity', asy
     title: 'Full ticket',
     project,
     kind: 'implementation',
-    status: 'ready-for-agent',
     blockedBy: [],
-    blocks: [],
   };
   const full = Ticket.create({ ...fields, body: 'The whole body.' });
   const head = Ticket.create({ ...fields, body: '' });
@@ -463,15 +454,13 @@ test('runEngine takes the next Eligible ticket when the chosen one is no longer 
 test('runEngine takes a blocked ticket once its blocker is done in the Ledger, without writing to it before', async () => {
   const ran: Ticket[] = [];
   // Ticket 1 comes first in the order of the Source, so it would be taken first if
-  // it were Eligible while ticket 2 is open. Its stored status does not gate it.
+  // it were Eligible while ticket 2 is open.
   const dependent = Ticket.create({
     id: id(1),
     title: 'Dependent ticket',
     project,
     kind: 'implementation',
-    status: 'blocked',
     blockedBy: [id(2)],
-    blocks: [],
     body: '',
   });
   const blocker = sampleTicket(2);
@@ -492,9 +481,7 @@ test('runEngine does not take a ticket while its blocker is not done, and takes 
     project,
     kind: 'task',
     hitl: 'yes',
-    status: 'ready-for-agent',
     blockedBy: [],
-    blocks: [],
     body: '',
   });
   const dependent = blockedTicket(1, 2);
@@ -542,9 +529,7 @@ test('runEngine resolves a blocker of another Project against every ticket of th
       title: 'Ticket of another project',
       project: otherProject,
       kind: 'implementation',
-      status: 'ready-for-agent',
       blockedBy: [],
-      blocks: [],
       body: '',
     });
   const doneElsewhere = seenAsDone(elsewhere(2));
@@ -860,7 +845,7 @@ test('runEngine does not take a Project ticket that the Ledger records as done w
     }).pipe(Effect.provide(TestClock.layer()))
   );
 
-  expect(source.store.get(id(1))?.status).toBe('ready-for-agent');
+  expect(source.store.get(id(1))?.doneInSource).toBe(false);
   expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
   expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
@@ -1013,7 +998,7 @@ test('runEngine claims a single unblocked ticket once', async () => {
   );
 
   expect(ran.map((ticket) => ticket.id)).toEqual([id(1)]);
-  expect(store.get(id(2))?.status).toBe('ready-for-agent');
+  expect(store.get(id(2))?.doneInSource).toBe(false);
 });
 
 test('runEngine replaces a stale Claim: it reports released before the new claimed, and takes the ticket', async () => {

@@ -9,7 +9,7 @@ import { generateTickets } from '~/Core/Tickets/Application/UseCases/Generate/ge
 import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngine/repositoryRoot';
 import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
-import { TicketStatus } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketStatus';
+import { FixtureStatus } from '~/Core/Tickets/Ports/FixtureWriter';
 import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/folder';
 
 const AppLive = Layer.unwrap(
@@ -26,7 +26,7 @@ const command = Command.make(
   {
     count: Flag.integer('count').pipe(Flag.withSchema(Count), Flag.withDefault(12)),
     kind: Flag.choice('kind', TicketKind.literals).pipe(Flag.atLeast(0)),
-    status: Flag.choice('status', TicketStatus.literals).pipe(Flag.atLeast(0)),
+    status: Flag.choice('status', FixtureStatus.literals).pipe(Flag.atLeast(0)),
     hitl: Flag.choice('hitl', Hitl.literals).pipe(Flag.atLeast(0)),
     project: Flag.string('project').pipe(Flag.atLeast(0)),
     chain: Flag.boolean('chain').pipe(Flag.withDefault(false)),

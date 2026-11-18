@@ -23,6 +23,7 @@ test('folder example loads', () => {
     },
     idleTimeout: defaultIdleTimeout,
     pollInterval: defaultPollInterval,
+    defaultKind: 'implementation',
   });
 });
 
@@ -42,6 +43,7 @@ test('schedule example loads', () => {
     ],
     idleTimeout: defaultIdleTimeout,
     pollInterval: defaultPollInterval,
+    defaultKind: 'implementation',
   });
 });
 
@@ -55,5 +57,6 @@ test('linear example loads', () => {
     },
     idleTimeout: defaultIdleTimeout,
     pollInterval: defaultPollInterval,
+    defaultKind: 'implementation',
   });
 });

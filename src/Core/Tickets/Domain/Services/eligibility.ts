@@ -2,7 +2,7 @@ import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 
 /** A Ticket that its Source sees as done: in `done/`, or completed on Linear. */
-export const isDoneInSource = (ticket: Ticket): boolean => ticket.status === 'done';
+export const isDoneInSource = (ticket: Ticket): boolean => ticket.doneInSource;
 
 /** The identities of the Tickets among the tickets a Source returned that it sees as done. */
 export const doneInSourceIds = (tickets: readonly Ticket[]): ReadonlySet<TicketId> =>

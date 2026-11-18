@@ -150,26 +150,43 @@ A ticket is **Eligible** when all three conditions hold:
 - **Unblocked**: every ticket in `blockedBy` is done. An empty `blockedBy` is Unblocked.
 - **Unclaimed**: the **Ledger** holds no Claim on it. A `claimedBy` field or a
   `claiming`/`claimed` status that an earlier Rippls wrote into a ticket is ignored.
-- **Unattended**: `hitl` is `no`.
+- **Unattended**: its HITL is `no` (see [Ticket kinds and HITL](#ticket-kinds-and-hitl)).
 
 A done ticket is never Eligible, and neither is an escalated ticket (see
 [Escalation](#escalation)). A ticket is done when its Source sees it as done or the
 Ledger records it as done (see [Completion and `done/`](#completion-and-done)).
-Eligibility does not mean “every ticket with `status: ready-for-agent`.” Rippls never
-writes the stored status; polling applies the conditions above.
+A ticket stores no Ticket Status: a `status` value in a file is read only as a marker
+of readiness. Rippls never writes it; polling applies the conditions above.
 
 Folder tickets are ordered by the numeric filename prefix, lowest first. Linear tickets
 are ordered by creation time, oldest first. `--project` narrows the poll to one project.
 
 ## Ticket kinds and HITL
 
-Every ticket has one kind. Most kinds imply whether a human must be in the loop:
+Every ticket has one kind: the kind it states, or the default kind from config
+(`implementation` unless `defaultKind` sets another). A kind that a ticket states
+implies whether a human must be in the loop:
 
 - `implementation` implies `hitl: no`.
 - `research` implies `hitl: no`.
 - `prototype` implies `hitl: yes`.
 - `grilling` implies `hitl: yes`.
-- `task` must explicitly set `hitl: no` or `hitl: yes`.
+- `task` implies nothing.
+
+A ticket is HITL `no` only when it says so. Its HITL is the first of these that the
+ticket states:
+
+1. A `hitl` field (or a `hitl:*` label on Linear).
+2. A marker: `ready-for-agent` means `no`, and `ready-for-human` means `yes`. A folder
+   ticket states it in a `status` field or in a "Status" line of its body, such as
+   `**Status:** ready-for-agent`. Other `status` values, such as `open` or `blocked`,
+   are no marker.
+3. A kind that implies a HITL.
+
+Otherwise the HITL is `yes`, so a draft is never taken by accident. A kind that comes
+from the default implies nothing: a bare note is HITL `yes`. For a folder where every
+file is ready, set `defaultHitl: 'no'` on the folder Source (see
+[Folder Source](#folder-source)).
 
 Only `implementation` currently has the full implement, acceptance-gate, and commit
 workflow. `research` and an unattended `task` invoke the Harness once and then complete;
@@ -385,6 +402,17 @@ export const engineFileConfig = {
 };
 ```
 
+### Ticket fallbacks
+
+A ticket that states no kind gets the default kind. It implies no HITL:
+
+```ts
+defaultKind: 'implementation', // the default
+```
+
+The folder Source also takes the HITL of a ticket that states no HITL, no marker, and
+no kind that implies one (see [Folder Source](#folder-source)).
+
 ### Harness rotation
 
 Without priorities, Harnesses rotate in the order listed:
@@ -472,9 +500,10 @@ Configure it with:
 source: {
   _tag: 'folder',
   ticketsDir: '.agents/tickets',
+  // Optional; the HITL of a ticket that states none. Default: 'yes'.
+  defaultHitl: 'no',
 },
 ```
-
 
 
 ### File naming
@@ -490,18 +519,47 @@ Ticket files live directly inside `ticketsDir` and match `<numeric-id>*.md`, for
 The numeric filename prefix is authoritative: Rippls reads the ID from the filename.
 Rippls never writes front matter, so keys it does not know stay as they are.
 
-### Front matter
+### What a ticket needs
 
-Every folder ticket needs:
+A folder ticket needs only an identity and text. The identity is the numeric filename
+prefix; the text is the file. Everything else is a hint with a fallback:
 
-- a non-empty, trimmed `title`
-- a valid `status`
-- a valid `kind`
-- `blockedBy` and `blocks` arrays containing numeric folder ticket IDs
-- `hitl` only when `kind` is `task`
+| Hint | Read from | When missing |
+| --- | --- | --- |
+| Title | The `title` field, then the first heading without a leading ticket number and separator (`# 02: Add login` gives `Add login`), then the filename without its numeric prefix and extension (`2-add-login.md` gives `add-login`) | Always present |
+| Kind | The `kind` field | `defaultKind` from config, `implementation` by default |
+| HITL | The `hitl` field, then a marker, then a stated kind (see [Ticket kinds and HITL](#ticket-kinds-and-hitl)) | `defaultHitl` of the folder Source, `yes` by default |
+| Blockers | The `blockedBy` field, with numeric folder ticket IDs | None |
+| Project | The `project` field | None |
 
-`project` is optional. The Markdown after front matter is the prompt passed to the
-Strategy.
+Front matter is optional, and so is a heading. The body is passed to the Strategy
+unchanged: the text after the front matter, or the whole file when it has none. A key
+with no value states nothing. A `blocks` list, a `claimedBy` field with or without a
+value, and keys that Rippls does not know are ignored, and Rippls never removes them.
+
+Rippls reads tickets in any of these shapes. Existing front matter tickets need no
+change.
+
+A ticket in the template of a standard ticket-writing skill, with no front matter:
+
+```md
+# 02: Document the health endpoint
+
+**What to build:** a section in the guide for `GET /health`.
+
+**Status:** ready-for-agent
+
+- [ ] The guide shows the endpoint.
+```
+
+Its kind is the default, and its marker makes it Unattended.
+
+A bare note is a ticket too. Its Title is the filename, and it is HITL `yes` until it
+says it is ready, or `defaultHitl` is `no`:
+
+```md
+Rename `createClient` to `makeClient` everywhere.
+```
 
 An unattended task:
 
@@ -541,8 +599,11 @@ A blocker that Rippls finds neither in the tickets folder nor in `done/` keeps i
 blocked.
 
 Completed files move to `ticketsDir/done/` unchanged (see
-[Completion and `done/`](#completion-and-done)). Invalid files and files without valid
-front matter are skipped.
+[Completion and `done/`](#completion-and-done)).
+
+A file is unreadable when its name has no numeric prefix, its front matter cannot be
+parsed, or a hint it states has an invalid value, such as an unknown `kind`. Rippls
+does not take an unreadable ticket.
 
 ## Linear Source
 
@@ -570,7 +631,7 @@ See `src/config/examples/linear.ts` for the complete example.
 
 ### Required Linear setup
 
-Rippls recognizes a Linear issue only when it has exactly one supported `kind:*` label:
+A Linear issue states its kind with one `kind:*` label:
 
 ```text
 kind:implementation
@@ -580,12 +641,17 @@ kind:grilling
 kind:task
 ```
 
-Tasks also need exactly one of:
+An issue without exactly one valid `kind:*` label has the default kind. It may state
+its HITL with one of:
 
 ```text
 hitl:no
 hitl:yes
 ```
+
+Linear has no marker, and a workflow state does not make an issue Unattended. An issue
+is HITL `no` only through a `hitl:no` label or a `kind:*` label whose kind implies it
+(see [Ticket kinds and HITL](#ticket-kinds-and-hitl)); otherwise it is HITL `yes`.
 
 Create a `needs-human` label in the team as well. Rippls adds it to an escalated issue,
 and reads an issue that has it as `hitl: yes`, whatever its `kind`. Without the label,
@@ -595,8 +661,8 @@ Issue data maps into tickets as follows:
 - The Linear issue ID becomes the Source-scoped ticket ID.
 - The title and description become the ticket title and body.
 - The Linear project name becomes a lowercase, hyphenated project.
-- Linear `blocks` relations become `blockedBy` and `blocks`.
-- `unstarted` and `started` workflow states map to `ready-for-agent`.
+- Linear `blocks` relations become `blockedBy`.
+- An issue in a `completed` state is done.
 
 The Linear Source offers only issues in an `unstarted` state for processing. An issue in
 a `started` state is already claimed on Linear, so Rippls does not take it.
@@ -659,7 +725,8 @@ Options:
 
 - `--count <number>` creates that many files. Default: `12`.
 - `--kind <kind>` restricts kinds.
-- `--status <status>` restricts statuses.
+- `--status <status>` restricts the stored `status` of each file. A Source reads
+  `ready-for-agent` only as a marker, and a `done` file is written into `done/`.
 - `--hitl no|yes` restricts HITL.
 - `--project <name>` assigns projects. Default: `generated`.
 - `--chain` makes each ticket depend on the previous one.

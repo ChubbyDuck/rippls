@@ -10,9 +10,10 @@ import {
   resolveTicketSource,
 } from './EngineConfig';
 
-const defaultTimings = {
+const defaultValues = {
   idleTimeout: defaultIdleTimeout,
   pollInterval: defaultPollInterval,
+  defaultKind: 'implementation',
 };
 
 const load = (entries: Record<string, unknown>) =>
@@ -32,7 +33,7 @@ test('engineConfig reads harness names without priorities', () => {
   expect(Effect.runSync(load({ harnesses: [{ name: 'Codex' }, { name: 'Cursor' }] }))).toEqual({
     harnesses: [{ name: 'Codex' }, { name: 'Cursor' }],
     schedule: [],
-    ...defaultTimings,
+    ...defaultValues,
   });
 });
 
@@ -68,7 +69,7 @@ test('engineConfig reads the configured harness names and priorities', () => {
       { name: 'Cursor', priority: 30 },
     ],
     schedule: [],
-    ...defaultTimings,
+    ...defaultValues,
   });
 });
 
@@ -124,7 +125,7 @@ test('engineConfig expands a daily from/to rule into an rrule', () => {
         },
       },
     ],
-    ...defaultTimings,
+    ...defaultValues,
   });
 });
 
@@ -161,7 +162,7 @@ test('engineConfig expands a same-day from/to rule into an rrule', () => {
         },
       },
     ],
-    ...defaultTimings,
+    ...defaultValues,
   });
 });
 
@@ -196,7 +197,7 @@ test('engineConfig reads scheduled harness islands with an rrule', () => {
         },
       },
     ],
-    ...defaultTimings,
+    ...defaultValues,
   });
 });
 
@@ -233,7 +234,7 @@ test('engineConfig reads scheduled rrule dates from Date instances', () => {
         },
       },
     ],
-    ...defaultTimings,
+    ...defaultValues,
   });
 });
 
@@ -249,7 +250,7 @@ test('engineConfig reads an optional otlpTraceUrl', () => {
     harnesses: [{ name: 'Codex' }],
     schedule: [],
     otlpTraceUrl: 'http://127.0.0.1:27686/v1/traces',
-    ...defaultTimings,
+    ...defaultValues,
   });
 });
 
@@ -267,6 +268,7 @@ test('engineConfig reads idleTimeout and pollInterval', () => {
     schedule: [],
     idleTimeout: Duration.minutes(2),
     pollInterval: Duration.seconds(30),
+    defaultKind: 'implementation',
   });
 });
 
@@ -314,7 +316,7 @@ test('engineConfig reads a folder source', () => {
     harnesses: [{ name: 'Codex' }],
     schedule: [],
     source: { _tag: 'folder', ticketsDir: '/tmp/tickets' },
-    ...defaultTimings,
+    ...defaultValues,
   });
 });
 
@@ -330,7 +332,7 @@ test('engineConfig reads a linear source', () => {
     harnesses: [{ name: 'Codex' }],
     schedule: [],
     source: { _tag: 'linear', teamId: 'team-1', apiKeyEnv: 'LINEAR_API_KEY' },
-    ...defaultTimings,
+    ...defaultValues,
   });
 });
 
@@ -346,8 +348,42 @@ test('engineConfig reads a linear source without apiKeyEnv', () => {
     harnesses: [{ name: 'Codex' }],
     schedule: [],
     source: { _tag: 'linear', teamId: 'team-1' },
-    ...defaultTimings,
+    ...defaultValues,
   });
+});
+
+test('engineConfig reads a default Ticket Kind, which is implementation unless set', () => {
+  expect(Effect.runSync(load({})).defaultKind).toBe('implementation');
+  expect(Effect.runSync(load({ harnesses: [{ name: 'Codex' }] })).defaultKind).toBe('implementation');
+  expect(Effect.runSync(load({ harnesses: [{ name: 'Codex' }], defaultKind: 'research' })).defaultKind).toBe(
+    'research'
+  );
+});
+
+test('engineConfig rejects a default Ticket Kind that is not a Ticket Kind', () => {
+  expect(Effect.runSync(load({ harnesses: [{ name: 'Codex' }], defaultKind: 'chore' }).pipe(Effect.flip))).toBeDefined();
+});
+
+test('engineConfig reads the HITL fallback of a folder source', () => {
+  expect(
+    Effect.runSync(
+      load({
+        harnesses: [{ name: 'Codex' }],
+        source: { _tag: 'folder', ticketsDir: '/tmp/tickets', defaultHitl: 'no' },
+      })
+    ).source
+  ).toEqual({ _tag: 'folder', ticketsDir: '/tmp/tickets', defaultHitl: 'no' });
+});
+
+test('engineConfig rejects a HITL fallback that is not yes or no', () => {
+  expect(
+    Effect.runSync(
+      load({
+        harnesses: [{ name: 'Codex' }],
+        source: { _tag: 'folder', ticketsDir: '/tmp/tickets', defaultHitl: 'maybe' },
+      }).pipe(Effect.flip)
+    )
+  ).toBeDefined();
 });
 
 test('engineConfig rejects a folder source without ticketsDir', () => {

@@ -14,9 +14,7 @@ const ticket = Ticket.create({
   title: 'Deliver a green ticket',
   project: 'test',
   kind: 'implementation',
-  status: 'ready-for-agent',
   blockedBy: [],
-  blocks: [],
   body: 'BODY',
 });
 
@@ -64,9 +62,7 @@ test('commits with only the ticket number when the ticket has no project', async
     id: formatTicketId('folder', '7'),
     title: 'Deliver a green ticket',
     kind: 'implementation',
-    status: 'ready-for-agent',
     blockedBy: [],
-    blocks: [],
     body: 'BODY',
   });
   const { harness, calls } = harnessOf(gateSignals(['GATE:PASS']));

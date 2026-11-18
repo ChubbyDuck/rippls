@@ -3,11 +3,9 @@ import * as NodePath from '@effect/platform-node/NodePath';
 import { Effect, FileSystem, Layer, Path } from 'effect';
 import { expect, test } from 'vitest';
 
-import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
-import { TicketStatus } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketStatus';
-import { FixtureWriter } from '~/Core/Tickets/Ports/FixtureWriter';
+import { type Fixture, FixtureStatus, FixtureWriter } from '~/Core/Tickets/Ports/FixtureWriter';
 import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/folder';
 
 import { generateTickets } from './generate';
@@ -16,7 +14,7 @@ import type { GenerateOptions } from './plan';
 const defaults: GenerateOptions = { count: 36, kinds: [], statuses: [], hitls: [], projects: [], chain: false };
 
 const runGenerate = (options: Partial<GenerateOptions>) => {
-  const written: Ticket[] = [];
+  const written: Fixture[] = [];
   const writer = Layer.succeed(FixtureWriter, {
     write: (tickets) =>
       Effect.sync(() => {
@@ -50,7 +48,7 @@ test('generateTickets spreads every kind, hitl and status by default', async () 
 
   expect(new Set(written.map((ticket) => ticket.kind))).toEqual(new Set(TicketKind.literals));
   expect(new Set(written.map((ticket) => ticket.hitl))).toEqual(new Set(Hitl.literals));
-  expect(new Set(written.map((ticket) => ticket.status))).toEqual(new Set(TicketStatus.literals));
+  expect(new Set(written.map((ticket) => ticket.status))).toEqual(new Set(FixtureStatus.literals));
 });
 
 test('generateTickets honors the app rules when it derives hitl from kind', async () => {

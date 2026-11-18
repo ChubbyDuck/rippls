@@ -20,9 +20,7 @@ const sampleTicket = (value: number) =>
     title: 'Stream ticket',
     project: 'test-project',
     kind: 'implementation',
-    status: 'ready-for-agent',
     blockedBy: [],
-    blocks: [],
     body: '',
   });
 

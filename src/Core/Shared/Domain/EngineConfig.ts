@@ -1,5 +1,8 @@
 import { Config, ConfigProvider, Context, DateTime, Duration, Effect, Option, Schema, SchemaGetter } from 'effect';
 
+import { Hitl } from '../../Tickets/Domain/Entities/Ticket/properties/Hitl.ts';
+import { TicketKind } from '../../Tickets/Domain/Entities/Ticket/properties/TicketKind.ts';
+
 import { HarnessName } from './Properties/HarnessName.ts';
 
 export const defaultIdleTimeout = Duration.minutes(5);
@@ -9,6 +12,11 @@ export const defaultPollInterval = Duration.seconds(10);
 export const idleTimeoutConfig = Config.duration('idleTimeout').pipe(Config.withDefault(defaultIdleTimeout));
 
 export const pollIntervalConfig = Config.duration('pollInterval').pipe(Config.withDefault(defaultPollInterval));
+
+/** The Ticket Kind of a ticket that states none. It implies no HITL. */
+export const defaultTicketKind: TicketKind = 'implementation';
+
+export const defaultKindConfig = Config.schema(TicketKind, 'defaultKind').pipe(Config.withDefault(defaultTicketKind));
 
 export const HarnessPriority = Schema.Int.check(Schema.isGreaterThan(0)).pipe(Schema.brand('HarnessPriority'));
 
@@ -147,6 +155,9 @@ export type TicketSourceTag = typeof TicketSourceTag.Type;
 export const TicketSourceConfig = Schema.TaggedUnion({
   folder: {
     ticketsDir: TicketsDir,
+    // The HITL of a folder ticket that states no HITL, no marker, and no Ticket
+    // Kind. `yes` unless set; `no` suits a folder where every file is ready.
+    defaultHitl: Schema.optionalKey(Hitl),
   },
   linear: {
     teamId: Schema.NonEmptyString,
@@ -162,6 +173,7 @@ export const EngineConfigSchema = Schema.Struct({
   otlpTraceUrl: Schema.optionalKey(Schema.NonEmptyString),
   idleTimeout: Schema.optionalKey(Schema.DurationFromString),
   pollInterval: Schema.optionalKey(Schema.DurationFromString),
+  defaultKind: Schema.optionalKey(TicketKind),
   source: Schema.optionalKey(TicketSourceConfig),
 });
 
@@ -174,6 +186,7 @@ export const defaultEngineConfig: EngineConfigValue = {
   schedule: [],
   idleTimeout: defaultIdleTimeout,
   pollInterval: defaultPollInterval,
+  defaultKind: defaultTicketKind,
 };
 
 export class EngineConfig extends Context.Service<EngineConfig, EngineConfigValue>()('EngineConfig') {}
@@ -200,6 +213,7 @@ export const engineConfig: Config.Config<EngineConfigValue> = Config.all({
   source: Config.schema(TicketSourceConfig, 'source').pipe(Config.option),
   idleTimeout: idleTimeoutConfig,
   pollInterval: pollIntervalConfig,
+  defaultKind: defaultKindConfig,
 }).pipe(
   Config.map(({ otlpTraceUrl, source, ...rest }) => {
     const withTrace = Option.match(otlpTraceUrl, {

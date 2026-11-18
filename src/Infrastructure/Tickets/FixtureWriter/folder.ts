@@ -1,14 +1,13 @@
 import { Effect, FileSystem, Layer, Path } from 'effect';
 import { stringify } from 'yaml';
 
-import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { FixtureNotWritten } from '~/Core/Tickets/Domain/Exceptions/FixtureNotWritten';
-import { FixtureWriter } from '~/Core/Tickets/Ports/FixtureWriter';
+import { type Fixture, FixtureWriter } from '~/Core/Tickets/Ports/FixtureWriter';
 
 const toNativeNumber = (id: TicketId): number => Number(parseTicketId(id).native);
 
-const toFrontMatter = (ticket: Ticket) => ({
+const toFrontMatter = (ticket: Fixture) => ({
   id: toNativeNumber(ticket.id),
   title: ticket.title,
   project: ticket.project,
@@ -19,7 +18,7 @@ const toFrontMatter = (ticket: Ticket) => ({
   blocks: ticket.blocks.map(toNativeNumber),
 });
 
-const toFileContent = (ticket: Ticket): string => `---\n${stringify(toFrontMatter(ticket))}---\n\n${ticket.body}`;
+const toFileContent = (ticket: Fixture): string => `---\n${stringify(toFrontMatter(ticket))}---\n\n${ticket.body}`;
 
 /**
  * Writes each fixture ticket to `<id>.md` in the tickets folder, or in its `done/`
@@ -33,7 +32,7 @@ export const fixtureWriterFolderLive = (ticketsDir: string) =>
       Effect.map(({ fs, path }) => {
         const doneDir = path.join(ticketsDir, 'done');
 
-        const writeOne = (ticket: Ticket) =>
+        const writeOne = (ticket: Fixture) =>
           Effect.gen(function* () {
             const basename = `${toNativeNumber(ticket.id)}.md`;
             const rootFile = path.join(ticketsDir, basename);
@@ -45,7 +44,7 @@ export const fixtureWriterFolderLive = (ticketsDir: string) =>
             yield* fs.remove(rootFile, { force: true });
           });
 
-        const write = (tickets: readonly Ticket[]): Effect.Effect<void, FixtureNotWritten> =>
+        const write = (tickets: readonly Fixture[]): Effect.Effect<void, FixtureNotWritten> =>
           Effect.forEach(tickets, writeOne, { discard: true }).pipe(
             Effect.mapError((cause) => new FixtureNotWritten({ cause }))
           );

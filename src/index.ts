@@ -48,7 +48,7 @@ const ticketSourceFor = (source: Option.Option<TicketSourceTag>) =>
   Effect.gen(function* () {
     const config = yield* EngineConfig;
     const resolved = yield* resolveTicketSource(config.source, Option.getOrUndefined(source));
-    return liveTicketSource(resolved);
+    return liveTicketSource(resolved, config.defaultKind);
   });
 
 const engine = Command.make(

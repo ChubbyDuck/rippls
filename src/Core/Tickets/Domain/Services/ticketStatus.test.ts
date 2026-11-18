@@ -17,9 +17,7 @@ const ticket = (fields: Record<string, unknown> = {}) =>
     title: 'Ticket Status',
     kind: 'task',
     hitl: 'no',
-    status: 'ready-for-agent',
     blockedBy: [],
-    blocks: [],
     body: '',
     ...fields,
   });
@@ -46,7 +44,7 @@ describe('deriveTicketStatus', () => {
   });
 
   it('is done for a ticket that its Source sees as done', () => {
-    expect(deriveTicketStatus(ticket({ status: 'done' }), nothing)).toBe('done');
+    expect(deriveTicketStatus(ticket({ doneInSource: true }), nothing)).toBe('done');
   });
 
   it('is done for a ticket that the Ledger records as done while its Source still sees it open', () => {
@@ -77,7 +75,7 @@ describe('deriveTicketStatus', () => {
   it('is eligible exactly when the eligibility rule holds', () => {
     const tickets = [
       ticket(),
-      ticket({ status: 'done' }),
+      ticket({ doneInSource: true }),
       ticket({ hitl: 'yes' }),
       ticket({ blockedBy: [id(9)] }),
       ticket({ blockedBy: [id(2)] }),

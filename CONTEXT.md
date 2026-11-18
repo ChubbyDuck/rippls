@@ -33,7 +33,8 @@ _Avoid_: Agent, Harness
 
 **Ticket**:
 A uniform unit of work with a source-scoped identity, Title, Ticket Kind, HITL, body,
-blocking relations, and an optional Project. Its Ticket Status is derived.
+blocking relations, and an optional Project. It needs only an identity and text: the
+rest are hints with fallbacks. It stores no Ticket Status; its Ticket Status is derived.
 _Avoid_: Issue, task (the noun), job
 
 **Ticket Kind**:
@@ -42,16 +43,22 @@ or task. A Kind describes the work; a Strategy describes how to perform it.
 _Avoid_: Type, category, Strategy
 
 **HITL**:
-Whether a human must be in the loop for a Ticket: yes or no.
+Whether a human must be in the loop for a Ticket: yes or no. It is the first that the
+Ticket states of a HITL, a Marker, and a Ticket Kind that implies one; otherwise yes,
+unless config changes the fallback. A default Ticket Kind implies nothing.
 _Avoid_: Human review, interactive, AFK
+
+**Marker**:
+A readiness word a Ticket may state: `ready-for-agent` means HITL no, and
+`ready-for-human` means HITL yes. It is read only for that.
+_Avoid_: Status, label, triage state
 
 **Ticket Status**:
 A Ticket's position in its lifecycle, derived from the Ticket, the Ledger, and done.
 Its values are done, escalated, claimed, not ready, blocked, and eligible. When several
 apply, the first in that order is the Ticket Status. Claimed means a Claim other than
-a Stale Claim; not ready means HITL yes; eligible means Eligible. The status that a
-Ticket still stores from its Source is not the Ticket Status; the Engine reads it only
-to tell whether the Ticket is done.
+a Stale Claim; not ready means HITL yes; eligible means Eligible. A `status` value in
+a ticket file is not the Ticket Status; it is read only as a Marker.
 _Avoid_: State, phase
 
 **Project**:
