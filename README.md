@@ -290,7 +290,8 @@ whose only Claim is stale shows the value it would have without that Claim.
 A claimed ticket also shows the owner of its Claim: the Engine, the Runner (or `no
 Runner yet`), the process ID, and the host. An escalated ticket shows the reason of its
 Escalation, the attempt count, and the path of its retained Ticket Worktree. A blocked
-ticket shows which of its blockers are open and which cannot be resolved. After the
+ticket shows which of its blockers are open and which cannot be resolved; any other
+ticket that is not done shows the blockers that cannot be resolved. After the
 tickets, every unreadable file or Issue is listed with its reason, under its identity
 when Rippls can tell one and `-` otherwise.
 
