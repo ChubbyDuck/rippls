@@ -1,12 +1,14 @@
-import { Effect, Layer } from 'effect';
+import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem';
+import * as NodePath from '@effect/platform-node/NodePath';
+import { Effect, FileSystem, Layer, Path } from 'effect';
 import { expect, test } from 'vitest';
 
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import { TicketStatus } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketStatus';
-import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
+import { FixtureWriter } from '~/Core/Tickets/Ports/FixtureWriter';
+import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/folder';
 
 import { generateTickets } from './generate';
 import type { GenerateOptions } from './plan';
@@ -15,22 +17,16 @@ const defaults: GenerateOptions = { count: 36, kinds: [], statuses: [], hitls: [
 
 const runGenerate = (options: Partial<GenerateOptions>) => {
   const saved: Ticket[] = [];
-  const source = Layer.succeed(TicketSource, {
-    getOneBy: () => Effect.fail(new TicketNotFound()),
-    getManyBy: () => Effect.succeed([]),
-    save: (ticket) =>
-      Effect.sync(() => {
-        saved.push(ticket);
-      }),
-    saveMany: (tickets) =>
+  const writer = Layer.succeed(FixtureWriter, {
+    write: (tickets) =>
       Effect.sync(() => {
         saved.push(...tickets);
-      }),    report: () => Effect.void,
+      }),
   });
   return Effect.runPromise(
     generateTickets({ ...defaults, ...options }).pipe(
       Effect.map((created) => ({ created, saved })),
-      Effect.provide(source)
+      Effect.provide(writer)
     )
   );
 };
@@ -111,17 +107,134 @@ test('generateTickets fails when the kind and hitl constraints contradict', asyn
   const error = await Effect.runPromise(
     generateTickets({ ...defaults, kinds: ['implementation'], hitls: ['yes'] }).pipe(
       Effect.flip,
-      Effect.provide(
-        Layer.succeed(TicketSource, {
-          getOneBy: () => Effect.fail(new TicketNotFound()),
-          getManyBy: () => Effect.succeed([]),
-          save: () => Effect.void,
-          saveMany: () => Effect.void,
-          report: () => Effect.void,
-        })
-      )
+      Effect.provide(Layer.succeed(FixtureWriter, { write: () => Effect.void }))
     )
   );
 
   expect(error._tag).toBe('NoTicketMatchesConstraints');
+});
+
+// Writes the fixtures into a temporary folder and returns every file under it by relative path.
+const generateFiles = (options: Partial<GenerateOptions>) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* fs.makeTempDirectory({ prefix: 'rippls-generate-' });
+      yield* generateTickets({ ...defaults, ...options }).pipe(Effect.provide(fixtureWriterFolderLive(dir)));
+      const names = yield* fs.readDirectory(dir, { recursive: true });
+      const files = names.filter((name) => name.endsWith('.md')).toSorted();
+      const contents = yield* Effect.forEach(files, (name) => fs.readFileString(path.join(dir, name)));
+      return Object.fromEntries(files.map((name, index) => [name, contents[index]]));
+    }).pipe(Effect.provide(Layer.mergeAll(NodeFileSystem.layer, NodePath.layer)))
+  );
+
+test('generateTickets writes the same folder fixture files as before, with a dependency chain', async () => {
+  const files = await generateFiles({ count: 4, chain: true });
+
+  expect(files).toEqual({
+    '1.md': [
+      '---',
+      'id: 1',
+      'title: Generated ticket 1',
+      'project: generated',
+      'status: open',
+      'kind: implementation',
+      'hitl: no',
+      'blockedBy: []',
+      'blocks:',
+      '  - 2',
+      '---',
+      '',
+      'Reply with hello.',
+    ].join('\n'),
+    '2.md': [
+      '---',
+      'id: 2',
+      'title: Generated ticket 2',
+      'project: generated',
+      'status: ready-for-agent',
+      'kind: research',
+      'hitl: no',
+      'blockedBy:',
+      '  - 1',
+      'blocks:',
+      '  - 3',
+      '---',
+      '',
+      'What is 2 + 2?',
+    ].join('\n'),
+    'done/3.md': [
+      '---',
+      'id: 3',
+      'title: Generated ticket 3',
+      'project: generated',
+      'status: done',
+      'kind: prototype',
+      'hitl: yes',
+      'blockedBy:',
+      '  - 2',
+      'blocks:',
+      '  - 4',
+      '---',
+      '',
+      'Name one color.',
+    ].join('\n'),
+    '4.md': [
+      '---',
+      'id: 4',
+      'title: Generated ticket 4',
+      'project: generated',
+      'status: resolved',
+      'kind: grilling',
+      'hitl: yes',
+      'blockedBy:',
+      '  - 3',
+      'blocks: []',
+      '---',
+      '',
+      'Say yes.',
+    ].join('\n'),
+  });
+});
+
+test('generateTickets writes the same folder fixture files as before for the given subsets', async () => {
+  const files = await generateFiles({
+    count: 2,
+    kinds: ['task'],
+    statuses: ['blocked'],
+    hitls: ['yes'],
+    projects: ['alpha'],
+  });
+
+  expect(files).toEqual({
+    '1.md': [
+      '---',
+      'id: 1',
+      'title: Generated ticket 1',
+      'project: alpha',
+      'status: blocked',
+      'kind: task',
+      'hitl: yes',
+      'blockedBy: []',
+      'blocks: []',
+      '---',
+      '',
+      'Reply with hello.',
+    ].join('\n'),
+    '2.md': [
+      '---',
+      'id: 2',
+      'title: Generated ticket 2',
+      'project: alpha',
+      'status: blocked',
+      'kind: task',
+      'hitl: yes',
+      'blockedBy: []',
+      'blocks: []',
+      '---',
+      '',
+      'What is 2 + 2?',
+    ].join('\n'),
+  });
 });

@@ -10,12 +10,12 @@ import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngin
 import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import { TicketStatus } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketStatus';
-import { ticketSourceLive } from '~/Infrastructure/Tickets/TicketSource/fromSource';
+import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/folder';
 
 const AppLive = Layer.unwrap(
   engineConfig.pipe(
     Effect.flatMap((config) => resolveTicketSource(config.source, 'folder')),
-    Effect.map((source) => ticketSourceLive(source))
+    Effect.map((source) => fixtureWriterFolderLive(source.ticketsDir))
   )
 ).pipe(Layer.provide(EngineFileConfigLive), Layer.provideMerge(RepositoryRootLive));
 

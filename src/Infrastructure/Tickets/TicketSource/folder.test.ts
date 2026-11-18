@@ -8,6 +8,8 @@ import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties
 import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { completeTicket } from '~/Core/Tickets/Application/UseCases/CompleteTicket/completeTicket';
+import { generateTickets } from '~/Core/Tickets/Application/UseCases/Generate/generate';
+import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/folder';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import { TicketSourceFolderLive } from './folder';
@@ -718,4 +720,73 @@ test('a file with claimedBy or a claim status is read and those values are ignor
     ['folder:3', 'ready-for-agent'],
   ]);
   expect(tickets.some((ticket) => 'claimedBy' in ticket)).toBe(false);
+});
+
+test('getManyBy reads the tickets that the generator wrote', async () => {
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      const dir = yield* setup([]);
+      yield* generateTickets({ count: 4, kinds: [], statuses: [], hitls: [], projects: [], chain: true }).pipe(
+        Effect.provide(fixtureWriterFolderLive(dir))
+      );
+      const tickets = yield* getManyIn(dir);
+      const second = yield* getOneIn(dir, TicketQuery.byId(formatTicketId('folder', '2')).build());
+      return { tickets, second };
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+  expect(
+    result.tickets.map((ticket) => ({
+      id: ticket.id,
+      title: ticket.title,
+      project: ticket.project,
+      status: ticket.status,
+      kind: ticket.kind,
+      hitl: ticket.hitl,
+      blockedBy: [...ticket.blockedBy],
+      blocks: [...ticket.blocks],
+    }))
+  ).toEqual([
+    {
+      id: 'folder:1',
+      title: 'Generated ticket 1',
+      project: 'generated',
+      status: 'open',
+      kind: 'implementation',
+      hitl: 'no',
+      blockedBy: [],
+      blocks: ['folder:2'],
+    },
+    {
+      id: 'folder:2',
+      title: 'Generated ticket 2',
+      project: 'generated',
+      status: 'ready-for-agent',
+      kind: 'research',
+      hitl: 'no',
+      blockedBy: ['folder:1'],
+      blocks: ['folder:3'],
+    },
+    {
+      id: 'folder:4',
+      title: 'Generated ticket 4',
+      project: 'generated',
+      status: 'resolved',
+      kind: 'grilling',
+      hitl: 'yes',
+      blockedBy: ['folder:3'],
+      blocks: [],
+    },
+    {
+      id: 'folder:3',
+      title: 'Generated ticket 3',
+      project: 'generated',
+      status: 'done',
+      kind: 'prototype',
+      hitl: 'yes',
+      blockedBy: ['folder:2'],
+      blocks: ['folder:4'],
+    },
+  ]);
+  expect(Option.map(result.second, (ticket) => ticket.body)).toEqual(Option.some('What is 2 + 2?'));
 });
