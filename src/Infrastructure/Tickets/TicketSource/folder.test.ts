@@ -826,16 +826,16 @@ test('getUnreadable reports an invalid value for a known hint, and names the hin
 const asRoot = process.getuid?.() === 0;
 
 // The readable tickets and the unreadable ones of a fresh tickets folder in which
-// the locked paths cannot be read. The locks are lifted afterwards, so the
-// temporary folder can be removed.
-const readLocked = (files: ReadonlyArray<readonly [string, string]>, locked: readonly string[]) =>
+// each locked path has the mode given with it. The locks are lifted afterwards,
+// so the temporary folder can be removed.
+const readLocked = (files: ReadonlyArray<readonly [string, string]>, locks: ReadonlyArray<readonly [string, number]>) =>
   Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const dir = yield* setup(files);
-      const lock = (mode: number) => Effect.forEach(locked, (each) => fs.chmod(path.join(dir, each), mode));
-      return yield* lock(0o000).pipe(
+      const lock = Effect.forEach(locks, ([each, mode]) => fs.chmod(path.join(dir, each), mode));
+      return yield* lock.pipe(
         Effect.andThen(
           TicketSource.pipe(
             Effect.flatMap((source) =>
@@ -848,7 +848,9 @@ const readLocked = (files: ReadonlyArray<readonly [string, string]>, locked: rea
           ids: tickets.map((ticket) => ticket.id),
           unreadable: unreadable.map(({ name, id, reason, detail }) => ({ name, id, reason, detail })),
         })),
-        Effect.ensuring(lock(0o755).pipe(Effect.ignore))
+        Effect.ensuring(
+          Effect.forEach(locks, ([each]) => fs.chmod(path.join(dir, each), 0o755).pipe(Effect.ignore))
+        )
       );
     }).pipe(Effect.provide(NodeFs))
   );
@@ -862,7 +864,7 @@ test.skipIf(asRoot)('a folder that cannot be read is reported, and the tickets o
       ['web/1.md', '# Locked away\n'],
       ['web/done/2.md', '# Locked away too\n'],
     ],
-    ['web']
+    [['web', 0o000]]
   );
 
   expect(ids).toEqual([folderId(1), formatTicketId('folder', 'api/1'), formatTicketId('folder', 'api/2')]);
@@ -878,12 +880,34 @@ test.skipIf(asRoot)('a ticket file that cannot be read is reported, and the othe
       ['2.md', '# Readable\n'],
       ['web/3.md', '# Readable too\n'],
     ],
-    ['1.md']
+    [['1.md', 0o000]]
   );
 
   expect(ids).toEqual([folderId(2), formatTicketId('folder', 'web/3')]);
   expect(unreadable).toEqual([
     { name: '1.md', id: folderId(1), reason: 'file cannot be read', detail: expect.stringContaining('PermissionDenied') },
+  ]);
+});
+
+test.skipIf(asRoot)('in a folder that can be listed but not searched, each folder and ticket file is reported', async () => {
+  const { ids, unreadable } = await readLocked(
+    [
+      ['1.md', '# Top\n'],
+      ['web/2.md', '# Listed, not readable\n'],
+      ['web/api/1.md', '# Below it\n'],
+    ],
+    [['web', 0o444]]
+  );
+
+  expect(ids).toEqual([folderId(1)]);
+  expect(unreadable).toEqual([
+    { name: 'web/api/', id: undefined, reason: 'folder cannot be read', detail: expect.stringContaining('PermissionDenied') },
+    {
+      name: 'web/2.md',
+      id: formatTicketId('folder', 'web/2'),
+      reason: 'file cannot be read',
+      detail: expect.stringContaining('PermissionDenied'),
+    },
   ]);
 });
 

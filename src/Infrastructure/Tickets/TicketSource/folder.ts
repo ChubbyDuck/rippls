@@ -112,8 +112,13 @@ const unreadableFolder = (folder: readonly string[], message: string): Unreadabl
     detail: detailOf(message),
   });
 
-/** What a walk below the tickets folder finds: its files, as their segments, and the folders it cannot read. */
-type Found = { readonly files: readonly (readonly string[])[]; readonly unreadable: readonly UnreadableTicket[] };
+/** What is below a folder: its files, as their segments, and the folders that cannot be read. */
+type FolderContents = {
+  readonly files: readonly (readonly string[])[];
+  readonly unreadable: readonly UnreadableTicket[];
+};
+
+const noContents: FolderContents = { files: [], unreadable: [] };
 
 // Folders in the order of their paths, segment by segment, so the tickets folder
 // itself comes first and a folder comes before the folders below it.
@@ -275,6 +280,13 @@ const blockersInBody = (body: string, folder: string): readonly TicketId[] | und
 // A key with no value states nothing, like a missing key.
 const emptyAsMissing = (value: unknown): unknown => (value === null ? undefined : value);
 
+// Why a ticket file is unreadable, with the detail of what failed.
+const unreadableFile =
+  (file: TicketFile) =>
+  (reason: UnreadableTicket['reason']) =>
+  (detail: string): UnreadableTicket =>
+    new UnreadableTicket({ name: pathOf(file), id: ticketIdIn(file.folder.join('/'), file.number), reason, detail });
+
 /**
  * The Ticket a file reads as, or why it is unreadable. A Ticket needs an
  * identity, from its folder and the numeric filename prefix, and text. Every
@@ -290,8 +302,7 @@ const emptyAsMissing = (value: unknown): unknown => (value === null ? undefined 
 const fileToTicket = (text: string, file: TicketFile, fallbacks: TicketFallbacks): Result.Result<Ticket, UnreadableTicket> => {
   const folder = file.folder.join('/');
   const id = ticketIdIn(folder, file.number);
-  const unreadable = (reason: UnreadableTicket['reason']) => (detail: string) =>
-    new UnreadableTicket({ name: pathOf(file), id, reason, detail });
+  const unreadable = unreadableFile(file);
   return splitFrontMatter(text).pipe(
     Result.mapError(unreadable('unparseable front matter')),
     Result.flatMap(({ fields, body }) =>
@@ -360,68 +371,58 @@ export const TicketSourceFolderLive = Layer.effect(
       const readTicket = (file: TicketFile): Effect.Effect<Result.Result<Ticket, UnreadableTicket>> =>
         fs.readFileString(path.join(dir, ...file.directories, file.name)).pipe(
           Effect.match({
-            onFailure: (error) =>
-              Result.fail(
-                new UnreadableTicket({
-                  name: pathOf(file),
-                  id: ticketIdIn(file.folder.join('/'), file.number),
-                  reason: 'file cannot be read',
-                  detail: detailOf(error.message),
-                })
-              ),
+            onFailure: (error) => Result.fail(unreadableFile(file)('file cannot be read')(detailOf(error.message))),
             onSuccess: (text) => fileToTicket(text, file, fallbacks),
           })
         );
 
-      // Whether a path is a folder to read: a directory that is no symbolic link,
-      // as a recursive listing would read it. A path that cannot be inspected is
-      // taken as a file, so a ticket file there is reported when it cannot be read.
-      const isFolder = (full: string): Effect.Effect<boolean> =>
-        fs.stat(full).pipe(
-          Effect.flatMap((info) =>
-            info.type === 'Directory'
-              ? fs.readLink(full).pipe(
-                  Effect.as(false),
-                  Effect.orElseSucceed(() => true)
-                )
-              : Effect.succeed(false)
-          ),
-          Effect.orElseSucceed(() => false)
-        );
+      // Whether an entry is a folder to read: a directory that is no symbolic
+      // link, as a recursive listing would read it. An entry that cannot be
+      // inspected is a file when it no longer exists or is a Markdown file, so a
+      // ticket file there is reported when it cannot be read; any other is read
+      // as a folder, so it is reported when it cannot be read either.
+      const isFolder = (entry: readonly string[]): Effect.Effect<boolean> =>
+        Effect.gen(function* () {
+          const full = path.join(dir, ...entry);
+          const info = yield* Effect.result(fs.stat(full));
+          if (Result.isFailure(info)) {
+            return info.failure.reason._tag !== 'NotFound' && !MARKDOWN_FILE.test(entry.at(-1) ?? '');
+          }
+          if (info.success.type !== 'Directory') {
+            return false;
+          }
+          return Result.isFailure(yield* Effect.result(fs.readLink(full)));
+        });
 
-      // The paths of the files below a folder, at any depth, in or out of a
-      // `done/`, as their segments, and the folders that cannot be read. Each
-      // folder is read on its own, so one that cannot be read hides only its own
-      // files. A folder that no longer exists has none.
-      const walk = (folder: readonly string[]): Effect.Effect<Found> =>
-        fs.readDirectory(path.join(dir, ...folder)).pipe(
-          Effect.matchEffect({
-            onFailure: (error) =>
-              Effect.succeed<Found>(
-                error.reason._tag === 'NotFound'
-                  ? { files: [], unreadable: [] }
-                  : { files: [], unreadable: [unreadableFolder(folder, error.message)] }
-              ),
-            onSuccess: (names) =>
-              Effect.forEach(names, (name) => {
-                const entry = [...folder, name];
-                return isFolder(path.join(dir, ...entry)).pipe(
-                  Effect.flatMap((sub) => (sub ? walk(entry) : Effect.succeed<Found>({ files: [entry], unreadable: [] })))
-                );
-              }).pipe(
-                Effect.map((found) => ({
-                  files: found.flatMap((each) => each.files),
-                  unreadable: found.flatMap((each) => each.unreadable),
-                }))
-              ),
-          })
-        );
+      // The files below a folder, at any depth, in or out of a `done/`, as their
+      // segments, and the folders that cannot be read. Each folder is read on its
+      // own, so one that cannot be read hides only its own files. A folder that no
+      // longer exists has none.
+      const walk = (folder: readonly string[]): Effect.Effect<FolderContents> =>
+        Effect.gen(function* () {
+          const names = yield* Effect.result(fs.readDirectory(path.join(dir, ...folder)));
+          if (Result.isFailure(names)) {
+            return names.failure.reason._tag === 'NotFound'
+              ? noContents
+              : { files: [], unreadable: [unreadableFolder(folder, names.failure.message)] };
+          }
+          const contents = yield* Effect.forEach(names.success, (name) => {
+            const entry = [...folder, name];
+            return Effect.flatMap(isFolder(entry), (subfolder) =>
+              subfolder ? walk(entry) : Effect.succeed<FolderContents>({ files: [entry], unreadable: [] })
+            );
+          });
+          return {
+            files: contents.flatMap((each) => each.files),
+            unreadable: contents.flatMap((each) => each.unreadable),
+          };
+        });
 
       // Everything below the tickets folder.
-      const entries = walk([]);
+      const ticketsFolder = walk([]);
 
       // The ticket files below the tickets folder, at any depth, in or out of a `done/`.
-      const ticketFiles = entries.pipe(Effect.map(({ files }) => files.flatMap((entry) => ticketFileOf(entry) ?? [])));
+      const ticketFiles = ticketsFolder.pipe(Effect.map(({ files }) => files.flatMap((entry) => ticketFileOf(entry) ?? [])));
 
       // The readable tickets that match the query, in processing order, with or
       // without the done ones.
@@ -458,7 +459,7 @@ export const TicketSourceFolderLive = Layer.effect(
       // prefix, then the ticket files that cannot be read as tickets, in
       // processing order, done ones included.
       const getUnreadable: Effect.Effect<readonly UnreadableTicket[]> = Effect.gen(function* () {
-        const found = yield* entries;
+        const found = yield* ticketsFolder;
         const withoutNumbers = found.files.flatMap((entry) => withoutNumber(entry) ?? []);
         const files = sortByFolderAndNumber(found.files.flatMap((entry) => ticketFileOf(entry) ?? []));
         const reads = yield* Effect.forEach(files, readTicket);
