@@ -6,15 +6,18 @@ export const TicketKind = Schema.Literals(['implementation', 'research', 'protot
 
 export type TicketKind = typeof TicketKind.Type;
 
-export type ImpliedHitlKind = Exclude<TicketKind, 'task'>;
+/** The Ticket Kind of a ticket that states none, unless config sets another. It implies no HITL. */
+export const defaultTicketKind: TicketKind = 'implementation';
 
-/** The HITL that a stated Ticket Kind implies. A task implies none. */
-export const impliedHitlByKind = {
+type ImpliedHitlKind = Exclude<TicketKind, 'task'>;
+
+const impliedHitlByKind = {
   implementation: 'no',
   research: 'no',
   prototype: 'yes',
   grilling: 'yes',
 } as const satisfies Record<ImpliedHitlKind, Hitl>;
 
+/** The HITL that a stated Ticket Kind implies. A task implies none. */
 export const hitlImpliedBy = (kind: TicketKind): Hitl | undefined =>
   kind === 'task' ? undefined : impliedHitlByKind[kind];

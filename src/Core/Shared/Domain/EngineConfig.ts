@@ -1,7 +1,7 @@
 import { Config, ConfigProvider, Context, DateTime, Duration, Effect, Option, Schema, SchemaGetter } from 'effect';
 
 import { Hitl } from '../../Tickets/Domain/Entities/Ticket/properties/Hitl.ts';
-import { TicketKind } from '../../Tickets/Domain/Entities/Ticket/properties/TicketKind.ts';
+import { defaultTicketKind, TicketKind } from '../../Tickets/Domain/Entities/Ticket/properties/TicketKind.ts';
 
 import { HarnessName } from './Properties/HarnessName.ts';
 
@@ -12,9 +12,6 @@ export const defaultPollInterval = Duration.seconds(10);
 export const idleTimeoutConfig = Config.duration('idleTimeout').pipe(Config.withDefault(defaultIdleTimeout));
 
 export const pollIntervalConfig = Config.duration('pollInterval').pipe(Config.withDefault(defaultPollInterval));
-
-/** The Ticket Kind of a ticket that states none. It implies no HITL. */
-export const defaultTicketKind: TicketKind = 'implementation';
 
 export const defaultKindConfig = Config.schema(TicketKind, 'defaultKind').pipe(Config.withDefault(defaultTicketKind));
 
@@ -156,7 +153,7 @@ export const TicketSourceConfig = Schema.TaggedUnion({
   folder: {
     ticketsDir: TicketsDir,
     // The HITL of a folder ticket that states no HITL, no marker, and no Ticket
-    // Kind. `yes` unless set; `no` suits a folder where every file is ready.
+    // Kind, and no Marker. `yes` unless set; `no` suits a folder where every file is ready.
     defaultHitl: Schema.optionalKey(Hitl),
   },
   linear: {

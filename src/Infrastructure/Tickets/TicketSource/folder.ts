@@ -10,7 +10,7 @@ import {
   TicketHints,
   ticketFromHints,
 } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
-import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
+import { fallbackHitl, Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { Marker } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Marker';
 import { formatTicketId, parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
@@ -42,7 +42,7 @@ const findFileForId = (files: readonly string[], id: number): string | undefined
 const OPENING_DELIMITER = /^---[ \t]*\r?\n/;
 const FRONT_MATTER = /^---[ \t]*\r?\n(?:([\s\S]*?)\r?\n)?---[ \t]*(?=\r?\n|$)/;
 
-type Split = { readonly fields: { readonly [key: string]: unknown }; readonly body: string };
+type FrontMatterAndBody = { readonly fields: { readonly [key: string]: unknown }; readonly body: string };
 
 const isRecord = (value: unknown): value is { readonly [key: string]: unknown } =>
   typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -50,7 +50,7 @@ const isRecord = (value: unknown): value is { readonly [key: string]: unknown } 
 // The front matter and the body of a ticket file. A file without front matter is
 // all body. Front matter without a closing delimiter, or that does not parse to a
 // mapping, cannot be read.
-const splitFrontMatter = (text: string): Option.Option<Split> => {
+const splitFrontMatter = (text: string): Option.Option<FrontMatterAndBody> => {
   if (!OPENING_DELIMITER.test(text)) {
     return Option.some({ fields: {}, body: text });
   }
@@ -113,29 +113,30 @@ const filenameTitle = (file: string): string => {
 
 const STATUS_LINE = /^\s*(?:[-*+]\s+)?[*_]*status[*_]*\s*:[*_]*\s*`?([\w-]+)`?/i;
 
+// The Marker a value names, in any case.
 const markerOf = (value: unknown): Marker | undefined =>
-  Option.getOrUndefined(Schema.decodeUnknownOption(Marker)(value));
+  Option.getOrUndefined(Schema.decodeUnknownOption(Marker)(typeof value === 'string' ? value.toLowerCase() : value));
 
-// The marker of the first "Status" line of the body, such as `**Status:** ready-for-agent`.
+// The Marker of the first "Status" line of the body, such as `**Status:** ready-for-agent`.
 const markerInBody = (body: string): Marker | undefined => {
   for (const line of proseLines(body)) {
     const match = STATUS_LINE.exec(line);
     if (match !== null) {
-      return markerOf(match[1]?.toLowerCase());
+      return markerOf(match[1]);
     }
   }
   return undefined;
 };
 
 // A key with no value states nothing, like a missing key.
-const stated = (value: unknown): unknown => (value === null ? undefined : value);
+const emptyAsMissing = (value: unknown): unknown => (value === null ? undefined : value);
 
 /**
  * The Ticket a file reads as, or none when it is unreadable. A Ticket needs an
  * identity, from the numeric filename prefix, and text. Every other value is a
  * hint: the Title comes from the `title` field, the first heading, or the
- * filename; the marker from a `status` field or a "Status" line. A `status` value
- * is read only as a marker; `blocks`, `claimedBy`, and unknown keys are ignored.
+ * filename; the Marker from a `status` field or a "Status" line. A `status` value
+ * is read only as a Marker; `blocks`, `claimedBy`, and unknown keys are ignored.
  * An invalid value for a known hint makes the file unreadable. A ticket in
  * `done/` is done.
  */
@@ -149,12 +150,12 @@ const fileToTicket = (
   Option.flatMap(splitFrontMatter(text), ({ fields, body }) =>
     Schema.decodeUnknownOption(TicketHints)({
       id: toFolderId(fileId),
-      title: stated(fields.title) ?? headingTitle(body) ?? filenameTitle(file),
+      title: emptyAsMissing(fields.title) ?? headingTitle(body) ?? filenameTitle(file),
       body,
-      project: stated(fields.project),
-      blockedBy: namespaceIds(stated(fields.blockedBy)),
-      kind: stated(fields.kind),
-      hitl: stated(fields.hitl),
+      project: emptyAsMissing(fields.project),
+      blockedBy: namespaceIds(emptyAsMissing(fields.blockedBy)),
+      kind: emptyAsMissing(fields.kind),
+      hitl: emptyAsMissing(fields.hitl),
       marker: markerOf(fields.status) ?? markerInBody(body),
       doneInSource: inDone,
     }).pipe(Option.map((hints) => ticketFromHints(hints, fallbacks)))
@@ -199,13 +200,13 @@ export const TicketSourceFolderLive = Layer.effect(
     root: RepositoryRoot,
     dir: Config.schema(TicketsDir, 'ticketsDir'),
     kind: defaultKindConfig,
-    hitl: Config.schema(Hitl, 'defaultHitl').pipe(Config.withDefault('yes')),
+    hitl: Config.schema(Hitl, 'defaultHitl').pipe(Config.withDefault(fallbackHitl)),
   }).pipe(
     Effect.map(({ fs, path, spawner, root, dir, kind, hitl }) => {
       const doneDir = path.join(dir, 'done');
       const fallbacks: TicketFallbacks = { kind, hitl };
 
-      const readIn =
+      const readTicketIn =
         (folder: string, inDone: boolean) =>
         (file: string): Effect.Effect<Option.Option<Ticket>> => {
           const fileId = idFromFilename(file);
@@ -222,7 +223,7 @@ export const TicketSourceFolderLive = Layer.effect(
       const ticketsIn = (folder: string, inDone: boolean, query: TicketQuery): Stream.Stream<Ticket> =>
         Stream.fromEffect(fs.readDirectory(folder).pipe(Effect.map(sortByIdName(query)))).pipe(
           Stream.flatMap(Stream.fromIterable),
-          Stream.mapEffect(readIn(folder, inDone), { concurrency: 1 }),
+          Stream.mapEffect(readTicketIn(folder, inDone), { concurrency: 1 }),
           Stream.filter((option): option is Option.Some<Ticket> => Option.isSome(option) && matchesQuery(query)(option.value)),
           Stream.map((option) => option.value),
           Stream.catchCause(() => Stream.empty)

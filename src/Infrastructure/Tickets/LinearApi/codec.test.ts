@@ -8,8 +8,7 @@ import {
   doneWrites,
   escalateWrites,
   issueToTicket,
-  labelsToHitl,
-  labelsToKind,
+  groupedHint,
   releaseWrites,
   slugify,
   toLinearId,
@@ -21,24 +20,19 @@ test('slugify turns a Linear project name into a branch-safe string', () => {
   expect(slugify('  Already-Slug  ')).toBe('already-slug');
 });
 
-test('labelsToKind reads exactly one kind label', () => {
-  expect(Option.getOrThrow(labelsToKind([{ id: '1', name: 'kind:implementation' }]))).toBe('implementation');
-  expect(Option.isNone(labelsToKind([]))).toBe(true);
+test('groupedHint states nothing without a label, the value of one, and every value of several', () => {
+  expect(groupedHint([], 'kind')).toBeUndefined();
+  expect(groupedHint([{ id: '1', name: 'priority:high' }], 'kind')).toBeUndefined();
+  expect(groupedHint([{ id: '1', name: 'kind:implementation' }], 'kind')).toBe('implementation');
   expect(
-    Option.isNone(
-      labelsToKind([
+    groupedHint(
+      [
         { id: '1', name: 'kind:implementation' },
         { id: '2', name: 'kind:task' },
-      ])
+      ],
+      'kind'
     )
-  ).toBe(true);
-  expect(Option.isNone(labelsToKind([{ id: '1', name: 'kind:unknown' }]))).toBe(true);
-});
-
-test('labelsToHitl reads exactly one hitl label', () => {
-  expect(Option.getOrThrow(labelsToHitl([{ id: '1', name: 'hitl:yes' }]))).toBe('yes');
-  expect(Option.getOrThrow(labelsToHitl([{ id: '1', name: 'hitl:no' }]))).toBe('no');
-  expect(Option.isNone(labelsToHitl([]))).toBe(true);
+  ).toEqual(['implementation', 'task']);
 });
 
 test('toLinearId namespaces a Linear UUID', () => {
@@ -106,21 +100,27 @@ test('issueToTicket reads an issue with no labels with the default Ticket Kind a
   expect(Option.getOrThrow(issueToTicket(issue({ labels: [] }), 'research')).kind).toBe('research');
 });
 
-test('issueToTicket reads an issue without a single kind label as one that states no Ticket Kind', () => {
-  const ticket = Option.getOrThrow(
-    issueToTicket(
-      issue({
-        labels: [
-          { id: '1', name: 'kind:implementation' },
-          { id: '2', name: 'kind:task' },
-        ],
-      }),
-      'research'
-    )
-  );
+test('issueToTicket does not read an issue with an invalid or a second kind or hitl label', () => {
+  const read = (labels: readonly LinearLabel[]) => issueToTicket(issue({ labels }), 'implementation');
 
-  expect(ticket.kind).toBe('research');
-  expect(ticket.hitl).toBe('yes');
+  expect(Option.isNone(read([{ id: '1', name: 'kind:chore' }, { id: '2', name: 'hitl:no' }]))).toBe(true);
+  expect(
+    Option.isNone(
+      read([
+        { id: '1', name: 'kind:implementation' },
+        { id: '2', name: 'kind:task' },
+      ])
+    )
+  ).toBe(true);
+  expect(Option.isNone(read([{ id: '1', name: 'hitl:maybe' }]))).toBe(true);
+  expect(
+    Option.isNone(
+      read([
+        { id: '1', name: 'hitl:no' },
+        { id: '2', name: 'hitl:yes' },
+      ])
+    )
+  ).toBe(true);
 });
 
 test('issueToTicket takes the HITL that a stated kind label implies, and a hitl label over it', () => {

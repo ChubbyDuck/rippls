@@ -641,8 +641,8 @@ kind:grilling
 kind:task
 ```
 
-An issue without exactly one valid `kind:*` label has the default kind. It may state
-its HITL with one of:
+An issue without a `kind:*` label has the default kind. It may state its HITL with
+one of:
 
 ```text
 hitl:no
@@ -652,6 +652,8 @@ hitl:yes
 Linear has no marker, and a workflow state does not make an issue Unattended. An issue
 is HITL `no` only through a `hitl:no` label or a `kind:*` label whose kind implies it
 (see [Ticket kinds and HITL](#ticket-kinds-and-hitl)); otherwise it is HITL `yes`.
+An issue with an unknown kind or HITL, or with more than one `kind:*` or `hitl:*`
+label, is unreadable, and Rippls does not take it.
 
 Create a `needs-human` label in the team as well. Rippls adds it to an escalated issue,
 and reads an issue that has it as `hitl: yes`, whatever its `kind`. Without the label,

@@ -675,6 +675,15 @@ test('a marker in a status field wins over a Status line in the body', async () 
   expect(tickets.get(folderId(1))?.hitl).toBe('no');
 });
 
+test('a Marker is read in any case, in a status field and in a Status line', async () => {
+  const tickets = await readAll([
+    ['1.md', frontMatter({ status: 'Ready-For-Agent' })],
+    ['2.md', 'STATUS: READY-FOR-AGENT\n'],
+  ]);
+
+  expect([...tickets.values()].map((ticket) => ticket.hitl)).toEqual(['no', 'no']);
+});
+
 test('the default Ticket Kind implies no HITL, and the config changes the default and the fallback', async () => {
   const files = [['1.md', 'A bare note.\n'], ['2.md', frontMatter({ kind: 'grilling' })]] as const;
 

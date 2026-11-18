@@ -1,7 +1,7 @@
 import type { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { Hitl as HitlSchema } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
-import { impliedHitlByKind, TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
+import { hitlImpliedBy, TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import type { TicketKind as TicketKindValue } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import { type Fixture, FixtureStatus } from '~/Core/Tickets/Ports/FixtureWriter';
 
@@ -37,10 +37,10 @@ const validKindHitls = (
   hitls: ReadonlyArray<Hitl>
 ): ReadonlyArray<KindHitl> =>
   kinds.flatMap((kind): ReadonlyArray<KindHitl> => {
-    if (kind === 'task') {
+    const derived = hitlImpliedBy(kind);
+    if (derived === undefined) {
       return hitls.map((hitl) => ({ kind, hitl }));
     }
-    const derived = impliedHitlByKind[kind];
     return hitls.includes(derived) ? [{ kind, hitl: derived }] : [];
   });
 

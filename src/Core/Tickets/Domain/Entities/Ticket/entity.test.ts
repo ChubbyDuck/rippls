@@ -91,7 +91,7 @@ describe('Ticket', () => {
 });
 
 describe('the HITL of a Ticket', () => {
-  it('is a stated HITL first, over a marker and a stated Ticket Kind', () => {
+  it('is a stated HITL first, over a Marker and a stated Ticket Kind', () => {
     expect(Ticket.create({ ...identityAndText, hitl: 'yes', marker: 'ready-for-agent', kind: 'research' }).hitl).toBe(
       'yes'
     );
@@ -100,12 +100,12 @@ describe('the HITL of a Ticket', () => {
     );
   });
 
-  it('is the HITL of the marker next: ready-for-agent is no, ready-for-human is yes', () => {
+  it('is the HITL of the Marker next: ready-for-agent is no, ready-for-human is yes', () => {
     expect(Ticket.create({ ...identityAndText, marker: 'ready-for-agent' }).hitl).toBe('no');
     expect(Ticket.create({ ...identityAndText, marker: 'ready-for-human' }).hitl).toBe('yes');
   });
 
-  it('is the HITL of the marker over the HITL a stated Ticket Kind implies', () => {
+  it('is the HITL of the Marker over the HITL a stated Ticket Kind implies', () => {
     expect(Ticket.create({ ...identityAndText, marker: 'ready-for-human', kind: 'implementation' }).hitl).toBe('yes');
     expect(Ticket.create({ ...identityAndText, marker: 'ready-for-agent', kind: 'prototype' }).hitl).toBe('no');
   });

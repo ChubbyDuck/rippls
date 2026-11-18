@@ -1,9 +1,9 @@
 import { Option, Schema } from 'effect';
 
 import { type Ticket, TicketHints, ticketFromHints } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
-import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
+import { fallbackHitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
+import type { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import type { LinearIssue, LinearLabel, LinearMetadata } from '~/Core/Tickets/Ports/LinearApi';
 
 export const slugify = (name: string): string =>
@@ -22,19 +22,18 @@ const groupedValue = (prefix: string, name: string): string | undefined => {
   return name.startsWith(start) ? name.slice(start.length) : undefined;
 };
 
-const singleGrouped = (labels: readonly LinearLabel[], prefix: string): Option.Option<string> => {
+/**
+ * The value that the grouped labels of one prefix state as a hint: nothing without
+ * such a label, the value of a single one, and all values when there are several.
+ * Several values are no valid hint, so the Issue reads as unreadable.
+ */
+export const groupedHint = (labels: readonly LinearLabel[], prefix: string): string | readonly string[] | undefined => {
   const values = labels.flatMap((label) => {
     const value = groupedValue(prefix, label.name);
     return value === undefined ? [] : [value];
   });
-  return values.length === 1 ? Option.some(values[0]) : Option.none();
+  return values.length <= 1 ? values[0] : values;
 };
-
-export const labelsToKind = (labels: readonly LinearLabel[]): Option.Option<TicketKind> =>
-  Option.flatMap(singleGrouped(labels, 'kind'), (value) => Schema.decodeUnknownOption(TicketKind)(value));
-
-export const labelsToHitl = (labels: readonly LinearLabel[]): Option.Option<Hitl> =>
-  Option.flatMap(singleGrouped(labels, 'hitl'), (value) => Schema.decodeUnknownOption(Hitl)(value));
 
 /** The label that the Linear Source adds to an escalated Issue. */
 export const NEEDS_HUMAN_LABEL = 'needs-human';
@@ -45,24 +44,25 @@ const relatedIds = (relations: LinearIssue['relations'], type: 'blocks'): readon
   relations.filter((relation) => relation.type === type).map((relation) => toLinearId(relation.issueId));
 
 /**
- * The Ticket an Issue reads as. An Issue without a single valid `kind` label has
- * the default Ticket Kind. An Issue that needs a human keeps its Ticket Kind and
- * states HITL yes. Linear has no marker, and its workflow state does not make an
- * Issue Unattended, so an Issue that states no HITL and no Ticket Kind that
- * implies one is HITL yes.
+ * The Ticket an Issue reads as, or none when it is unreadable: a `kind` or `hitl`
+ * label with an invalid value, or more than one of either. An Issue without a
+ * `kind` label has the default Ticket Kind. An Issue that needs a human keeps its
+ * Ticket Kind and states HITL yes. Linear has no Marker, and its workflow state
+ * does not make an Issue Unattended, so an Issue that states no HITL and no Ticket
+ * Kind that implies one is HITL yes.
  */
 export const issueToTicket = (issue: LinearIssue, defaultKind: TicketKind): Option.Option<Ticket> => {
   const project = issue.project === null ? '' : slugify(issue.project.name);
-  return Schema.decodeOption(TicketHints)({
+  return Schema.decodeUnknownOption(TicketHints)({
     id: toLinearId(issue.id),
     title: issue.title,
     ...(project === '' ? {} : { project }),
     blockedBy: relatedIds(issue.inverseRelations, 'blocks'),
-    kind: Option.getOrUndefined(labelsToKind(issue.labels)),
-    hitl: needsHuman(issue.labels) ? 'yes' : Option.getOrUndefined(labelsToHitl(issue.labels)),
+    kind: groupedHint(issue.labels, 'kind'),
+    hitl: needsHuman(issue.labels) ? 'yes' : groupedHint(issue.labels, 'hitl'),
     body: issue.description ?? '',
     doneInSource: issue.state.type === 'completed',
-  }).pipe(Option.map((hints) => ticketFromHints(hints, { kind: defaultKind, hitl: 'yes' })));
+  }).pipe(Option.map((hints) => ticketFromHints(hints, { kind: defaultKind, hitl: fallbackHitl })));
 };
 
 export type LinearWrite =

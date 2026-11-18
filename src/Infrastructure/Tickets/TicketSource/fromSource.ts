@@ -1,9 +1,9 @@
 import { type Config, ConfigProvider, type FileSystem, Layer, type Path } from 'effect';
 import type { ChildProcessSpawner } from 'effect/unstable/process';
 
-import { defaultTicketKind, type TicketSourceConfig } from '~/Core/Shared/Domain/EngineConfig';
+import type { TicketSourceConfig } from '~/Core/Shared/Domain/EngineConfig';
 import type { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
-import type { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
+import { defaultTicketKind, type TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import type { LinearApi } from '~/Core/Tickets/Ports/LinearApi';
 import type { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { LinearApiLive } from '~/Infrastructure/Tickets/LinearApi/live';

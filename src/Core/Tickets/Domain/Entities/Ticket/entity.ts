@@ -1,10 +1,10 @@
 import { Schema } from 'effect';
 
-import { Hitl } from './properties/Hitl';
+import { fallbackHitl, Hitl } from './properties/Hitl';
 import { hitlByMarker, Marker } from './properties/Marker';
 import { Project } from './properties/Project';
 import { TicketId } from './properties/TicketId';
-import { hitlImpliedBy, TicketKind } from './properties/TicketKind';
+import { defaultTicketKind, hitlImpliedBy, TicketKind } from './properties/TicketKind';
 import { Title } from './properties/Title';
 
 export class Ticket extends Schema.Class<Ticket>('Ticket')({
@@ -61,10 +61,10 @@ export type TicketFallbacks = {
 };
 
 /** The default Ticket Kind is `implementation`; a ticket that does not say it is ready is HITL yes. */
-export const standardFallbacks: TicketFallbacks = { kind: 'implementation', hitl: 'yes' };
+export const standardFallbacks: TicketFallbacks = { kind: defaultTicketKind, hitl: fallbackHitl };
 
 /**
- * The HITL of a ticket: the first of a stated HITL, the HITL its marker implies, and
+ * The HITL of a ticket: the first of a stated HITL, the HITL its Marker implies, and
  * the HITL its stated Ticket Kind implies; otherwise the fallback. A Ticket Kind that
  * comes from the fallback implies nothing.
  */
