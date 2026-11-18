@@ -5,7 +5,6 @@ import { Console, Effect, type Path } from 'effect';
 import { HarnessRuntimeError } from '~/Core/Shared/Domain/Exceptions/HarnessRuntimeError';
 import type { HarnessName } from '~/Core/Shared/Domain/Properties/HarnessName';
 import type { Harness, HarnessRunOptions, ModelDemand, ModelGeneration, ModelTier } from '~/Core/Shared/Ports/Harness';
-import { getTicketHandle } from '~/Infrastructure/Tickets/WorktreeManager/sandcastle';
 
 type CatalogEntry = {
   readonly id: string;
@@ -106,8 +105,10 @@ const loggingOf = (path: Path.Path, repositoryRoot: string, label: string) => ({
   verbose: true,
 });
 
-// Runs one prompt through the Sandcastle API on the host, with no container.
-// The full harness log goes to a file, not to the main output.
+// Runs one prompt through the Sandcastle API on the host, with no container. With
+// a working directory, the Agent works in that directory as it is: a Ticket
+// Worktree, whether it was created in this run or reused from disk. The full
+// harness log goes to a file, not to the main output.
 const sandcastleHarness = (name: HarnessName, repositoryRoot: string, path: Path.Path): Harness => ({
   name,
   model: catalogs[name].default,
@@ -120,25 +121,6 @@ const sandcastleHarness = (name: HarnessName, repositoryRoot: string, path: Path
         );
       }
       const provider = providers[name][selected.id]!;
-      const logging = loggingOf(path, repositoryRoot, options.label);
-      if (options.cwd !== undefined) {
-        const handle = getTicketHandle(options.cwd);
-        if (handle === undefined) {
-          return yield* new HarnessRuntimeError();
-        }
-        return yield* Effect.tryPromise({
-          try: (signal) =>
-            handle.run({
-              agent: provider,
-              sandbox: noSandbox(),
-              prompt,
-              signal,
-              ...(options.completionSignal === undefined ? {} : { completionSignal: [...options.completionSignal] }),
-              logging,
-            }),
-          catch: () => new HarnessRuntimeError(),
-        });
-      }
       return yield* Effect.tryPromise({
         try: (signal) =>
           run({
@@ -146,8 +128,9 @@ const sandcastleHarness = (name: HarnessName, repositoryRoot: string, path: Path
             sandbox: noSandbox(),
             prompt,
             signal,
+            ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
             ...(options.completionSignal === undefined ? {} : { completionSignal: [...options.completionSignal] }),
-            logging,
+            logging: loggingOf(path, repositoryRoot, options.label),
           }),
         catch: () => new HarnessRuntimeError(),
       });

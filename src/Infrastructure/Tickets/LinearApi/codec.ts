@@ -158,6 +158,12 @@ export const escalateWrites = (issueId: string, metadata: LinearMetadata): reado
   ];
 };
 
+/** A retry on Linear: remove the `needs-human` label when the team has one. */
+export const retryWrites = (issueId: string, metadata: LinearMetadata): readonly LinearWrite[] => {
+  const labelId = needsHumanLabelId(metadata);
+  return labelId === undefined ? [] : [{ op: 'setLabels', issueId, addedLabelIds: [], removedLabelIds: [labelId] }];
+};
+
 export const ticketToWrites = (ticket: Ticket, metadata: LinearMetadata): readonly LinearWrite[] => {
   const issueId = parseTicketId(ticket.id).native;
   if (ticket.status === 'done') {

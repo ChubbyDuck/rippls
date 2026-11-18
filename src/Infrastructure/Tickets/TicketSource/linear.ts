@@ -18,6 +18,7 @@ import {
   needsHumanLabelId,
   type LinearWrite,
   releaseWrites,
+  retryWrites,
   ticketToWrites,
 } from '~/Infrastructure/Tickets/LinearApi/codec';
 
@@ -175,6 +176,9 @@ export const TicketSourceLinearLive = Layer.effect(
               );
             }
             yield* applyNeeded(issueId, escalateWrites(issueId, metadata));
+            return;
+          case 'retried':
+            yield* applyNeeded(issueId, retryWrites(issueId, metadata));
             return;
         }
       }).pipe(Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event })));

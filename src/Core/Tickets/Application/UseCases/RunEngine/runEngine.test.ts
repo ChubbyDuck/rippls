@@ -28,6 +28,8 @@ import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 import { StrategySelectorNoop } from '~/Infrastructure/Tickets/StrategySelector/noop';
 
+import { retryTicket } from '../RetryTicket/retryTicket';
+
 import type { RunEngineCommand } from './command';
 import { createEngine } from './createEngine';
 import { runEngine as executeEngine } from './runEngine';
@@ -644,6 +646,50 @@ test('runEngine does not take a ticket that an earlier Engine run escalated', as
 
   expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
   expect(ledger.escalated.has(id(1))).toBe(true);
+});
+
+test('runEngine takes a retried ticket again, in its retained Ticket Worktree', async () => {
+  const ran: Ticket[] = [];
+  const prepared: string[] = [];
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+  const recordingWorktrees = Layer.succeed(WorktreeManager, {
+    prepareProject: (value) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${value}`, branch: value }),
+    prepareTicket: ({ id: ticket }) =>
+      Effect.sync(() => {
+        const path = `/repo/.sandcastle/worktrees/ticket-${ticket}`;
+        prepared.push(path);
+        return { path, branch: `ticket-${ticket}` };
+      }),
+    mergeAndClose: () => Effect.void,
+  });
+
+  expect(
+    Effect.runSync(
+      runEngine({ project }, ledger).pipe(
+        Effect.provide(Layer.mergeAll(source.layer, HarnessSelectorNoop, failingStrategy)),
+        Effect.flip
+      )
+    )
+  ).toBeInstanceOf(EngineHalted);
+  await Effect.runPromise(retryTicket({ ticket: id(1) }).pipe(Effect.provide(Layer.merge(source.layer, ledger.layer))));
+  const later = Layer.mergeAll(
+    EngineStartupTest,
+    recordingWorktrees,
+    ledger.layer,
+    source.layer,
+    HarnessSelectorNoop,
+    capturingImplementation(ran)
+  );
+  expect(
+    await Effect.runPromise(
+      executeEngine({ project, limit: 1 }).pipe(Random.withSeed('test'), Effect.provide(later))
+    )
+  ).toBeUndefined();
+
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(1)]);
+  expect(prepared).toEqual([ledger.cleared.get(id(1))?.worktree]);
+  expect(ledger.escalated.has(id(1))).toBe(false);
 });
 
 test('runEngine does not process a ticket that another Engine escalated after this Engine read the Ledger', async () => {

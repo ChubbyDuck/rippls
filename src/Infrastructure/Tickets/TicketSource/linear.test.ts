@@ -326,6 +326,35 @@ test('report of escalated in a team without a needs-human label warns and succee
   ]);
 });
 
+test('report of retried removes needs-human and leaves the other labels, the assignee, and the state', async () => {
+  const api = fakeLinear([
+    issue({
+      labels: [
+        { id: 'label-task', name: 'kind:task' },
+        { id: 'label-hitl-no', name: 'hitl:no' },
+        { id: 'label-needs-human', name: 'needs-human' },
+      ],
+    }),
+  ]);
+
+  await Effect.runPromise(reportIn(api, 'retried'));
+  const [read] = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+
+  expect(api.calls).toEqual([
+    { op: 'setLabels', issueId: uuid, addedLabelIds: [], removedLabelIds: ['label-needs-human'] },
+  ]);
+  expect(api.issues.get(uuid)?.labels.map((label) => label.name)).toEqual(['kind:task', 'hitl:no']);
+  expect(read?.hitl).toBe('no');
+});
+
+test('report of retried on an Issue without needs-human changes nothing', async () => {
+  const api = fakeLinear([issue({})]);
+
+  await Effect.runPromise(reportIn(api, 'retried'));
+
+  expect(api.calls).toEqual([]);
+});
+
 test('saveMany applies the writes of each ticket', async () => {
   const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 

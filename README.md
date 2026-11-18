@@ -29,7 +29,7 @@ you want it to process. No clone of this project is required.
 | --- | --- |
 | **Engine** | Coordinates the Runners processing Tickets. |
 | **Runner** | A named worker reused across successive Tickets. |
-| **Ticket Source** | Reads external records, converts them into Tickets, saves Ticket changes, and receives reports of each Claim, release, and escalation. |
+| **Ticket Source** | Reads external records, converts them into Tickets, saves Ticket changes, and receives reports of each Claim, release, escalation, and retry. |
 | **Ledger** | The Engine's own local record of Ticket Processing, where each Claim and Escalation lives. |
 | **Ticket Stream** | The ongoing sequence of uniform Tickets supplied for processing. |
 | **Ticket Processing** | The shared lifecycle: claim, apply a Strategy, then complete or escalate. |
@@ -282,8 +282,8 @@ When a Strategy fails, the Engine escalates the ticket and halts the run:
 3. It reports the escalation to the Source.
 
 The ticket itself is not changed: it keeps its kind and `hitl`. An escalated ticket is
-not Eligible, in this run or a later one. Each Escalation is a record in
-`rippls/ledger/escalations/` inside the Git common directory (usually
+not Eligible, in this run or a later one, until it is retried. Each Escalation is a
+record in `rippls/ledger/escalations/` inside the Git common directory (usually
 `.git/rippls/ledger/escalations/`). Another escalation of the same ticket raises its
 attempt count.
 
@@ -293,9 +293,29 @@ attempt count.
   the `needs-human` label. Its `kind` and `hitl` labels stay. See
   [Linear Source](#linear-source).
 
-There is no command yet to clear an Escalation. To return an escalated ticket to
-unattended processing, remove its record from the `escalations` folder (and, on
-Linear, the `needs-human` label).
+### Retry an escalated ticket
+
+```text
+rippls retry <ticket> [--source folder|linear]
+```
+
+`rippls retry` returns an escalated ticket to unattended processing, without editing
+any file. Give it the identity that `rippls status` shows, such as `folder:4`:
+
+1. It reports the retry to the Source.
+2. It clears the Escalation in the Ledger: its record moves to
+   `.git/rippls/ledger/cleared/`. The attempt count is kept, so another escalation of
+   the ticket raises it.
+
+The next Engine run takes the ticket again and continues in its retained Ticket
+Worktree, so the earlier work and any fixes you made there are kept.
+
+- **Folder Source:** nothing else happens.
+- **Linear Source:** the `needs-human` label is removed from the issue.
+
+A retry of a ticket that is not escalated prints an error and changes nothing. If the
+Source cannot take the report, the Escalation stays in place, so you can run the
+retry again.
 
 ## Configuration
 
@@ -538,6 +558,7 @@ issue and returns it to an `unstarted` state. Completion moves it to a `complete
 If a Strategy fails, Rippls records the Escalation in its Ledger, unassigns the issue,
 returns it to an `unstarted` state, and adds the `needs-human` label. It does not change
 the `kind` or `hitl` labels. While the issue has `needs-human`, Rippls does not take it.
+`rippls retry` removes the label (see [Retry an escalated ticket](#retry-an-escalated-ticket)).
 
 ## Projects and worktrees
 
@@ -551,7 +572,9 @@ into the project branch.
 
 Worktrees live under `.sandcastle/worktrees/` and are ignored by Git. Project Worktrees
 remain for later tickets and are not merged into the Repository Root automatically.
-Ticket Worktrees are closed after success and retained after an escalation.
+Ticket Worktrees are closed after success and retained after an escalation. A retried
+ticket continues in its retained Ticket Worktree, with its commits and uncommitted
+changes.
 
 Before a run, keep the branch receiving merges in a reviewable state. Merge or otherwise
 integrate a completed project branch yourself.
@@ -653,8 +676,10 @@ Investigate a Harness failure:
 2. Inspect the retained Ticket Worktree under `.sandcastle/worktrees/`.
 3. Run `npx rippls status` to see the reason of the Escalation and the retained
    worktree, or read its record in `.git/rippls/ledger/escalations/`.
-4. Return it to unattended processing only after the problem is addressed: remove its
-   Escalation record (and, on Linear, the `needs-human` label).
+4. Address the problem. You may fix it by hand in the retained worktree; the retry
+   continues there and keeps your changes.
+5. Return it to unattended processing with `npx rippls retry <ticket>`, for example
+   `npx rippls retry folder:4`.
 
 
 

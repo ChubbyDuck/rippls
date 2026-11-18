@@ -42,7 +42,8 @@ const processRuns = (pid: number): Effect.Effect<boolean> =>
  * directory. Every worktree of the repository shares that directory, it never
  * appears in a merge, and it needs no ignore rule. A Claim is the record in the
  * folder itself; an Escalation is a record in its `escalations` folder, so it
- * outlives the Claim that is released when the ticket is escalated.
+ * outlives the Claim that is released when the ticket is escalated. A cleared
+ * Escalation moves to the `cleared` folder, which keeps its attempt count.
  */
 export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
   Layer.effect(
@@ -52,9 +53,11 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
       const path = yield* Path.Path;
       const dir = path.join(gitCommonDir, 'rippls', 'ledger');
       const escalationsDir = path.join(dir, 'escalations');
+      const clearedDir = path.join(dir, 'cleared');
       const fileName = (ticket: TicketId) => `${encodeURIComponent(ticket)}${RECORD_SUFFIX}`;
       const recordOf = (ticket: TicketId) => path.join(dir, fileName(ticket));
       const escalationOf = (ticket: TicketId) => path.join(escalationsDir, fileName(ticket));
+      const clearedOf = (ticket: TicketId) => path.join(clearedDir, fileName(ticket));
 
       // A record is written whole in a scratch folder next to the records, so a
       // reader never sees a partial record.
@@ -163,24 +166,45 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
       const read = (tickets: readonly TicketId[]) => readMany(tickets, (ticket) => readRecord(recordOf(ticket)));
 
       // Only the Engine that holds the Claim escalates a ticket, so the attempt
-      // count is read and raised without a race.
+      // count is read and raised without a race. The count continues from a
+      // cleared Escalation.
       const escalate = (ticket: TicketId, { reason, worktree }: EscalationCause) =>
         Effect.gen(function* () {
-          const previous = yield* readEscalation(escalationOf(ticket));
-          const attempts = Option.match(previous, { onNone: () => 0, onSome: (held) => held.attempts }) + 1;
+          const current = yield* readEscalation(escalationOf(ticket));
+          const earlier = Option.isSome(current) ? current : yield* readEscalation(clearedOf(ticket));
+          const attempts = Option.match(earlier, { onNone: () => 0, onSome: (held) => held.attempts }) + 1;
           const escalation = new Escalation({ ticket, reason, attempts, worktree });
           const scratch = yield* writeScratch(encodeEscalation(escalation));
           yield* fs.makeDirectory(escalationsDir, { recursive: true }).pipe(
             Effect.andThen(fs.rename(scratch, escalationOf(ticket))),
             Effect.mapError(toLedgerError)
           );
+          yield* removeRecord(clearedOf(ticket));
           return escalation;
         }).pipe(Effect.scoped);
+
+      const clearEscalation = (ticket: TicketId) =>
+        fs.makeDirectory(clearedDir, { recursive: true }).pipe(
+          Effect.andThen(fs.rename(escalationOf(ticket), clearedOf(ticket))),
+          Effect.catchIf(isNotFound, () => Effect.void),
+          Effect.mapError(toLedgerError)
+        );
 
       const escalations = (tickets: readonly TicketId[]) =>
         readMany(tickets, (ticket) => readEscalation(escalationOf(ticket)));
 
-      return { claim, assignRunner, release, isStale, releaseStale, releaseAllOf, read, escalate, escalations };
+      return {
+        claim,
+        assignRunner,
+        release,
+        isStale,
+        releaseStale,
+        releaseAllOf,
+        read,
+        escalate,
+        clearEscalation,
+        escalations,
+      };
     })
   );
 

@@ -191,6 +191,51 @@ test('a second failure of the same ticket raises its attempt count', async () =>
   );
 });
 
+test('clearing an escalation leaves the ticket not escalated, and the next escalation keeps counting', async () => {
+  const { afterClear, again } = await run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      const afterClear = yield* inLedger(
+        dir,
+        Effect.gen(function* () {
+          const ledger = yield* Ledger;
+          yield* ledger.escalate(ticket(1), { reason: 'first', worktree: '/wt/1' });
+          yield* ledger.escalate(ticket(1), { reason: 'second', worktree: '/wt/1' });
+          yield* ledger.clearEscalation(ticket(1));
+          return yield* ledger.escalations([ticket(1)]);
+        })
+      );
+      const again = yield* inLedger(
+        dir,
+        Ledger.pipe(Effect.flatMap((ledger) => ledger.escalate(ticket(1), { reason: 'third', worktree: '/wt/1' })))
+      );
+      return { afterClear, again };
+    })
+  );
+
+  expect(afterClear.size).toBe(0);
+  expect(again).toEqual(new Escalation({ ticket: ticket(1), reason: 'third', attempts: 3, worktree: '/wt/1' }));
+});
+
+test('clearing a ticket that is not escalated does nothing', async () => {
+  const escalations = await run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      return yield* inLedger(
+        dir,
+        Effect.gen(function* () {
+          const ledger = yield* Ledger;
+          yield* ledger.escalate(ticket(1), { reason: 'strategy failure', worktree: '/wt/1' });
+          yield* ledger.clearEscalation(ticket(2));
+          return yield* ledger.escalations([ticket(1), ticket(2)]);
+        })
+      );
+    })
+  );
+
+  expect([...escalations.keys()]).toEqual([ticket(1)]);
+});
+
 test('an escalation leaves the Claims in place, and a Claim leaves the ticket not escalated', async () => {
   const { claims, escalations } = await run(
     Effect.gen(function* () {

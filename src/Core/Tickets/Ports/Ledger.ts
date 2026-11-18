@@ -41,6 +41,12 @@ export class Ledger extends Context.Service<
      * attempt count by one.
      */
     readonly escalate: (ticket: TicketId, cause: EscalationCause) => Effect.Effect<Escalation, LedgerError>;
+    /**
+     * Clears the ticket's Escalation, so the ticket is no longer escalated. The
+     * attempt count is kept: the next Escalation of the ticket raises it.
+     * Clearing a ticket that is not escalated does nothing.
+     */
+    readonly clearEscalation: (ticket: TicketId) => Effect.Effect<void, LedgerError>;
     /** The Escalations of the given tickets. A ticket that is not escalated is absent. */
     readonly escalations: (
       tickets: readonly TicketId[]

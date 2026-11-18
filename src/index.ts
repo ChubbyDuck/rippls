@@ -2,7 +2,7 @@ import * as NodeRuntime from '@effect/platform-node/NodeRuntime';
 import * as NodeServices from '@effect/platform-node/NodeServices';
 import { hostname } from 'node:os';
 import { Config, Effect, Layer, Option, Schema } from 'effect';
-import { Command, Flag } from 'effect/unstable/cli';
+import { Argument, Command, Flag } from 'effect/unstable/cli';
 
 import { EngineFileConfigLive } from '~/config/layer';
 import {
@@ -14,10 +14,13 @@ import {
   TicketSourceTag,
 } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
+import { retryTicket } from '~/Core/Tickets/Application/UseCases/RetryTicket/retryTicket';
 import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngine/repositoryRoot';
 import { runEngine } from '~/Core/Tickets/Application/UseCases/RunEngine/runEngine';
 import { showStatus } from '~/Core/Tickets/Application/UseCases/ShowStatus/showStatus';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
+import { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { TicketNotEscalated } from '~/Core/Tickets/Domain/Exceptions/TicketNotEscalated';
 import { ConfiguredHarnessesLive } from '~/Infrastructure/Shared/HarnessSelector/configured';
 import { makeTracingLayer } from '~/Infrastructure/Shared/Tracing/otlp';
 import { LedgerFolderLive } from '~/Infrastructure/Tickets/Ledger/folder';
@@ -61,8 +64,9 @@ const engine = Command.make(
     ),
   }
 ).pipe(
-  // The Project and Source flags scope both the Engine and `rippls status`, and
-  // may stand before or after the subcommand.
+  // The Project and Source flags scope the Engine and `rippls status`, and the
+  // Source flag names the Source of `rippls retry`. They may stand before or
+  // after the subcommand.
   Command.withSharedFlags({
     source: Flag.choice('source', TicketSourceTag.literals).pipe(Flag.optional),
     project: Flag.string('project').pipe(Flag.withSchema(Project), Flag.optional),
@@ -89,13 +93,34 @@ const status = Command.make('status', {}, () =>
   })
 ).pipe(Command.withDescription('Print every ticket in scope with its Ticket Status'));
 
-const command = engine.pipe(Command.withSubcommands([status]));
+const retry = Command.make(
+  'retry',
+  {
+    ticket: Argument.string('ticket').pipe(
+      Argument.withSchema(TicketId),
+      Argument.withDescription('The identity of the escalated ticket, such as folder:4')
+    ),
+  },
+  ({ ticket }) =>
+    Effect.gen(function* () {
+      const { source } = yield* engine;
+      const ticketSource = yield* ticketSourceFor(source);
+      return yield* retryTicket({ ticket }).pipe(Effect.provide(ticketSource));
+    })
+).pipe(Command.withDescription('Return an escalated ticket to unattended processing'));
+
+const command = engine.pipe(Command.withSubcommands([status, retry]));
 
 export const program = Command.run(command, { version: '0.0.2' }).pipe(
   Effect.provide(AppLive.pipe(Layer.provideMerge(NodeServices.layer)))
 );
 
-const describeError = (error: unknown) => (error instanceof Config.ConfigError ? error.cause.message : error);
+const describeError = (error: unknown) =>
+  error instanceof Config.ConfigError
+    ? error.cause.message
+    : error instanceof TicketNotEscalated
+      ? error.message
+      : error;
 
 export const run = () =>
   program.pipe(

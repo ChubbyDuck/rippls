@@ -676,7 +676,7 @@ test('after claimed and after released the ticket file is byte-for-byte unchange
   expect(result.files).toEqual(['1-reported.md']);
 });
 
-test('after escalated the ticket file is byte-for-byte unchanged', async () => {
+test('after escalated and retried the ticket file is byte-for-byte unchanged', async () => {
   const content =
     frontMatter({ id: 1, title: 'escalated', project: 'demo', kind: 'implementation', status: 'ready-for-agent', blockedBy: [], blocks: [] }) +
     '# Escalated\n\n- [x] Keep me.\n';
@@ -686,13 +686,16 @@ test('after escalated the ticket file is byte-for-byte unchanged', async () => {
       const path = yield* Path.Path;
       const dir = yield* setup([['1-escalated.md', content]]);
       yield* reportIn(dir, 'escalated');
-      const after = yield* fs.readFileString(path.join(dir, '1-escalated.md'));
+      const afterEscalated = yield* fs.readFileString(path.join(dir, '1-escalated.md'));
+      yield* reportIn(dir, 'retried');
+      const afterRetried = yield* fs.readFileString(path.join(dir, '1-escalated.md'));
       const files = yield* fs.readDirectory(dir);
-      return { after, files };
+      return { afterEscalated, afterRetried, files };
     }).pipe(Effect.provide(NodeFs))
   );
 
-  expect(result.after).toBe(content);
+  expect(result.afterEscalated).toBe(content);
+  expect(result.afterRetried).toBe(content);
   expect(result.files).toEqual(['1-escalated.md']);
 });
 

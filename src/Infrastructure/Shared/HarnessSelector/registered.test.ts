@@ -3,12 +3,6 @@ import * as NodePath from '@effect/platform-node/NodePath';
 import { Console, Effect, Layer, Path } from 'effect';
 import { beforeEach, expect, test, vi } from 'vitest';
 
-import { HarnessRuntimeError } from '~/Core/Shared/Domain/Exceptions/HarnessRuntimeError';
-import {
-  clearTicketHandles,
-  registerTicketHandle,
-} from '~/Infrastructure/Tickets/WorktreeManager/sandcastle';
-
 import { registeredHarnessesOf } from './registered';
 
 const repositoryRoot = '/repo';
@@ -33,56 +27,28 @@ runMock.mockResolvedValue({
   branch: 'main',
 });
 
-const handleRun = vi.fn();
-
 beforeEach(() => {
   runMock.mockClear();
-  handleRun.mockClear();
-  clearTicketHandles();
-  handleRun.mockResolvedValue({
-    completionSignal: undefined,
-    iterations: [],
-    stdout: '',
-    commits: [],
-    branch: 'ticket-11',
-  });
 });
 
-test('a run with a working directory uses the ticket worktree handle', async () => {
-  registerTicketHandle('/tmp/worktree', { run: handleRun } as never);
-
+test('a run with a working directory runs in that directory on its current branch', async () => {
   await Effect.runPromise(Claude.run('do the work', { label: 'ticket-11', cwd: '/tmp/worktree' }));
 
-  expect(handleRun).toHaveBeenCalledTimes(1);
-  expect(runMock).not.toHaveBeenCalled();
-  expect(handleRun.mock.calls[0]?.[0]).toMatchObject({
-    prompt: 'do the work',
-  });
-  expect(handleRun.mock.calls[0]?.[0]).not.toHaveProperty('cwd');
-  expect(handleRun.mock.calls[0]?.[0]).not.toHaveProperty('branchStrategy');
-  expect(handleRun.mock.calls[0]?.[0].logging).toEqual({
+  expect(runMock).toHaveBeenCalledTimes(1);
+  expect(runMock.mock.calls[0]?.[0]).toMatchObject({ prompt: 'do the work', cwd: '/tmp/worktree' });
+  expect(runMock.mock.calls[0]?.[0]).not.toHaveProperty('branchStrategy');
+  expect(runMock.mock.calls[0]?.[0].logging).toEqual({
     type: 'file',
     path: '/repo/.sandcastle/logs/ticket-11.log',
     verbose: true,
   });
 });
 
-test('a run with a working directory and no ticket worktree fails', async () => {
-  const failure = await Effect.runPromise(
-    Claude.run('do the work', { label: 'ticket-11', cwd: '/tmp/missing' }).pipe(Effect.flip)
-  );
-
-  expect(failure).toBeInstanceOf(HarnessRuntimeError);
-  expect(runMock).not.toHaveBeenCalled();
-  expect(handleRun).not.toHaveBeenCalled();
-});
-
-test('a run without a working directory uses the top-level runner', async () => {
+test('a run without a working directory runs in the current directory', async () => {
   await Effect.runPromise(Claude.run('do the work', { label: 'ticket-11' }));
 
   expect(runMock.mock.calls[0]?.[0]).not.toHaveProperty('cwd');
   expect(runMock.mock.calls[0]?.[0]).not.toHaveProperty('branchStrategy');
-  expect(handleRun).not.toHaveBeenCalled();
 });
 
 test('a run records a log path under the Repository Root', async () => {

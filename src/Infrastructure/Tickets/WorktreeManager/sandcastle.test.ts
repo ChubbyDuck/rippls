@@ -1,4 +1,4 @@
-import { createWorktree } from '@ai-hero/sandcastle';
+import { createWorktree, run as runSandcastle } from '@ai-hero/sandcastle';
 import * as NodeServices from '@effect/platform-node/NodeServices';
 import { Console, Effect, FileSystem, Layer, Path, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
@@ -7,18 +7,21 @@ import { beforeEach, expect, test, vi } from 'vitest';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
+import { registeredHarnessesOf } from '~/Infrastructure/Shared/HarnessSelector/registered';
 
-import { clearTicketHandles, WorktreeManagerLive } from './sandcastle';
+import { WorktreeManagerLive } from './sandcastle';
 
 vi.mock('@ai-hero/sandcastle', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@ai-hero/sandcastle')>();
   return {
     ...actual,
     createWorktree: vi.fn(actual.createWorktree),
+    run: vi.fn(),
   };
 });
 
 const createWorktreeMock = vi.mocked(createWorktree);
+const runMock = vi.mocked(runSandcastle);
 
 const project = Schema.decodeSync(Project)('demo');
 const ticketId = Schema.decodeSync(TicketId)('folder:17');
@@ -68,7 +71,7 @@ const run = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices>, messa
 
 beforeEach(() => {
   createWorktreeMock.mockClear();
-  clearTicketHandles();
+  runMock.mockReset();
 });
 
 test('the first call for a project creates its branch off the base and a worktree', async () => {
@@ -256,3 +259,66 @@ test('closing a ticket worktree merges it into the project and removes the tree'
   expect(ticketPath).toContain('ticket-folder-17');
 });
 
+
+test('a Ticket Worktree on disk is reused by a new manager, and a Harness run, merge, and close work on it', async () => {
+  // The Agent commits everything in the directory it runs in.
+  runMock.mockImplementation((options) =>
+    run(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const cwd = options.cwd!;
+        yield* fs.writeFileString(path.join(cwd, 'agent.txt'), 'from the agent');
+        yield* git(cwd, ['add', '-A']);
+        yield* git(cwd, ['commit', '-m', 'agent']);
+        return { completionSignal: undefined, iterations: [], stdout: '', commits: [], branch: 'ticket-folder-17' };
+      })
+    )
+  );
+  const result = await run(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* initRepo;
+      const prepareTicket = WorktreeManager.pipe(Effect.flatMap((manager) => manager.prepareTicket({ id: ticketId })));
+      // An earlier Engine run prepares the Ticket Worktree, commits work, and is
+      // escalated; a human then leaves a fix uncommitted.
+      const first = yield* prepareTicket.pipe(Effect.provide(WorktreeManagerLive(root)));
+      yield* fs.writeFileString(path.join(first.path, 'earlier.txt'), 'earlier work');
+      yield* git(first.path, ['add', 'earlier.txt']);
+      yield* git(first.path, ['commit', '-m', 'earlier work']);
+      yield* fs.writeFileString(path.join(first.path, 'base.txt'), 'fixed by a human');
+      createWorktreeMock.mockClear();
+      return yield* Effect.gen(function* () {
+        const manager = yield* WorktreeManager;
+        const reused = yield* manager.prepareTicket({ id: ticketId });
+        const earlierLog = yield* git(reused.path, ['log', '--format=%s']);
+        const uncommitted = yield* git(reused.path, ['status', '--porcelain']);
+        const { Claude } = registeredHarnessesOf(root, path);
+        yield* Claude.run('continue the work', { label: 'ticket-folder-17', cwd: reused.path });
+        yield* manager.mergeAndClose(reused);
+        return {
+          first,
+          reused,
+          earlierLog,
+          uncommitted,
+          exists: yield* fs.exists(reused.path),
+          merged: {
+            earlier: yield* git(root, ['show', 'HEAD:earlier.txt']),
+            fix: yield* git(root, ['show', 'HEAD:base.txt']),
+            agent: yield* git(root, ['show', 'HEAD:agent.txt']),
+          },
+        };
+      }).pipe(Effect.provide(WorktreeManagerLive(root)));
+    })
+  );
+
+  expect(result.reused).toEqual(result.first);
+  expect(createWorktreeMock).not.toHaveBeenCalled();
+  expect(result.earlierLog.split('\n')).toEqual(['earlier work', 'init']);
+  expect(result.uncommitted).toBe('M base.txt');
+  expect(runMock).toHaveBeenCalledTimes(1);
+  expect(runMock.mock.calls[0]?.[0]).toMatchObject({ prompt: 'continue the work', cwd: result.reused.path });
+  expect(result.merged).toEqual({ earlier: 'earlier work', fix: 'fixed by a human', agent: 'from the agent' });
+  expect(result.exists).toBe(false);
+});

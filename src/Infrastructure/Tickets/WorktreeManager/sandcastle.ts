@@ -1,4 +1,4 @@
-import { createWorktree, type Worktree as SandcastleWorktree } from '@ai-hero/sandcastle';
+import { createWorktree } from '@ai-hero/sandcastle';
 import { Console, Effect, FileSystem, Layer, Path } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
@@ -12,26 +12,11 @@ import { ensureDependencies } from './ensureDependencies';
 
 // Sandcastle stores a named-branch worktree at this path. A second createWorktree
 // for the same branch fails because that branch is already checked out, so the
-// adapter reuses the directory when it is already on disk. The handle is never
-// closed: the project worktree is the accumulation point.
+// adapter reuses the directory when it is already on disk: a Project Worktree,
+// and a Ticket Worktree retained after an escalation. The adapter keeps no
+// Sandcastle handle, so a Harness runs in a reused worktree as in a new one.
 const worktreePathOf = (path: Path.Path, repositoryRoot: string, name: string) =>
   path.join(repositoryRoot, '.sandcastle', 'worktrees', name.replaceAll('/', '-'));
-
-const ticketHandles = new Map<string, SandcastleWorktree>();
-
-export const registerTicketHandle = (worktreePath: string, handle: SandcastleWorktree) => {
-  ticketHandles.set(worktreePath, handle);
-};
-
-export const getTicketHandle = (worktreePath: string) => ticketHandles.get(worktreePath);
-
-export const unregisterTicketHandle = (worktreePath: string) => {
-  ticketHandles.delete(worktreePath);
-};
-
-export const clearTicketHandles = () => {
-  ticketHandles.clear();
-};
 
 export const WorktreeManagerLive = (repositoryRoot: string) => {
   const projectMemo = new Map<string, Worktree>();
@@ -92,6 +77,14 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
             }
             const parent =
               project === undefined ? { path: repositoryRoot, branch: 'HEAD' } : yield* prepareProject(project);
+            const onDisk = worktreePathOf(path, repositoryRoot, branch);
+            if (yield* fs.exists(onDisk).pipe(Effect.mapError(() => new WorktreeCreationError()))) {
+              yield* Console.log(`Worktree ${branch} is reused from disk at ${onDisk}`);
+              const worktree = { path: onDisk, branch };
+              yield* prepared(worktree.path);
+              ticketMemo.set(branch, { worktree, parentPath: parent.path });
+              return worktree;
+            }
             yield* Console.log(`Worktree ${branch} is creating from ${parent.branch} at ${parent.path}`);
             const created = yield* Effect.tryPromise({
               try: () =>
@@ -104,31 +97,28 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
             const worktree = { path: created.worktreePath, branch: created.branch };
             yield* Console.log(`Worktree ${branch} is ready at ${worktree.path} on branch ${worktree.branch}`);
             yield* prepared(worktree.path);
-            registerTicketHandle(created.worktreePath, created);
             ticketMemo.set(branch, { worktree, parentPath: parent.path });
             return worktree;
           }),
         mergeAndClose: (worktree: Worktree) =>
           Effect.gen(function* () {
             const record = [...ticketMemo.values()].find((entry) => entry.worktree.path === worktree.path);
-            const handle = getTicketHandle(worktree.path);
-            if (record === undefined || handle === undefined) {
+            if (record === undefined) {
               return;
             }
+            const git = (args: readonly string[], cwd: string) =>
+              spawner
+                .string(ChildProcess.make('git', args, { cwd }))
+                .pipe(Effect.mapError(() => new WorktreeCloseError()));
             yield* Console.log(`Worktree ${worktree.branch} is merging into ${record.parentPath}`);
-            yield* spawner
-              .string(
-                ChildProcess.make('git', ['merge', '--no-ff', '--no-edit', worktree.branch], {
-                  cwd: record.parentPath,
-                })
-              )
-              .pipe(Effect.mapError(() => new WorktreeCloseError()));
+            yield* git(['merge', '--no-ff', '--no-edit', worktree.branch], record.parentPath);
             yield* Console.log(`Worktree ${worktree.branch} is closing at ${worktree.path}`);
-            yield* Effect.tryPromise({
-              try: () => handle.close(),
-              catch: () => new WorktreeCloseError(),
-            });
-            unregisterTicketHandle(worktree.path);
+            // As a Sandcastle handle closes it: a worktree with uncommitted
+            // changes stays on disk.
+            const changes = yield* git(['status', '--porcelain'], worktree.path);
+            if (changes.trim().length === 0) {
+              yield* git(['worktree', 'remove', '--force', worktree.path], repositoryRoot);
+            }
             ticketMemo.delete(worktree.branch);
             yield* Console.log(`Worktree ${worktree.branch} is closed`);
           }),

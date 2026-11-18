@@ -40,7 +40,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 | `StrategySelector` | [default.ts](src/Infrastructure/Tickets/StrategySelector/default.ts) | Kind → Strategy map |
 | `HarnessSelector` | [configured.ts](src/Infrastructure/Shared/HarnessSelector/configured.ts), [registered.ts](src/Infrastructure/Shared/HarnessSelector/registered.ts) | Sandcastle agent providers |
 | `WorktreeManager` | [sandcastle.ts](src/Infrastructure/Tickets/WorktreeManager/sandcastle.ts) | Sandcastle `createWorktree` + `git merge --no-ff` |
-| `Ledger` | [folder.ts](src/Infrastructure/Tickets/Ledger/folder.ts) | One Claim record per ticket in `<git-common-dir>/rippls/ledger/`, Escalations in its `escalations/` folder ([ADR 0004](docs/adr/0004-read-only-tickets-and-the-ledger.md)) |
+| `Ledger` | [folder.ts](src/Infrastructure/Tickets/Ledger/folder.ts) | One Claim record per ticket in `<git-common-dir>/rippls/ledger/`, Escalations in its `escalations/` folder, cleared ones in `cleared/` ([ADR 0004](docs/adr/0004-read-only-tickets-and-the-ledger.md)) |
 
 `Engine` and `Runner` are plain entities with identities and deliberately have no ports; the orchestration lives in the use cases ([ADR 0001](docs/adr/0001-separate-engine-and-runner-from-orchestration.md)).
 
@@ -62,7 +62,6 @@ After that, read whichever adapter you need. The tests sit next to the source an
 - **One Strategy failure stops the run.** `EngineHalted` propagates out of the stream, and a worktree create or merge failure does the same after one retry.
 - **Only `implementation` is real.** `research` and `task` are a single Harness call via `named()` in [noop.ts](src/Infrastructure/Tickets/StrategySelector/noop.ts); `prototype` and `grilling` imply `hitl: yes`, so they are never taken.
 - **The implementation Strategy depends on things outside this repo.** It sends `/implement-bare`, `/acceptance-gate` and `/commit`, which must exist as slash commands in the target repo's Harness. [circumstances.ts](src/Infrastructure/Tickets/StrategySelector/circumstances.ts) also tells agents to use `pnx chubby <alias> <script>`, a leftover from the monorepo this was extracted from.
-- **Hidden coupling between two adapters.** The Harness adapter looks up the Sandcastle worktree handle by path in a module-level `Map` owned by the WorktreeManager adapter ([registered.ts:124-128](src/Infrastructure/Shared/HarnessSelector/registered.ts#L124-L128)). A `cwd` with no registered handle fails with `HarnessRuntimeError`.
 - **Model IDs are hard-coded.** The catalog is in [registered.ts:23-53](src/Infrastructure/Shared/HarnessSelector/registered.ts#L23-L53); a Strategy asks for a tier/fast/generation and falls back to the Harness default when nothing matches.
 - **A Claim from another host is never stale.** The Engine replaces a Claim whose process no longer runs on its own host, but it cannot see the processes of another host, so such a Claim keeps its ticket claimed until someone removes the Ledger record.
 - **Ticket IDs are namespaced strings** (`folder:42`, `linear:<uuid>`), and the domain never branches on the source ([ADR 0002](docs/adr/0002-source-namespaced-string-ticket-id.md)). On disk the folder Source still uses plain numbers.
