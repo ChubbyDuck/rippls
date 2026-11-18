@@ -301,9 +301,14 @@ the ticket, the Ledger, and the done tickets; the ticket file does not hold it.
 When several values apply to one ticket, the first in this table is shown. A ticket
 whose only Claim is stale shows the value it would have without that Claim.
 
-A claimed ticket also shows the owner of its Claim: the Engine, the Runner (or `no
-Runner yet`), the process ID, and the host. An escalated ticket shows the reason of its
-Escalation, the attempt count, and the path of its retained Ticket Worktree. A blocked
+A claimed ticket also shows the holder of its Claim: the Engine, the Runner (or `no
+Runner yet`), the process ID, and the host. A ticket whose only Claim is stale shows
+the holder of that Claim the same way, marked `Stale Claim`, so you can tell a running
+Claim from one whose process has ended. An escalated ticket shows the reason of its
+Escalation, the attempt count, and the path of its retained Ticket Worktree. For a
+failed Strategy, the reason names the step that failed, by its position in the
+Strategy, and how it failed: a Harness error, its time limit, or a verdict other than
+pass. A blocked
 ticket shows which of its blockers are open and which cannot be resolved; any other
 ticket that is not done shows the blockers that cannot be resolved. After the
 tickets, every unreadable file, folder, or Issue is listed with its reason, under its
@@ -314,8 +319,9 @@ a trailing `/`.
 folder:1  Add login                   claimed  (Claim: Engine honey-wren-c9w5, Runner honey-wren-c9w5:0, process 21474, host build-box)
 folder:2  Add logout                  blocked  (Blockers: open folder:1; unresolved folder:9)
 folder:3  Add the session store       done
-folder:4  Add sign-up                 escalated  (Escalation: strategy failure, 1 attempt, Ticket Worktree /repo/.sandcastle/worktrees/ticket-folder-4)
+folder:4  Add sign-up                 escalated  (Escalation: strategy failure: step 2, verdict other than pass, 1 attempt, Ticket Worktree /repo/.sandcastle/worktrees/ticket-folder-4)
 folder:5  Choose the password policy  not ready
+folder:6  Add password reset          eligible  (Stale Claim: Engine moss-heron-k2p8, Runner moss-heron-k2p8:0, process 20117, host build-box)
 -         README.md                   unreadable  (no numeric prefix)
 folder:7  07-broken.md                unreadable  (unparseable front matter: it has no closing `---`)
 ```
@@ -388,9 +394,13 @@ When a Strategy fails, the check command still fails after its fix attempts, or 
 Ticket Worktree still has uncommitted work after the commit prompt, the Engine
 escalates the ticket and halts the run:
 
-1. It records an **Escalation** in the Ledger with the reason (`strategy failure`,
-   `check failure`, or `commit failure`), the attempt count, and
-   the path of the retained Ticket Worktree.
+1. It records an **Escalation** in the Ledger with the reason, the attempt count, and
+   the path of the retained Ticket Worktree. The reason is `check failure`,
+   `commit failure`, or, for a failed Strategy, the step that failed, by its position,
+   and how its last run failed:
+   - `strategy failure: step 2, Harness error`
+   - `strategy failure: step 2, time limit reached`
+   - `strategy failure: step 2, verdict other than pass`
 2. It releases the Claim.
 3. It reports the escalation to the Source.
 

@@ -117,7 +117,7 @@ export const processTicket = ({
       .run(ticket, worktreeHarness)
       .pipe(Effect.withSpan('strategy.run', { attributes: { harness: harness.name, strategy: strategy.name } }));
     if (Result.isFailure(outcome)) {
-      return yield* escalate(ticket, worktree, 'strategy failure');
+      return yield* escalate(ticket, worktree, outcome.failure.reason);
     }
     // A check command that cannot run, or a fix the Harness cannot carry out, fails
     // the check as a failing command does.

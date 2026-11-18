@@ -63,7 +63,7 @@ const claimOf = (ticket: TicketId, process = 1) =>
   new Claim({ ticket, engine, process, host: 'memory', runner });
 
 const escalationOf = (ticket: TicketId) =>
-  new Escalation({ ticket, reason: 'strategy failure', attempts: 2, worktree: '/repo/.sandcastle/worktrees/ticket-5' });
+  new Escalation({ ticket, reason: 'strategy failure: step 2, verdict other than pass', attempts: 2, worktree: '/repo/.sandcastle/worktrees/ticket-5' });
 
 const setup = (
   tickets: readonly Ticket[],
@@ -161,10 +161,20 @@ describe('ticketStatuses', () => {
     ]);
   });
 
-  it('counts a ticket whose only Claim is a Stale Claim as unclaimed', async () => {
-    const layer = setup([ticket(1)], { claims: [claimOf(id(1), 4242)] });
+  it('counts a ticket whose only Claim is a Stale Claim as unclaimed, and shows that Claim as stale', async () => {
+    const stale = claimOf(id(1), 4242);
+    const layer = setup([ticket(1), ticket(2, { hitl: 'yes' })], { claims: [stale, claimOf(id(2), 4243)] });
 
-    expect(await statusesOf(layer)).toEqual([[id(1), 'eligible']]);
+    const lines = await Effect.runPromise(ticketStatuses({}).pipe(Effect.provide(layer)));
+
+    expect(
+      lines.map((line) =>
+        line.status === 'unreadable' ? [] : [line.ticket.id, line.status, line.claim, line.staleClaim]
+      )
+    ).toEqual([
+      [id(1), 'eligible', undefined, stale],
+      [id(2), 'not ready', undefined, claimOf(id(2), 4243)],
+    ]);
   });
 
   it('lists only the tickets of the Project when a Project is given', async () => {
@@ -306,6 +316,17 @@ describe('showStatus', () => {
     ]);
   });
 
+  it('prints the holder of a Stale Claim, marked stale, with the Ticket Status the ticket has without it', async () => {
+    const layer = setup([ticket(3), ticket(4, { blockedBy: [id(9)] })], {
+      claims: [claimOf(id(3), 4242), new Claim({ ticket: id(4), engine, process: 4243, host: 'memory' })],
+    });
+
+    expect(await printed(layer)).toEqual([
+      'folder:3  Ticket 3  eligible  (Stale Claim: Engine engine-1234, Runner engine-1234:runner-a, process 4242, host memory)',
+      'folder:4  Ticket 4  blocked  (Stale Claim: Engine engine-1234, no Runner yet, process 4243, host memory)  (Blockers: unresolved folder:9)',
+    ]);
+  });
+
   it('prints a Claim that has no Runner yet', async () => {
     const claim = new Claim({ ticket: id(3), engine, process: 1, host: 'memory' });
     const layer = setup([ticket(3)], { claims: [claim] });
@@ -319,7 +340,7 @@ describe('showStatus', () => {
     const layer = setup([ticket(5)], { escalations: [escalationOf(id(5))] });
 
     expect(await printed(layer)).toEqual([
-      'folder:5  Ticket 5  escalated  (Escalation: strategy failure, 2 attempts, Ticket Worktree /repo/.sandcastle/worktrees/ticket-5)',
+      'folder:5  Ticket 5  escalated  (Escalation: strategy failure: step 2, verdict other than pass, 2 attempts, Ticket Worktree /repo/.sandcastle/worktrees/ticket-5)',
     ]);
   });
 

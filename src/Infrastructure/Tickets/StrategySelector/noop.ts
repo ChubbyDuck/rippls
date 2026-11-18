@@ -12,7 +12,7 @@ export const named = (name: string): Strategy => ({
     Console.log(ticket.body).pipe(
       Effect.andThen(harness.run(`${ticket.title}\n\n${ticket.body}`, { label: `ticket-${ticket.id}` })),
       Effect.asVoid,
-      Effect.mapError(() => new StrategyRuntimeError()),
+      Effect.mapError(() => new StrategyRuntimeError({ step: 1, failure: 'Harness error' })),
       Effect.result
     ),
 });

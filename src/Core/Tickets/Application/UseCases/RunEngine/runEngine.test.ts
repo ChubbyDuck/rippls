@@ -763,7 +763,7 @@ const failingStrategy = Layer.succeed(StrategySelector, {
   select: () =>
     Effect.succeed({
       name: 'implementation',
-      run: () => Effect.succeed(Result.fail(new StrategyRuntimeError())),
+      run: () => Effect.succeed(Result.fail(new StrategyRuntimeError({ step: 1, failure: 'Harness error' }))),
     }),
 });
 
@@ -773,12 +773,12 @@ test('runEngine records an escalation in the Ledger, reports no done to the Sour
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, failingStrategy);
 
   expect(Effect.runSync(runEngine({ project }, ledger).pipe(Effect.provide(layer), Effect.flip))).toEqual(
-    new EngineHalted({ ticketId: id(1), reason: 'strategy failure' })
+    new EngineHalted({ ticketId: id(1), reason: 'strategy failure: step 1, Harness error' })
   );
   expect([...ledger.escalated.values()]).toEqual([
     new Escalation({
       ticket: id(1),
-      reason: 'strategy failure',
+      reason: 'strategy failure: step 1, Harness error',
       attempts: 1,
       worktree: '/repo/.sandcastle/worktrees/ticket-folder-1',
     }),
@@ -2048,7 +2048,7 @@ test('runEngine does not run the check when the Strategy fails', async () => {
     executeEngine({ project, check: checkOf() }).pipe(Random.withSeed('test'), Effect.provide(layer), Effect.flip)
   );
 
-  expect(error).toEqual(new EngineHalted({ ticketId: id(1), reason: 'strategy failure' }));
+  expect(error).toEqual(new EngineHalted({ ticketId: id(1), reason: 'strategy failure: step 1, Harness error' }));
   expect(timeline).toEqual([]);
 });
 

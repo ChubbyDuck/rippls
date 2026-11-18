@@ -5,7 +5,7 @@ import type { Harness, HarnessRunOptions } from '~/Core/Shared/Ports/Harness';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import { StrategyNotFound } from '~/Core/Tickets/Domain/Exceptions/StrategyNotFound';
-import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
+import { type StepFailure, StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
 import { renderPrompt } from '~/Core/Tickets/Domain/Services/promptTemplate';
 import type { Strategy } from '~/Core/Tickets/Ports/Strategy';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
@@ -29,12 +29,20 @@ const optionsOf = (step: StrategyStep, ticket: Ticket, index: number): HarnessRu
 
 // One step: a Harness run within the time limit and, for a verdict step, the pass
 // signal. Anything else fails the step, which runs again up to its retry count.
+// The failure names the step by its position and the way its last run failed.
 const runStep = (step: StrategyStep, ticket: Ticket, harness: Harness, index: number) => {
-  const run = harness.run(promptOf(step, ticket, harness), optionsOf(step, ticket, index));
-  return (step.timeLimit === undefined ? run : run.pipe(Effect.timeout(step.timeLimit))).pipe(
+  const failed = (failure: StepFailure) => new StrategyRuntimeError({ step: index + 1, failure });
+  const run = harness
+    .run(promptOf(step, ticket, harness), optionsOf(step, ticket, index))
+    .pipe(Effect.mapError(() => failed('Harness error')));
+  const limited =
+    step.timeLimit === undefined
+      ? run
+      : run.pipe(Effect.timeoutOrElse({ duration: step.timeLimit, orElse: () => Effect.fail(failed('time limit')) }));
+  return limited.pipe(
     Effect.filterOrFail(
       (result) => step.verdict !== true || result.completionSignal === VERDICT_PASS,
-      () => new StrategyRuntimeError()
+      () => failed('verdict')
     ),
     Effect.retry({ times: step.retries ?? 0 }),
     Effect.withSpan('strategy.step', { attributes: { step: index + 1, verdict: step.verdict === true } })
@@ -48,7 +56,6 @@ export const configuredStrategy = (kind: TicketKind, steps: readonly StrategySte
   name: kind,
   run: (ticket, harness) =>
     Effect.forEach(steps, (step, index) => runStep(step, ticket, harness, index), { discard: true }).pipe(
-      Effect.mapError(() => new StrategyRuntimeError()),
       Effect.result
     ),
 });

@@ -13,13 +13,15 @@ import type { ShowStatusCommand } from './command';
 
 /**
  * One ticket in scope with its Ticket Status, and the Claim of a claimed ticket,
- * the Escalation of an escalated one, the outstanding blockers of a blocked one,
- * and the unresolved blockers of any other.
+ * the Stale Claim of a ticket whose only Claim is stale, the Escalation of an
+ * escalated one, the outstanding blockers of a blocked one, and the unresolved
+ * blockers of any other.
  */
 export type TicketStatusLine = {
   readonly ticket: Ticket;
   readonly status: Exclude<TicketStatus, 'unreadable'>;
   readonly claim?: Claim;
+  readonly staleClaim?: Claim;
   readonly escalation?: Escalation;
   readonly blockers?: OutstandingBlockers;
 };
@@ -52,18 +54,20 @@ export const ticketStatuses = ({ project }: ShowStatusCommand) =>
   Effect.gen(function* () {
     const source = yield* TicketSource;
     const scope = yield* readTicketScope(project);
-    const { tickets, claims, escalations, facts } = scope;
+    const { tickets, claims, stale, escalations, facts } = scope;
     const outstanding = outstandingBlockers(scope);
     const unreadable = yield* source.getUnreadable;
     const read = tickets.map((ticket): TicketStatusLine => {
       const status = deriveTicketStatus(ticket, facts);
       const claim = status === 'claimed' ? claims.get(ticket.id) : undefined;
+      const staleClaim = stale.get(ticket.id);
       const escalation = status === 'escalated' ? escalations.get(ticket.id) : undefined;
       const blockers = blockersShown(status, outstanding.get(ticket.id));
       return {
         ticket,
         status,
         ...(claim === undefined ? {} : { claim }),
+        ...(staleClaim === undefined ? {} : { staleClaim }),
         ...(escalation === undefined ? {} : { escalation }),
         ...(blockers === undefined ? {} : { blockers }),
       };
@@ -75,8 +79,8 @@ export const ticketStatuses = ({ project }: ShowStatusCommand) =>
     return lines;
   });
 
-const describeClaim = ({ engine, runner, process, host }: Claim) =>
-  `Claim: Engine ${engine}, ${runner === undefined ? 'no Runner yet' : `Runner ${runner}`}, process ${process}, host ${host}`;
+const holderOf = ({ engine, runner, process, host }: Claim) =>
+  `Engine ${engine}, ${runner === undefined ? 'no Runner yet' : `Runner ${runner}`}, process ${process}, host ${host}`;
 
 const describeEscalation = ({ reason, attempts, worktree }: Escalation) =>
   `Escalation: ${reason}, ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}, Ticket Worktree ${worktree}`;
@@ -92,9 +96,10 @@ const describe = (line: StatusLine): readonly string[] => {
   if (line.status === 'unreadable') {
     return [line.unreadable.explanation];
   }
-  const { claim, escalation, blockers } = line;
+  const { claim, staleClaim, escalation, blockers } = line;
   return [
-    ...(claim === undefined ? [] : [describeClaim(claim)]),
+    ...(claim === undefined ? [] : [`Claim: ${holderOf(claim)}`]),
+    ...(staleClaim === undefined ? [] : [`Stale Claim: ${holderOf(staleClaim)}`]),
     ...(escalation === undefined ? [] : [describeEscalation(escalation)]),
     ...(blockers === undefined ? [] : [`Blockers: ${describeBlockers(blockers)}`]),
   ];
@@ -110,8 +115,8 @@ const nameOf = (line: StatusLine): string => (line.status === 'unreadable' ? lin
 const widest = (values: readonly string[]) => Math.max(0, ...values.map((value) => value.length));
 
 // The printed lines: the identity, the Title, and the Ticket Status of each
-// ticket, in aligned columns, then the owner of a Claim, the Escalation, the
-// outstanding blockers, or the reason a ticket is unreadable.
+// ticket, in aligned columns, then the holder of a Claim or a Stale Claim, the
+// Escalation, the outstanding blockers, or the reason a ticket is unreadable.
 const formatStatusLines = (lines: readonly StatusLine[]): readonly string[] => {
   const idWidth = widest(lines.map(identityOf));
   const titleWidth = widest(lines.map(nameOf));

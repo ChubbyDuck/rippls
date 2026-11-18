@@ -199,13 +199,13 @@ const failingServices = (
       select: () =>
         Effect.succeed({
           name: 'implementation',
-          run: () => Effect.succeed(Result.fail(new StrategyRuntimeError())),
+          run: () => Effect.succeed(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'verdict' }))),
         }),
     }),
     WorktreeManagerNoop
   );
 
-test('processTicket escalates the ticket in the Ledger and halts the run when the strategy fails', () => {
+test('processTicket escalates the ticket in the Ledger with the failed step as the reason, and halts the run when the strategy fails', () => {
   const doneReported: TicketId[] = [];
   const reported: TicketEvent[] = [];
   const ledger = ledgerClaiming(ticket);
@@ -222,12 +222,13 @@ test('processTicket escalates the ticket in the Ledger and halts the run when th
     )
   );
 
-  expect(halt).toEqual(new EngineHalted({ ticketId: ticket.id, reason: 'strategy failure' }));
+  const reason = 'strategy failure: step 2, verdict other than pass';
+  expect(halt).toEqual(new EngineHalted({ ticketId: ticket.id, reason }));
   expect(doneReported).toEqual([]);
   expect(reported).toEqual(['escalated']);
   expect(ledger.claims.size).toBe(0);
   expect(ledger.escalated.get(ticket.id)).toEqual(
-    new Escalation({ ticket: ticket.id, reason: 'strategy failure', attempts: 1, worktree: ticketWorktreeOf(ticket.id).path })
+    new Escalation({ ticket: ticket.id, reason, attempts: 1, worktree: ticketWorktreeOf(ticket.id).path })
   );
 });
 
@@ -443,7 +444,7 @@ test('processTicket retains the ticket worktree when the strategy fails', () => 
       select: () =>
         Effect.succeed({
           name: 'implementation',
-          run: () => Effect.succeed(Result.fail(new StrategyRuntimeError())),
+          run: () => Effect.succeed(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'verdict' }))),
         }),
     }),
     recordingWorktrees(closed)

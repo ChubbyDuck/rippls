@@ -1,4 +1,4 @@
-import { ConfigProvider, Duration, Effect, Fiber, Layer, Result } from 'effect';
+import { ConfigProvider, Duration, Effect, Fiber, Layer, Option, Result } from 'effect';
 import { TestClock } from 'effect/testing';
 import { expect, test } from 'vitest';
 
@@ -8,6 +8,7 @@ import type { Harness, HarnessRunOptions, HarnessRunResult } from '~/Core/Shared
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { StrategyNotFound } from '~/Core/Tickets/Domain/Exceptions/StrategyNotFound';
+import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 
 import { verdictInstruction, worktreeCircumstances } from './circumstances';
@@ -119,10 +120,17 @@ test('a failed verdict runs the step again, and a pass on the retry succeeds', a
 test('a verdict that is not a pass after every retry fails the Strategy and runs no further step', async () => {
   const { harness, calls } = harnessOf(verdicts(['VERDICT:FAIL', undefined, 'VERDICT:PASS']));
 
-  const outcome = await run([verdictStep, { prompt: 'After.' }], harness);
+  const outcome = await run([{ prompt: 'Before.' }, verdictStep, { prompt: 'After.' }], harness);
 
-  expect(Result.isFailure(outcome)).toBe(true);
-  expect(calls.map((call) => call.options.label)).toEqual(['ticket-folder:7-step-1', 'ticket-folder:7-step-1']);
+  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'verdict' })));
+  expect(Result.getFailure(outcome).pipe(Option.map((error) => error.reason))).toEqual(
+    Option.some('strategy failure: step 2, verdict other than pass')
+  );
+  expect(calls.map((call) => call.options.label)).toEqual([
+    'ticket-folder:7-step-1',
+    'ticket-folder:7-step-2',
+    'ticket-folder:7-step-2',
+  ]);
 });
 
 test('a verdict step with no retry count fails on the first verdict that is not a pass', async () => {
@@ -130,16 +138,19 @@ test('a verdict step with no retry count fails on the first verdict that is not 
 
   const outcome = await run([{ prompt: 'Judge.', verdict: true }], harness);
 
-  expect(Result.isFailure(outcome)).toBe(true);
+  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 1, failure: 'verdict' })));
   expect(calls).toHaveLength(1);
 });
 
 test('the time limit ends a step, which then counts as failed', async () => {
-  const { harness, calls } = harnessOf(() => Effect.never);
+  const { harness, calls } = harnessOf((_prompt, options) =>
+    options.completionSignal === undefined ? Effect.succeed({ completionSignal: undefined }) : Effect.never
+  );
 
   const outcome = await Effect.runPromise(
     Effect.gen(function* () {
       const fiber = yield* configuredStrategy('implementation', [
+        { prompt: 'Before.' },
         { prompt: 'Judge.', verdict: true, timeLimit: Duration.minutes(10), retries: 1 },
         { prompt: 'After.' },
       ])
@@ -151,17 +162,29 @@ test('the time limit ends a step, which then counts as failed', async () => {
     }).pipe(Effect.provide(TestClock.layer()))
   );
 
-  expect(Result.isFailure(outcome)).toBe(true);
-  expect(calls.map((call) => call.options.label)).toEqual(['ticket-folder:7-step-1', 'ticket-folder:7-step-1']);
+  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'time limit' })));
+  expect(Result.getFailure(outcome).pipe(Option.map((error) => error.reason))).toEqual(
+    Option.some('strategy failure: step 2, time limit reached')
+  );
+  expect(calls.map((call) => call.options.label)).toEqual([
+    'ticket-folder:7-step-1',
+    'ticket-folder:7-step-2',
+    'ticket-folder:7-step-2',
+  ]);
 });
 
 test('a Harness error fails the Strategy and runs no further step', async () => {
-  const { harness, calls } = harnessOf(() => Effect.fail(new HarnessRuntimeError()));
+  const { harness, calls } = harnessOf((prompt) =>
+    prompt.startsWith('Implement.') ? Effect.fail(new HarnessRuntimeError()) : Effect.succeed({ completionSignal: undefined })
+  );
 
-  const outcome = await run([{ prompt: 'Implement.' }, { prompt: 'After.' }], harness);
+  const outcome = await run([{ prompt: 'Before.' }, { prompt: 'Implement.' }, { prompt: 'After.' }], harness);
 
-  expect(Result.isFailure(outcome)).toBe(true);
-  expect(calls).toHaveLength(1);
+  expect(outcome).toEqual(Result.fail(new StrategyRuntimeError({ step: 2, failure: 'Harness error' })));
+  expect(Result.getFailure(outcome).pipe(Option.map((error) => error.reason))).toEqual(
+    Option.some('strategy failure: step 2, Harness error')
+  );
+  expect(calls).toHaveLength(2);
 });
 
 // Selects the Strategy of a Ticket Kind and runs it, so the test sees its prompts.
