@@ -637,7 +637,7 @@ test('strategiesConfig replaces the default Strategy of a configured Ticket Kind
   });
 });
 
-test('strategiesConfig rejects an empty Strategy, a step without a prompt, negative retries, a bad time limit, and an unknown Kind', () => {
+test('strategiesConfig rejects an empty Strategy, a step without a prompt, negative retries, and a bad time limit', () => {
   const failureOf = (strategies: unknown) =>
     Effect.runSync(loadStrategies({ strategies }).pipe(Effect.flip)).cause.message;
 

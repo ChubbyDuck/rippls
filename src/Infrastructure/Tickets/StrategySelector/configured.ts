@@ -3,6 +3,7 @@ import { Effect, Layer } from 'effect';
 import { type StrategiesConfig, type StrategyStep, strategiesConfig } from '~/Core/Shared/Domain/EngineConfig';
 import type { Harness, HarnessRunOptions } from '~/Core/Shared/Ports/Harness';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
+import type { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import { StrategyNotFound } from '~/Core/Tickets/Domain/Exceptions/StrategyNotFound';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
 import { renderPrompt } from '~/Core/Tickets/Domain/Services/promptTemplate';
@@ -40,11 +41,11 @@ const runStep = (step: StrategyStep, ticket: Ticket, harness: Harness, index: nu
   );
 };
 
-// Runs the steps in order in the same Ticket Worktree. A failed step fails the
-// Strategy and runs no further step. The port never fails, so every outcome is a
-// Result value.
-export const configuredStrategy = (name: string, steps: readonly StrategyStep[]): Strategy => ({
-  name,
+// The Strategy of a Ticket Kind, named after it. It runs the steps in order in
+// the same Ticket Worktree. A failed step fails the Strategy and runs no further
+// step. The port never fails, so every outcome is a Result value.
+export const configuredStrategy = (kind: TicketKind, steps: readonly StrategyStep[]): Strategy => ({
+  name: kind,
   run: (ticket, harness) =>
     Effect.forEach(steps, (step, index) => runStep(step, ticket, harness, index), { discard: true }).pipe(
       Effect.mapError(() => new StrategyRuntimeError()),
@@ -52,7 +53,7 @@ export const configuredStrategy = (name: string, steps: readonly StrategyStep[])
     ),
 });
 
-export const strategySelectorOf = (strategies: StrategiesConfig): StrategySelector['Service'] => ({
+const strategySelectorOf = (strategies: StrategiesConfig): StrategySelector['Service'] => ({
   select: (kind) => {
     const steps = strategies[kind];
     return steps === undefined ? Effect.fail(new StrategyNotFound({ kind })) : Effect.succeed(configuredStrategy(kind, steps));
@@ -60,9 +61,4 @@ export const strategySelectorOf = (strategies: StrategiesConfig): StrategySelect
 });
 
 // Selects the configured Strategy of a Ticket Kind: the default, or the one config sets.
-export const StrategySelectorLive = Layer.effect(
-  StrategySelector,
-  Effect.gen(function* () {
-    return strategySelectorOf(yield* strategiesConfig);
-  })
-);
+export const StrategySelectorLive = Layer.effect(StrategySelector, Effect.map(strategiesConfig, strategySelectorOf));

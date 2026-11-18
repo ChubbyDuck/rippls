@@ -172,13 +172,14 @@ export type TicketSourceConfig = typeof TicketSourceConfig.Type;
 // without an override, uses `command`. With no command the check is skipped.
 const CheckCommand = Schema.NonEmptyString.check(Schema.isTrimmed());
 
-const FixAttempts = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+// A count of further attempts, such as fix attempts or retries.
+const AttemptCount = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
 
 export const CheckFileConfig = Schema.Struct({
   command: Schema.optionalKey(CheckCommand),
   projects: Schema.optionalKey(Schema.Record(Project, CheckCommand)),
   timeLimit: Schema.optionalKey(Schema.DurationFromString),
-  fixAttempts: Schema.optionalKey(FixAttempts),
+  fixAttempts: Schema.optionalKey(AttemptCount),
   fixPrompt: Schema.optionalKey(Schema.NonEmptyString),
 });
 
@@ -257,14 +258,12 @@ export const commitConfig: Config.Config<CommitConfig> = Config.schema(CommitFil
 // up to `retries` times, and then fails the Strategy.
 const StepPrompt = Schema.NonEmptyString;
 
-const StepRetries = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
-
 export const StrategyStep = Schema.Struct({
   prompt: StepPrompt,
   prompts: Schema.optionalKey(Schema.Record(HarnessName, Schema.optionalKey(StepPrompt))),
   model: Schema.optionalKey(ModelDemandConfig),
   timeLimit: Schema.optionalKey(Schema.DurationFromString),
-  retries: Schema.optionalKey(StepRetries),
+  retries: Schema.optionalKey(AttemptCount),
   verdict: Schema.optionalKey(Schema.Boolean),
 });
 
@@ -284,7 +283,7 @@ export const defaultStrategies: StrategiesConfig = {
     {
       prompt:
         'Implement the ticket below. Do the work it describes so that each of its acceptance criteria is met, ' +
-        'with tests where the repository has them, and leave the work in this worktree.\n\n' +
+        'and leave the work in this worktree.\n\n' +
         ticketText,
     },
     {
