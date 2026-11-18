@@ -502,31 +502,35 @@ test('a project-worktree create failure is retried once and then halts without e
   expect(doneReported).toEqual([]);
 });
 
-test.each(['Project Worktree', 'Ticket Worktree'] as const)(
-  'a %s on disk that is not the expected one halts with what was found, with no second try and no Agent',
-  (kind) => {
+test.each([
+  { kind: 'Project Worktree', expected: projectWorktree, failing: 'prepareProject' },
+  { kind: 'Ticket Worktree', expected: ticketWorktreeOf(ticket.id), failing: 'prepareTicket' },
+] as const)(
+  'a $kind on disk that is not the expected one halts with what was found, with no second try and no Agent',
+  ({ expected, failing }) => {
     const cwds: Array<string | undefined> = [];
     const ledger = ledgerClaiming(ticket);
     let attempts = 0;
     const unexpected = new WorktreeNotExpected({
-      path: kind === 'Project Worktree' ? projectWorktree.path : ticketWorktreeOf(ticket.id).path,
-      expectedBranch: kind === 'Project Worktree' ? projectWorktree.branch : ticketWorktreeOf(ticket.id).branch,
+      path: expected.path,
+      expectedBranch: expected.branch,
       found: 'a directory that is not a Git worktree',
-    });
-    const failing = Effect.suspend(() => {
-      attempts += 1;
-      return Effect.fail(unexpected);
     });
     const services = Layer.mergeAll(
       Layer.succeed(HarnessSelector, { select: Effect.succeed(harnessRecordingCwd(cwds)) }),
       ticketRepoIgnoringReads,
       probingStrategy,
       Layer.succeed(WorktreeManager, {
-        prepareProject: () => (kind === 'Project Worktree' ? failing : Effect.succeed(projectWorktree)),
-        prepareTicket: () => (kind === 'Ticket Worktree' ? failing : Effect.die('prepareTicket should not be called')),
+        prepareProject: () => Effect.succeed(projectWorktree),
+        prepareTicket: () => Effect.die('prepareTicket should not be called'),
         runCommand: () => Effect.die('runCommand should not be called'),
         isClean: () => Effect.die('isClean should not be called'),
         mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
+        [failing]: () =>
+          Effect.suspend(() => {
+            attempts += 1;
+            return Effect.fail(unexpected);
+          }),
       })
     );
 
@@ -535,7 +539,6 @@ test.each(['Project Worktree', 'Ticket Worktree'] as const)(
     );
 
     expect(halt).toEqual(new EngineHalted({ ticketId: ticket.id, reason: unexpected.message }));
-    expect(unexpected.message).toContain(unexpected.path);
     expect(attempts).toBe(1);
     expect(cwds).toEqual([]);
     expect(ledger.done.size).toBe(0);

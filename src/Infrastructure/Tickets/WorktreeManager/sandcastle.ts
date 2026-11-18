@@ -50,22 +50,31 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner)
         );
 
-      // Whether the directory is on disk as the Git worktree on the branch. A
-      // directory that is anything else fails: it is never reused. Git answers
-      // from the worktree that holds the directory, so a plain directory under the
-      // Repository Root has the Repository Root as its top level, not itself.
+      // Whether the path is on disk as the worktree of the Repository Root on the
+      // branch. A path that holds anything else fails: it is never reused. Git
+      // answers from the worktree that holds a directory, so a plain directory
+      // under the Repository Root has the Repository Root as its top level, not
+      // itself. A worktree of the Repository Root shares its Git directory.
       const isReusable = (onDisk: string, branch: string) =>
         Effect.gen(function* () {
           if (!(yield* fs.exists(onDisk))) {
             return false;
           }
-          const git = (args: readonly string[]) =>
-            spawner.string(ChildProcess.make('git', args, { cwd: onDisk })).pipe(Effect.map((output) => output.trim()));
           const unexpected = (found: string) => new WorktreeNotExpected({ path: onDisk, expectedBranch: branch, found });
-          if ((yield* git(['rev-parse', '--show-toplevel'])) !== (yield* fs.realPath(onDisk))) {
+          if ((yield* fs.stat(onDisk)).type !== 'Directory') {
+            return yield* unexpected('not a directory');
+          }
+          const git = (args: readonly string[], cwd: string) =>
+            spawner.string(ChildProcess.make('git', args, { cwd })).pipe(Effect.map((output) => output.trim()));
+          const absolute = ['rev-parse', '--path-format=absolute'];
+          const [topLevel, gitDirectory] = (yield* git([...absolute, '--show-toplevel', '--git-common-dir'], onDisk)).split('\n');
+          if (topLevel !== (yield* fs.realPath(onDisk))) {
             return yield* unexpected('a directory that is not a Git worktree');
           }
-          const current = yield* git(['branch', '--show-current']);
+          if (gitDirectory !== (yield* git([...absolute, '--git-common-dir'], repositoryRoot))) {
+            return yield* unexpected('a Git worktree of another repository');
+          }
+          const current = yield* git(['branch', '--show-current'], onDisk);
           if (current !== branch) {
             return yield* unexpected(
               current === '' ? 'a Git worktree with a detached HEAD' : `a Git worktree on branch ${current}`
@@ -150,21 +159,29 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
               spawner
                 .string(ChildProcess.make('git', args, { cwd }))
                 .pipe(Effect.mapError(() => new WorktreeCloseError()));
+            // The exit code of a Git command in the directory the work merges into.
+            // Its output is not read.
+            const exitInParent = (args: readonly string[]) =>
+              spawner
+                .exitCode(
+                  ChildProcess.make('git', args, {
+                    cwd: record.parentPath,
+                    stdin: 'ignore',
+                    stdout: 'ignore',
+                    stderr: 'ignore',
+                  })
+                )
+                .pipe(Effect.mapError(() => new WorktreeCloseError()));
             yield* Console.log(`Worktree ${worktree.branch} is merging into ${record.parentPath}`);
+            // A merge already in progress there is a person's: it is left as it
+            // is, and no merge starts.
+            if ((yield* exitInParent(['rev-parse', '--quiet', '--verify', 'MERGE_HEAD'])) === 0) {
+              return yield* new WorktreeCloseError();
+            }
             // A merge that exits non-zero, as on a conflict, is aborted, so the
-            // directory it merges into is left as it was. Its output is not read.
-            const merged = yield* spawner
-              .exitCode(
-                ChildProcess.make('git', ['merge', '--no-ff', '--no-edit', worktree.branch], {
-                  cwd: record.parentPath,
-                  stdin: 'ignore',
-                  stdout: 'ignore',
-                  stderr: 'ignore',
-                })
-              )
-              .pipe(Effect.mapError(() => new WorktreeCloseError()));
-            if (merged !== 0) {
-              yield* git(['merge', '--abort'], record.parentPath).pipe(Effect.ignore);
+            // directory it merges into is left as it was.
+            if ((yield* exitInParent(['merge', '--no-ff', '--no-edit', worktree.branch])) !== 0) {
+              yield* exitInParent(['merge', '--abort']).pipe(Effect.ignore);
               return yield* new WorktreeCloseError();
             }
             yield* Console.log(`Worktree ${worktree.branch} is closing at ${worktree.path}`);

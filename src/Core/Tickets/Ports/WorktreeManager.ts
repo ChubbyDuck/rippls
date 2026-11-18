@@ -21,8 +21,8 @@ export type CommandRun =
 export class WorktreeManager extends Context.Service<
   WorktreeManager,
   {
-    // A directory already on disk is reused only when it is the Git worktree on
-    // the expected branch. Otherwise the preparation fails with WorktreeNotExpected.
+    // Both preparations reuse a directory already on disk only when it is the Git
+    // worktree on the expected branch. Otherwise they fail with WorktreeNotExpected.
     readonly prepareProject: (project: Project) => Effect.Effect<Worktree, WorktreeCreationError | WorktreeNotExpected>;
     readonly prepareTicket: (input: {
       readonly id: TicketId;

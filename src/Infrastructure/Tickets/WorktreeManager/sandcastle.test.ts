@@ -386,6 +386,47 @@ test('a conflicting merge fails with WorktreeCloseError and leaves the Repositor
   expect(result.ticketTreeKept).toBe(true);
 });
 
+test('a merge that a person left in progress in the Repository Root stays in progress, and merging fails', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* initRepo;
+      return yield* Effect.gen(function* () {
+        const manager = yield* WorktreeManager;
+        const ticketTree = yield* manager.prepareTicket({ id: ticketId });
+        yield* fs.writeFileString(path.join(ticketTree.path, 'feat.txt'), 'from ticket');
+        yield* git(ticketTree.path, ['add', 'feat.txt']);
+        yield* git(ticketTree.path, ['commit', '-m', 'feat: the work']);
+        // A person merges a branch that conflicts, and stages the resolution.
+        yield* git(root, ['checkout', '-b', 'side']);
+        yield* fs.writeFileString(path.join(root, 'base.txt'), 'from side');
+        yield* git(root, ['commit', '-am', 'feat: side']);
+        yield* git(root, ['checkout', 'main']);
+        yield* fs.writeFileString(path.join(root, 'base.txt'), 'other work');
+        yield* git(root, ['commit', '-am', 'feat: other work']);
+        yield* git(root, ['merge', 'side']);
+        yield* fs.writeFileString(path.join(root, 'base.txt'), 'resolved by hand');
+        yield* git(root, ['add', 'base.txt']);
+        const merged = yield* manager.mergeAndClose(ticketTree).pipe(Effect.flip);
+        return {
+          merged,
+          mergeInProgress: yield* fs.exists(path.join(root, '.git', 'MERGE_HEAD')),
+          status: yield* git(root, ['status', '--porcelain', '--untracked-files=no']),
+          content: yield* fs.readFileString(path.join(root, 'base.txt')),
+          ticketTreeKept: yield* fs.exists(ticketTree.path),
+        };
+      }).pipe(Effect.provide(WorktreeManagerLive(root)));
+    })
+  );
+
+  expect(result.merged).toBeInstanceOf(WorktreeCloseError);
+  expect(result.mergeInProgress).toBe(true);
+  expect(result.status).toBe('M  base.txt');
+  expect(result.content).toBe('resolved by hand');
+  expect(result.ticketTreeKept).toBe(true);
+});
+
 // What the Worktree Manager prepares, with the directory and the branch it expects on disk.
 const preparations = [
   {
@@ -400,25 +441,24 @@ const preparations = [
   },
 ];
 
-// Prepares a worktree in a new repository whose directory `occupy` has put on disk
-// before, and returns the failure with what the directory holds afterwards.
+// Prepares a worktree in a new repository at whose path `occupy` has put something
+// on disk before, and returns the failure.
 const prepareOver = (
   { name, prepare }: (typeof preparations)[number],
   occupy: (root: string, dir: string) => Effect.Effect<unknown, PlatformError.PlatformError, NodeServices.NodeServices>
 ) =>
   Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const root = yield* initRepo;
     const dir = path.join(root, '.sandcastle', 'worktrees', name);
     yield* occupy(root, dir);
     createWorktreeMock.mockClear();
     const failure = yield* prepare.pipe(Effect.provide(WorktreeManagerLive(root)), Effect.flip);
-    return { dir, failure, files: yield* fs.readDirectory(dir) };
+    return { dir, failure };
   });
 
 test.each(preparations)('an existing directory that is not a Git worktree fails the preparation of a $kind', async (preparation) => {
-  const { dir, failure, files } = await run(
+  const { dir, failure } = await run(
     prepareOver(preparation, (_root, dir) =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
@@ -435,7 +475,40 @@ test.each(preparations)('an existing directory that is not a Git worktree fails 
   expect(failure.message).toBe(
     `${dir} is expected to be a Git worktree on branch ${preparation.name}, but it is a directory that is not a Git worktree`
   );
-  expect(files).toEqual(['left.txt']);
+  expect(await run(FileSystem.FileSystem.pipe(Effect.flatMap((fs) => fs.readDirectory(dir))))).toEqual(['left.txt']);
+  expect(createWorktreeMock).not.toHaveBeenCalled();
+});
+
+test.each(preparations)('an existing file that is not a directory fails the preparation of a $kind', async (preparation) => {
+  const { dir, failure } = await run(
+    prepareOver(preparation, (_root, dir) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        yield* fs.makeDirectory(path.dirname(dir), { recursive: true });
+        yield* fs.writeFileString(dir, 'left behind');
+      })
+    )
+  );
+
+  expect(failure).toEqual(new WorktreeNotExpected({ path: dir, expectedBranch: preparation.name, found: 'not a directory' }));
+  expect(createWorktreeMock).not.toHaveBeenCalled();
+});
+
+test.each(preparations)('an existing worktree of another repository fails the preparation of a $kind', async (preparation) => {
+  const { dir, failure } = await run(
+    prepareOver(preparation, (_root, dir) =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        yield* fs.makeDirectory(dir, { recursive: true });
+        yield* git(dir, ['init', '-b', preparation.name]);
+      })
+    )
+  );
+
+  expect(failure).toEqual(
+    new WorktreeNotExpected({ path: dir, expectedBranch: preparation.name, found: 'a Git worktree of another repository' })
+  );
   expect(createWorktreeMock).not.toHaveBeenCalled();
 });
 
@@ -462,7 +535,7 @@ test.each(preparations)('an existing worktree with a detached HEAD fails the pre
   expect(createWorktreeMock).not.toHaveBeenCalled();
 });
 
-test('a foreign Project Worktree fails the preparation of a Ticket Worktree of that Project', async () => {
+test('a Project Worktree on disk that is not the expected one fails the preparation of a Ticket Worktree of that Project', async () => {
   const { dir, failure, ticketTreeExists } = await run(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
