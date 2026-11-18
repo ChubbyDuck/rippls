@@ -8,8 +8,8 @@
 rippls ──► RunEngine ────────────────────────────────────────────────────┐
            spawn N Runners, build a Ticket Stream                         │
                 │                                                         │
-     poll Source; the core rule picks     claim in Ledger, or             │
-     an Eligible ticket:              ──► replace a Stale Claim;          │
+     poll Source; the eligibility rule    claim in Ledger, or             │
+     picks an Eligible ticket:        ──► replace a Stale Claim;          │
      unblocked + unclaimed + hitl:no      report `claimed`                │
      + not escalated + not done                                           │
                 │                                                         │
@@ -39,7 +39,7 @@ rippls ──► RunEngine ─────────────────�
    each record once its report succeeds (else it stays: a Stale Claim)
 ```
 
-The Ledger in `<git-common-dir>/rippls/ledger/` holds every Claim, the Escalations in `escalations/`, the cleared ones in `cleared/`, and done in `done/`. `rippls status` reads it with the Source and changes nothing; `rippls retry <ticket>` reports `retried` and moves the Escalation into `cleared/`, and the next run continues in the retained Ticket Worktree.
+The Ledger in `<git-common-dir>/rippls/ledger/` holds every Claim, the Escalations in `escalations/`, the cleared ones in `cleared/`, and done in `done/`. `rippls status` reads it with the Source and changes nothing; `rippls retry <ticket>` reports `retried` and moves the Escalation into `cleared/`, and the next Ticket Processing of the ticket continues in its retained Ticket Worktree.
 
 ## Layout: hexagonal, five ports
 
@@ -69,8 +69,8 @@ After that, read whichever adapter you need. The tests sit next to the source an
 ## Things that will surprise you
 
 - **Your local `rippls.config.ts` is silently ignored.** It exports `harnessFileConfig` with an `agents` key, but [load.ts:26-31](src/config/load.ts#L26-L31) only reads `engineFileConfig` or `default`. Runs in this repo therefore use the defaults: all four Harnesses in rotation and no tracing, not Cursor only with OTLP.
-- **Eligibility reads `status` only as a Marker.** The one rule in [eligibility.ts](src/Core/Tickets/Domain/Services/eligibility.ts) is unblocked + unclaimed + not escalated + not done + `hitl: no`. `status: ready-for-agent` makes a ticket Unattended; any other `status` is ignored, so a `hitl: no` ticket with `status: blocked` is taken once every blocker is done.
-- **One Escalation stops the run.** A failed Strategy step, check, commit, or done report escalates the ticket, and `EngineHalted` propagates out of the stream; a worktree create or merge failure does the same after one retry.
+- **Eligibility reads `status` only as a Marker.** The one rule in [eligibility.ts](src/Core/Tickets/Domain/Services/eligibility.ts) is unblocked + unclaimed + not escalated + not done + `hitl: no`. A `status` of `ready-for-agent` means HITL no and `ready-for-human` HITL yes, unless the ticket states its `hitl`; any other `status` is ignored, so a `hitl: no` ticket with `status: blocked` is taken once every blocker is done.
+- **One Escalation stops the run.** A failed Strategy step, check, commit, or done report escalates the ticket, and `EngineHalted` propagates out of the stream. A worktree create or merge failure, after one retry, and a Ticket Kind with no Strategy (`StrategyNotFound`) halt the run too, without an Escalation.
 - **`prototype` and `grilling` have no default Strategy.** They imply `hitl: yes`, so they are not taken unless a ticket says `hitl: no`; then the run stops with `StrategyNotFound` unless config gives the kind a Strategy.
 - **Model IDs are hard-coded.** The catalog is in [registered.ts:22-52](src/Infrastructure/Shared/HarnessSelector/registered.ts#L22-L52); a Strategy asks for a tier/fast/generation and falls back to the Harness default when nothing matches.
 - **A Claim from another host is never stale.** The Engine replaces a Claim whose process no longer runs on its own host, but it cannot see the processes of another host, so such a Claim keeps its ticket claimed until someone removes the Ledger record.

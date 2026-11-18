@@ -32,23 +32,25 @@ you want it to process. No clone of this project is required.
 | **Ticket Source** | Reads external records and converts them into Tickets, and receives reports of what happened to them: each Claim, release, escalation, retry, and done. Rippls never saves a Ticket to it. |
 | **Ledger** | The Engine's own local record of Ticket Processing, where each Claim and Escalation lives. |
 | **Ticket Stream** | The ongoing sequence of uniform Tickets supplied for processing. |
-| **Ticket Processing** | The shared lifecycle: claim, apply a Strategy, then complete or escalate. |
+| **Ticket Processing** | The shared lifecycle: claim, apply a Strategy, run the check command, make sure the work is committed, then complete or escalate. |
 | **Strategy** | A reusable procedure for performing a Ticket's work through a Harness: a named list of configured steps. |
 | **Harness** | A coding integration such as Claude Code, Codex, Cursor, or OpenCode. |
 | **Agent** | A running instance of a Harness's model on a Runner; each invocation creates a new Agent. |
 
 Tickets have the same domain shape before entering the Ticket Stream. The Engine and
 Runners apply the same processing rules regardless of whether a Ticket came from a
-folder or Linear; the Source handles conversion and expresses each reported event in its own way.
+folder or Linear; the Source handles conversion and expresses each reported event in
+its own way.
 
 The **Strategy Selector** chooses the procedure for a Ticket, while the
 **Harness Selector** chooses the coding integration. A Ticket Kind describes the work; a Strategy
 describes how to perform it. Each Ticket Kind has one configured Strategy, named after
-it. Ticket Processing owns claiming,
+it, unless config gives it none. Ticket Processing owns claiming, the check, the commit,
 completion, and escalation across Strategies.
 
-The **Worktree Manager** prepares Project and Ticket Worktrees and merges and closes
-successful Ticket Worktrees.
+The **Worktree Manager** prepares Project and Ticket Worktrees, runs a command in a
+worktree, tells whether a worktree is clean, and merges and closes successful Ticket
+Worktrees.
 
 ## What a run does
 

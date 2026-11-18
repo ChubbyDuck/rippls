@@ -120,7 +120,7 @@ _Avoid_: Database, store, registry
 A named, reusable procedure for carrying out a Ticket's work through a Harness and
 returning an outcome: a list of Steps from config, run in order in one Ticket
 Worktree. A failed Step fails the Strategy, and no further Step runs. Each Ticket
-Kind has one configured Strategy, named after it.
+Kind has one configured Strategy, named after it, unless config gives it none.
 _Avoid_: Handler, workflow, prompt
 
 **Step**:
@@ -151,7 +151,7 @@ _Avoid_: Retry, repair prompt
 **Fix attempts**:
 How many times the Engine sends the fix prompt and runs the check command again
 before a failed check escalates the Ticket. One unless config sets it.
-_Avoid_: Retries, attempt count
+_Avoid_: Retries, Retry
 
 **Strategy Selector**:
 The selection policy that determines which Strategy applies to a Ticket.
