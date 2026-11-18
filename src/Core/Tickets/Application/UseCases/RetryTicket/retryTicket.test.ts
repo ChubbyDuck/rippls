@@ -24,14 +24,13 @@ const fakeSource = (failing?: TicketEvent) => {
   const layer = Layer.succeed(TicketSource, {
     getOneBy: () => Effect.die('getOneBy should not be called'),
     getManyBy: () => Effect.die('getManyBy should not be called'),
-    save: () => Effect.die('save should not be called'),
-    saveMany: () => Effect.die('saveMany should not be called'),
     report: (ticket, event) =>
       event === failing
         ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event }))
         : Effect.sync(() => {
             reports.push({ ticket, event });
           }),
+    reportDone: () => Effect.die('reportDone should not be called'),
   });
   return { layer, reports };
 };

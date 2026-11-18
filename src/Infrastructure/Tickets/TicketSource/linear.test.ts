@@ -1,7 +1,6 @@
 import { ConfigProvider, Console, Effect, Layer } from 'effect';
 import { expect, test } from 'vitest';
 
-import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -66,17 +65,6 @@ const issue = (fields: {
     issueId: relation.issueId,
     type: 'blocks' as const,
   })),
-});
-
-const readyTicket = Ticket.create({
-  id: toLinearId(uuid),
-  title: 'Linear writes',
-  project: 'chubby-engine',
-  kind: 'implementation',
-  status: 'ready-for-agent',
-  blockedBy: [],
-  blocks: [],
-  body: 'Claim and complete.',
 });
 
 type Mutation =
@@ -171,19 +159,16 @@ const getManyIn = (api: ReturnType<typeof fakeLinear>, query: TicketQuery) =>
     Effect.provide(withRepo(api))
   );
 
-const saveIn = (api: ReturnType<typeof fakeLinear>, ticket: Ticket) =>
+const reportDoneIn = (api: ReturnType<typeof fakeLinear>) =>
   TicketSource.pipe(
-    Effect.flatMap((source) => source.save(ticket)),
+    Effect.flatMap((source) =>
+      source.reportDone(toLinearId(uuid), { path: '/repo/.sandcastle/worktrees/ticket-linear', branch: 'ticket-linear' })
+    ),
+    Effect.flatMap((afterMerge) => afterMerge),
     Effect.provide(withRepo(api))
   );
 
-const saveManyIn = (api: ReturnType<typeof fakeLinear>, tickets: readonly Ticket[]) =>
-  TicketSource.pipe(
-    Effect.flatMap((source) => source.saveMany(tickets)),
-    Effect.provide(withRepo(api))
-  );
-
-const reportIn = (api: ReturnType<typeof fakeLinear>, event: TicketEvent) =>
+const reportIn = (api: ReturnType<typeof fakeLinear>, event: Exclude<TicketEvent, 'done'>) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.report(toLinearId(uuid), event)),
     Effect.provide(withRepo(api))
@@ -252,12 +237,13 @@ test('a started Issue is not offered for processing, and its read by identity st
   expect(byIdentity.id).toBe(toLinearId('started'));
 });
 
-test('save of a done ticket moves it to the completed state', async () => {
+test('report of done moves the Issue to the first completed state, and leaves nothing for after the merge', async () => {
   const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 
-  await Effect.runPromise(saveIn(api, readyTicket.done()));
+  await Effect.runPromise(reportDoneIn(api));
 
   expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
+  expect(api.issues.get(uuid)?.state.type).toBe('completed');
 });
 
 test('report of escalated unassigns, moves to the first unstarted state, and adds needs-human, leaving the kind and hitl labels', async () => {
@@ -353,14 +339,6 @@ test('report of retried on an Issue without needs-human changes nothing', async 
   await Effect.runPromise(reportIn(api, 'retried'));
 
   expect(api.calls).toEqual([]);
-});
-
-test('saveMany applies the writes of each ticket', async () => {
-  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
-
-  await Effect.runPromise(saveManyIn(api, [readyTicket.done()]));
-
-  expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
 });
 
 test('getManyBy offers every unstarted issue in scope by creation time, oldest first', async () => {

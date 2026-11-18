@@ -258,6 +258,27 @@ test('an escalation leaves the Claims in place, and a Claim leaves the ticket no
   expect([...escalations.keys()]).toEqual([ticket(1)]);
 });
 
+test('done is recorded once and read by a second Ledger on the same Git common directory', async () => {
+  const { before, after } = await run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      const doneIn = inLedger(dir, Ledger.pipe(Effect.flatMap((ledger) => ledger.done([ticket(1), ticket(2)]))));
+      const before = yield* doneIn;
+      yield* inLedger(
+        dir,
+        Ledger.pipe(
+          Effect.tap((ledger) => ledger.recordDone(ticket(1))),
+          Effect.tap((ledger) => ledger.recordDone(ticket(1)))
+        )
+      );
+      return { before, after: yield* doneIn };
+    })
+  );
+
+  expect([...before]).toEqual([]);
+  expect([...after]).toEqual([ticket(1)]);
+});
+
 // A process that ran on this host and has exited.
 const deadProcess = ChildProcessSpawner.ChildProcessSpawner.pipe(
   Effect.flatMap((spawner) => spawner.spawn(ChildProcess.make(process.execPath, ['-e', '']))),

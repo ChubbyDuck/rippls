@@ -20,7 +20,7 @@ export type DerivedTicketStatus = (typeof derivedTicketStatuses)[number];
  * HITL yes. A ticket is eligible exactly when it is Eligible.
  */
 export const deriveTicketStatus = (ticket: Ticket, facts: EligibilityFacts): DerivedTicketStatus => {
-  if (isDone(ticket)) {
+  if (isDone(ticket, facts.done)) {
     return 'done';
   }
   if (isEscalated(ticket, facts.escalated)) {

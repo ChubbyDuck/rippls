@@ -59,7 +59,8 @@ successful Ticket Worktrees.
 4. Creates a `ticket-<source>-<id>` branch and **Ticket Worktree**.
 5. Installs workspace dependencies with `corepack pnpm install` when needed.
 6. Runs the selected **Strategy**, which invokes the **Harness** to create Agents for its steps.
-7. On success, merges the ticket branch, marks the ticket `done`, and releases its Claim.
+7. On success, reports done to the Source, merges the ticket branch, records done in the
+  Ledger, and releases its Claim (see [Completion and `done/`](#completion-and-done)).
 8. On Strategy failure, retains the worktree, records an **Escalation** in the Ledger,
   releases the Claim, and reports the escalation to the Source. The ticket keeps its
   kind and `hitl`.
@@ -134,9 +135,13 @@ Process exactly one ticket:
 npx rippls --limit 1
 ```
 
-The completed ticket moves to `.agents/tickets/done/`. Because this example has a
-project, its ticket branch is merged into the persistent `health-endpoint` project
-branch. Review that branch and merge it into your main branch when ready.
+Because this example has a project, its ticket branch is merged into the persistent
+`health-endpoint` project branch. Review that branch and merge it into your main branch
+when ready. If Git tracks `.agents/tickets/`, the move of the ticket into
+`.agents/tickets/done/` is a commit on that branch, and reaches your main branch with
+the merge; until then the Ledger keeps the ticket done. If Git ignores the folder, the
+ticket moves into `done/` as soon as the ticket branch is merged (see
+[Completion and `done/`](#completion-and-done)).
 
 ## Which tickets are eligible?
 
@@ -148,9 +153,10 @@ A ticket is **Eligible** when all three conditions hold:
 - **Unattended**: `hitl` is `no`.
 
 A done ticket is never Eligible, and neither is an escalated ticket (see
-[Escalation](#escalation)). Eligibility does not mean “every ticket with
-`status: ready-for-agent`.” The Source status is still used for lifecycle updates, but
-polling applies the conditions above.
+[Escalation](#escalation)). A ticket is done when its Source sees it as done or the
+Ledger records it as done (see [Completion and `done/`](#completion-and-done)).
+Eligibility does not mean “every ticket with `status: ready-for-agent`.” Rippls never
+writes the stored status; polling applies the conditions above.
 
 Folder tickets are ordered by the numeric filename prefix, lowest first. Linear tickets
 are ordered by creation time, oldest first. `--project` narrows the poll to one project.
@@ -231,7 +237,7 @@ the ticket, the Ledger, and the done tickets; the ticket file does not hold it.
 
 | Ticket Status | Meaning |
 | --- | --- |
-| `done` | The ticket's work is complete. |
+| `done` | Its Source sees it as done, or the Ledger records it as done. |
 | `escalated` | The Ledger holds an Escalation for it (see [Escalation](#escalation)). |
 | `claimed` | The Ledger holds a Claim on it that is not stale. |
 | `not ready` | Its `hitl` is `yes`. |
@@ -271,6 +277,48 @@ Ticket Stream, and releases the Claim when the ticket is done or when the Engine
 
 A Claim left by an Engine that stopped without releasing it keeps its ticket
 unclaimable. Remove that ticket's record from the Ledger folder to free it.
+
+## Completion and `done/`
+
+A ticket is done exactly when its work has landed. Rippls never changes the content of
+a ticket to mark it done. When the Strategy succeeds, the Engine:
+
+1. reports done to the Source,
+2. merges the ticket branch and closes the Ticket Worktree,
+3. records done in the Ledger,
+4. releases the Claim.
+
+A merge that fails halts the Engine, and the Ledger records no done. A done report that
+fails escalates the ticket, as a failed Strategy does.
+
+Done is the union of two facts: the Source sees the ticket as done (its file is in
+`done/`, or its Linear issue is completed), or the Ledger records it as done. Neither
+fact reverts. Eligibility, blockers, and `rippls status` all use this union.
+
+For the folder Source, done moves the ticket file into `ticketsDir/done/`, with its
+content unchanged. Where the move happens depends on whether Git tracks the file:
+
+- **Git tracks the ticket file.** The file is in the Ticket Worktree. Rippls moves it
+  into `done/` there and commits the move on the ticket branch before the merge, with
+  the message `chore: move ticket <identity> to done`. Commit hooks run; a commit they
+  reject escalates the ticket. The move lands with the work:
+  - Without a project, the merge moves the file in the Repository Root.
+  - With a project, the merge moves it on the project branch. The file in the
+    Repository Root stays open until you merge the project branch. Meanwhile the
+    Ledger keeps the ticket done: the Engine does not take it again, and its
+    dependents are Unblocked.
+- **Git ignores the tickets folder, or the ticket is not committed.** Rippls moves the
+  file in the tickets folder once the merge succeeds, with or without a project. After
+  a failed merge the file stays where it is.
+
+A ticket file that is already in `done/` is not moved again, for example when the Agent
+moved its own ticket on the ticket branch. An Agent may tick checkboxes or edit its
+ticket; the edit is ordinary work and merges with the rest.
+
+For the Linear Source, done moves the issue to a `completed` state.
+
+If the Ledger is lost, a done project ticket whose project branch is not yet merged
+becomes Eligible again.
 
 ## Escalation
 
@@ -439,8 +487,8 @@ Ticket files live directly inside `ticketsDir` and match `<numeric-id>*.md`, for
 003_document-api.md
 ```
 
-The numeric filename prefix is authoritative. Rippls writes `id` into front matter,
-but reads the ID from the filename.
+The numeric filename prefix is authoritative: Rippls reads the ID from the filename.
+Rippls never writes front matter, so keys it does not know stay as they are.
 
 ### Front matter
 
@@ -492,8 +540,9 @@ derives Unblocked on every poll. The stored `status: blocked` does not gate tick
 A blocker that Rippls finds neither in the tickets folder nor in `done/` keeps its ticket
 blocked.
 
-Completed files move to `ticketsDir/done/`. Invalid files and files without valid front
-matter are skipped.
+Completed files move to `ticketsDir/done/` unchanged (see
+[Completion and `done/`](#completion-and-done)). Invalid files and files without valid
+front matter are skipped.
 
 ## Linear Source
 
@@ -555,7 +604,8 @@ a `started` state is already claimed on Linear, so Rippls does not take it.
 When the Engine claims an issue, the Linear Source assigns it to the API-key user, moves
 it to a `started` state, and reads it back to confirm. If someone else took the issue in
 between, the Engine releases its Claim and takes another ticket. A release unassigns the
-issue and returns it to an `unstarted` state. Completion moves it to a `completed` state.
+issue and returns it to an `unstarted` state. Done moves it to a `completed` state, before
+the merge of its ticket branch.
 
 If a Strategy fails, Rippls records the Escalation in its Ledger, unassigns the issue,
 returns it to an `unstarted` state, and adds the `needs-human` label. It does not change

@@ -51,20 +51,6 @@ export class Ticket extends Schema.Class<Ticket>('Ticket')({
     return `Ticket ${this.id} -- ${this.kind}`;
   }
 
-  done(): Ticket {
-    return new Ticket({
-      id: this.id,
-      title: this.title,
-      project: this.project,
-      status: 'done',
-      blockedBy: this.blockedBy,
-      blocks: this.blocks,
-      kind: this.kind,
-      hitl: this.hitl,
-      body: this.body,
-    });
-  }
-
   isBlockedBy(id: TicketId): boolean {
     return this.blockedBy.includes(id);
   }

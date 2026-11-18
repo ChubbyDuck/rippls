@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 
-import { doneTicketIds, isDone, isEligible, isEscalated, isUnattended, isUnblocked, isUnclaimed } from './eligibility';
+import { doneInSourceIds, isDone, isEligible, isEscalated, isUnattended, isUnblocked, isUnclaimed } from './eligibility';
 
 const id = (value: number) => formatTicketId('folder', String(value));
 const none: ReadonlySet<TicketId> = new Set();
@@ -32,19 +32,23 @@ const blocked = ticket({ blockedBy: [id(9)] });
 const attended = ticket({ hitl: 'yes' });
 
 describe('isDone', () => {
-  it('holds for a done ticket', () => {
-    expect(isDone(ticket().done())).toBe(true);
+  it('holds for a ticket that its Source sees as done', () => {
+    expect(isDone(ticket({ status: 'done' }), none)).toBe(true);
+  });
+
+  it('holds for a ticket among the done tickets, such as one the Ledger records as done', () => {
+    expect(isDone(ticket(), new Set([id(1)]))).toBe(true);
   });
 
   it('fails for a ticket that is not done', () => {
-    expect(isDone(ticket())).toBe(false);
+    expect(isDone(ticket(), none)).toBe(false);
   });
 });
 
-describe('doneTicketIds', () => {
-  it('collects the identities of the done tickets only', () => {
-    const done = ticket({ id: id(2) }).done();
-    expect(doneTicketIds([ticket(), done, blocked])).toEqual(new Set([id(2)]));
+describe('doneInSourceIds', () => {
+  it('collects the identities of the tickets that the Source sees as done only', () => {
+    const done = ticket({ id: id(2), status: 'done' });
+    expect(doneInSourceIds([ticket(), done, blocked])).toEqual(new Set([id(2)]));
   });
 });
 
@@ -68,7 +72,7 @@ describe('isUnblocked', () => {
   });
 
   it('fails for a blocker that the Source cannot find', () => {
-    expect(isUnblocked(blocked, doneTicketIds([ticket().done()]))).toBe(false);
+    expect(isUnblocked(blocked, doneInSourceIds([ticket({ status: 'done' })]))).toBe(false);
   });
 });
 
@@ -125,8 +129,8 @@ describe('isEligible', () => {
   });
 
   it('fails for a done ticket', () => {
-    expect(isEligible(ticket().done(), nothing)).toBe(false);
     expect(isEligible(ticket({ status: 'done' }), nothing)).toBe(false);
+    expect(isEligible(ticket(), doneWith(id(1)))).toBe(false);
   });
 
   it('does not depend on a stored blocked status', () => {

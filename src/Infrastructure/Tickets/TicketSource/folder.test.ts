@@ -1,20 +1,23 @@
+import * as NodeServices from '@effect/platform-node/NodeServices';
 import { ConfigProvider, Effect, FileSystem, Layer, Option, Path } from 'effect';
-import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem';
-import * as NodePath from '@effect/platform-node/NodePath';
 import { expect, test } from 'vitest';
 
-import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
+import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
-import { completeTicket } from '~/Core/Tickets/Application/UseCases/CompleteTicket/completeTicket';
 import { generateTickets } from '~/Core/Tickets/Application/UseCases/Generate/generate';
 import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/folder';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import { TicketSourceFolderLive } from './folder';
 
-const NodeFs = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
+const NodeFs = NodeServices.layer;
+
+// These tickets folders are not in a Git repository: the Repository Root lies
+// elsewhere, so no Ticket Worktree holds their files.
+const outsideRoot = '/rippls-test-repository-root';
+const outsideWorktree = { path: `${outsideRoot}/.sandcastle/worktrees/ticket-folder-1`, branch: 'ticket-folder-1' };
 
 const frontMatter = (fields: Record<string, unknown>): string => {
   const lines = Object.entries(fields).map(([key, value]) => `${key}: ${JSON.stringify(value)}`);
@@ -24,7 +27,10 @@ const frontMatter = (fields: Record<string, unknown>): string => {
 const withDir = (folder: string) =>
   TicketSourceFolderLive.pipe(
     Layer.provide(
-      ConfigProvider.layer(ConfigProvider.fromUnknown({ harnesses: [{ name: 'Cursor' }], ticketsDir: folder }))
+      Layer.merge(
+        ConfigProvider.layer(ConfigProvider.fromUnknown({ harnesses: [{ name: 'Cursor' }], ticketsDir: folder })),
+        Layer.succeed(RepositoryRoot, outsideRoot)
+      )
     )
   );
 
@@ -50,58 +56,32 @@ const getManyIn = (dir: string, query = TicketQuery.build()) =>
     Effect.provide(withDir(dir))
   );
 
-test('folder source namespaces ids in memory and writes numbers on disk', async () => {
-  const saved = Ticket.create({
-    id: formatTicketId('folder', '6'),
-    title: 'Namespaced',
-    project: 'demo',
-    kind: 'task',
-    hitl: 'yes',
-    status: 'ready-for-agent',
-    blockedBy: [formatTicketId('folder', '5')],
-    blocks: [],
-    body: '',
-  });
+test('folder source namespaces ids in memory and leaves the numbers on disk', async () => {
+  const content =
+    frontMatter({
+      id: 6,
+      title: 'Namespaced',
+      project: 'demo',
+      kind: 'implementation',
+      status: 'ready-for-agent',
+      blockedBy: [5],
+      blocks: [],
+    }) + 'Keep the body.\n';
 
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const dir = yield* setup([
-        [
-          '6.md',
-          frontMatter({
-            id: 6,
-            title: 'Namespaced',
-            project: 'demo',
-            kind: 'implementation',
-            status: 'ready-for-agent',
-            blockedBy: [5],
-            blocks: [],
-          }) + 'Keep the body.\n',
-        ],
-      ]);
-
-      const before = yield* getOneIn(dir);
-      yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(saved)),
-        Effect.provide(withDir(dir))
-      );
-      const content = yield* fs.readFileString(path.join(dir, '6.md'));
-      const after = yield* getOneIn(dir);
-      return { before, content, after };
+      const dir = yield* setup([['6.md', content]]);
+      const ticket = yield* getOneIn(dir);
+      const after = yield* fs.readFileString(path.join(dir, '6.md'));
+      return { ticket, after };
     }).pipe(Effect.provide(NodeFs))
   );
 
-  expect(Option.getOrThrow(result.before).id).toBe('folder:6');
-  expect(Option.getOrThrow(result.before).blockedBy).toEqual(['folder:5']);
-  expect(result.content).toContain('id: 6');
-  expect(result.content).toContain('5');
-  expect(result.content).not.toContain('folder:');
-  expect(result.content).toContain('Keep the body.');
-  expect(Option.getOrThrow(result.after).id).toBe('folder:6');
-  expect(Option.getOrThrow(result.after).blockedBy).toEqual(['folder:5']);
-  expect(Option.getOrThrow(result.after).kind).toBe('task');
+  expect(Option.getOrThrow(result.ticket).id).toBe('folder:6');
+  expect(Option.getOrThrow(result.ticket).blockedBy).toEqual(['folder:5']);
+  expect(result.after).toBe(content);
 });
 
 test('getOneBy decodes a schema-shaped front matter file', async () => {
@@ -200,64 +180,6 @@ test('getOneBy accepts a leading-id slug filename and ignores names that do not 
   expect(Option.getOrThrow(ticket).body).toBe('# slugged body\n');
 });
 
-test('save updates a slugged filename in place and moves it to done with the same name', async () => {
-  const createdFields = {
-    id: formatTicketId('folder', '9'),
-    title: 'Slugged save',
-    project: 'demo',
-    kind: 'implementation',
-    status: 'ready-for-agent',
-    blockedBy: [],
-    blocks: [],
-    body: '',
-  } as const;
-  const created = Ticket.create(createdFields);
-  const done = created.done();
-
-  const result = await Effect.runPromise(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* setup([
-        [
-          '9-slugged-save.md',
-          frontMatter({
-            id: 9,
-            title: 'Slugged save',
-            project: 'demo',
-            kind: 'implementation',
-            status: 'ready-for-agent',
-            blockedBy: [],
-            blocks: [],
-          }) + 'Keep this body.\n',
-        ],
-      ]);
-
-      yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(Ticket.create({ ...createdFields, kind: 'task', hitl: 'yes' }))),
-        Effect.provide(withDir(dir))
-      );
-      const escalated = yield* fs.readFileString(path.join(dir, '9-slugged-save.md'));
-      const numericExistsAfterEscalation = yield* fs.exists(path.join(dir, '9.md'));
-
-      yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(done)),
-        Effect.provide(withDir(dir))
-      );
-      const originalExists = yield* fs.exists(path.join(dir, '9-slugged-save.md'));
-      const doneContent = yield* fs.readFileString(path.join(dir, 'done', '9-slugged-save.md'));
-      return { escalated, numericExistsAfterEscalation, originalExists, doneContent };
-    }).pipe(Effect.provide(NodeFs))
-  );
-
-  expect(result.escalated).toContain('kind: task');
-  expect(result.escalated).toContain('Keep this body.');
-  expect(result.numericExistsAfterEscalation).toBe(false);
-  expect(result.originalExists).toBe(false);
-  expect(result.doneContent).toContain('status: done');
-  expect(result.doneContent).toContain('Keep this body.');
-});
-
 test('getManyBy returns every ticket in scope by numeric filename prefix, lowest first', async () => {
   const common = { project: 'demo', kind: 'implementation', blocks: [] };
   const tickets = await Effect.runPromise(
@@ -293,7 +215,7 @@ test('getManyBy narrows by Project and keeps the processing order', async () => 
   expect(tickets.map((ticket) => ticket.id)).toEqual(['folder:3', 'folder:5']);
 });
 
-test('completing a ticket leaves its dependent byte for byte unchanged and reads it as done from done/', async () => {
+test('done leaves its dependent byte for byte unchanged, and the dependent reads its blocker as done from done/', async () => {
   const common = { project: 'demo', kind: 'implementation', blocks: [] };
   const dependent =
     frontMatter({ id: 2, title: 'dependent', status: 'blocked', blockedBy: [1], ...common }) + '# Dependent\n\nKeep me.\n';
@@ -305,7 +227,11 @@ test('completing a ticket leaves its dependent byte for byte unchanged and reads
         ['1-blocker.md', frontMatter({ id: 1, title: 'blocker', status: 'claimed', claimedBy: 'runner-1', blockedBy: [], ...common })],
         ['2-dependent.md', dependent],
       ]);
-      yield* completeTicket({ ticketId: formatTicketId('folder', '1') }).pipe(Effect.provide(withDir(dir)));
+      yield* TicketSource.pipe(
+        Effect.flatMap((source) => source.reportDone(formatTicketId('folder', '1'), outsideWorktree)),
+        Effect.flatMap((afterMerge) => afterMerge),
+        Effect.provide(withDir(dir))
+      );
       const after = yield* fs.readFileString(path.join(dir, '2-dependent.md'));
       const tickets = yield* getManyIn(dir, TicketQuery.build());
       return { after, tickets };
@@ -459,166 +385,6 @@ test('getOneBy yields no ticket when the folder is missing', async () => {
   expect(Option.isNone(ticket)).toBe(true);
 });
 
-test('save writes the front matter back and keeps the body', async () => {
-  const escalated = Ticket.create({
-    id: formatTicketId('folder', '5'),
-    title: 'Save me',
-    project: 'demo',
-    kind: 'task',
-    hitl: 'yes',
-    status: 'ready-for-agent',
-    blockedBy: [],
-    blocks: [],
-    body: '',
-  });
-
-  const result = await Effect.runPromise(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* setup([
-        [
-          '5.md',
-          frontMatter({
-            id: 5,
-            title: 'Save me',
-            project: 'demo',
-            kind: 'implementation',
-            status: 'ready-for-agent',
-            blockedBy: [],
-            blocks: [],
-          }) + '# Save me\n\nOriginal body text.\n',
-        ],
-      ]);
-
-      yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(escalated)),
-        Effect.provide(withDir(dir))
-      );
-
-      const content = yield* fs.readFileString(path.join(dir, '5.md'));
-      const reread = yield* getOneIn(dir);
-      return { content, reread };
-    }).pipe(Effect.provide(NodeFs))
-  );
-
-  expect(result.content).toContain('Original body text.');
-  expect(result.content).toContain('kind: task');
-  expect(result.content).toContain('hitl: yes');
-  expect(Option.getOrThrow(result.reread).kind).toBe('task');
-  expect(Option.getOrThrow(result.reread).hitl).toBe('yes');
-  expect(Option.getOrThrow(result.reread).body).toContain('Original body text.');
-});
-
-test('save places a done ticket in the done subfolder and removes the original', async () => {
-  const done = Ticket.create({
-    id: formatTicketId('folder', '5'),
-    title: 'Save me',
-    project: 'demo',
-    kind: 'implementation',
-    status: 'ready-for-agent',
-    blockedBy: [],
-    blocks: [],
-    body: '',
-  }).done();
-
-  const result = await Effect.runPromise(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* setup([
-        [
-          '5.md',
-          frontMatter({
-            id: 5,
-            title: 'Save me',
-            project: 'demo',
-            kind: 'implementation',
-            status: 'claimed',
-            claimedBy: 'runner-1',
-            blockedBy: [],
-            blocks: [],
-          }) + '# Save me\n\nOriginal body text.\n',
-        ],
-      ]);
-
-      yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(done)),
-        Effect.provide(withDir(dir))
-      );
-
-      const originalExists = yield* fs.exists(path.join(dir, '5.md'));
-      const content = yield* fs.readFileString(path.join(dir, 'done', '5.md'));
-      return { originalExists, content };
-    }).pipe(Effect.provide(NodeFs))
-  );
-
-  expect(result.originalExists).toBe(false);
-  expect(result.content).toContain('Original body text.');
-  expect(result.content).toContain('status: done');
-});
-
-test('save writes a new file with the ticket body and getOneBy fills it only on return', async () => {
-  const created = Ticket.create({
-    id: formatTicketId('folder', '8'),
-    title: 'New file',
-    project: 'demo',
-    kind: 'implementation',
-    status: 'ready-for-agent',
-    blockedBy: [],
-    blocks: [],
-    body: 'Lorem ipsum dolor sit amet.',
-  });
-
-  const result = await Effect.runPromise(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* setup([]);
-      yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(created)),
-        Effect.provide(withDir(dir))
-      );
-      const content = yield* fs.readFileString(path.join(dir, '8.md'));
-      const reread = yield* getOneIn(dir);
-      return { content, reread };
-    }).pipe(Effect.provide(NodeFs))
-  );
-
-  expect(result.content).toContain('Lorem ipsum dolor sit amet.');
-  expect(Option.getOrThrow(result.reread).body).toBe('Lorem ipsum dolor sit amet.');
-});
-
-test('save round-trips a ticket that omits project', async () => {
-  const created = Ticket.create({
-    id: formatTicketId('folder', '8'),
-    title: 'No project',
-    kind: 'implementation',
-    status: 'ready-for-agent',
-    blockedBy: [],
-    blocks: [],
-    body: '',
-  });
-
-  const result = await Effect.runPromise(
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* setup([]);
-      yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.save(created)),
-        Effect.provide(withDir(dir))
-      );
-      const content = yield* fs.readFileString(path.join(dir, '8.md'));
-      const reread = yield* getOneIn(dir);
-      return { content, reread };
-    }).pipe(Effect.provide(NodeFs))
-  );
-
-  expect(result.content).not.toContain('project:');
-  expect(Option.getOrThrow(result.reread).project).toBeUndefined();
-});
-
 test('getManyBy scopes to the project and returns an empty array when none match', async () => {
   const common = { kind: 'implementation', blocks: [], blockedBy: [] };
   const tickets = await Effect.runPromise(
@@ -649,7 +415,7 @@ test('getOneBy by identity fills the body of the returned ticket only', async ()
   expect(Option.getOrThrow(ticket).body).toBe('Returned body.\n');
 });
 
-const reportIn = (dir: string, event: TicketEvent) =>
+const reportIn = (dir: string, event: Exclude<TicketEvent, 'done'>) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.report(formatTicketId('folder', '1'), event)),
     Effect.provide(withDir(dir))

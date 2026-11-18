@@ -1,11 +1,11 @@
 import { Option } from 'effect';
 import { expect, test } from 'vitest';
 
-import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { LinearIssue, LinearLabel, LinearMetadata } from '~/Core/Tickets/Ports/LinearApi';
 
 import {
   claimWrites,
+  doneWrites,
   escalateWrites,
   issueToTicket,
   labelsToHitl,
@@ -13,7 +13,6 @@ import {
   releaseWrites,
   slugify,
   stateTypeToStatus,
-  ticketToWrites,
   toLinearId,
 } from './codec';
 
@@ -153,17 +152,6 @@ test('issueToTicket maps native fields and incomplete blockers', () => {
   expect(ticket.blocks).toEqual([`linear:${blocked}`]);
 });
 
-const readyTicket = Ticket.create({
-  id: toLinearId(uuid),
-  title: 'Pure Linear codecs',
-  project: 'chubby-engine',
-  kind: 'implementation',
-  status: 'ready-for-agent',
-  blockedBy: [],
-  blocks: [],
-  body: 'Convert an issue to a Ticket.',
-});
-
 test('claimWrites assign the Issue to the API-key user and move it to the first started state', () => {
   expect(claimWrites(uuid, metadata)).toEqual([
     { op: 'setAssignee', issueId: uuid, assigneeId: 'viewer-1' },
@@ -178,8 +166,8 @@ test('releaseWrites unassign the Issue and move it to the first unstarted state'
   ]);
 });
 
-test('ticketToWrites moves a done ticket to the first completed state', () => {
-  expect(ticketToWrites(readyTicket.done(), metadata)).toEqual([
+test('doneWrites move the Issue to the first completed state', () => {
+  expect(doneWrites(uuid, metadata)).toEqual([
     { op: 'setState', issueId: uuid, stateId: 'state-completed' },
   ]);
 });

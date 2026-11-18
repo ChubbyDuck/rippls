@@ -8,8 +8,6 @@ import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
-import { completeTicket } from '../CompleteTicket/completeTicket';
-
 import { harnessInWorktree } from './harnessInWorktree';
 import type { ProcessTicketCommand } from './command';
 import { prepareTicketWorktree } from './prepareTicketWorktree';
@@ -33,6 +31,39 @@ const escalate = (ticket: Ticket, worktree: Worktree, reason: string) =>
     return yield* new EngineHalted({ ticketId: ticket.id, reason });
   });
 
+// A ticket is done exactly when its work has landed. The Source hears done before
+// the merge, so what it changes in the Ticket Worktree lands with the work; a
+// report that fails is a failure of Ticket Processing. Once the merge succeeds,
+// the Source finishes what it could not do before it, the Ledger records done,
+// and the Claim is released. A failed merge halts the Engine with no done in the
+// Ledger. A failure after the merge is only logged: the work has landed and the
+// Ledger records done.
+const complete = (ticket: Ticket, worktree: Worktree) =>
+  Effect.gen(function* () {
+    const ledger = yield* Ledger;
+    const source = yield* TicketSource;
+    const worktrees = yield* WorktreeManager;
+    const afterMerge = yield* source
+      .reportDone(ticket.id, worktree)
+      .pipe(Effect.catchTag('TicketEventNotReported', () => escalate(ticket, worktree, 'done report failure')));
+    yield* Effect.suspend(() =>
+      Console.log(`${ticket.label} is merging worktree ${worktree.branch}`).pipe(
+        Effect.andThen(worktrees.mergeAndClose(worktree))
+      )
+    ).pipe(
+      Effect.retry({ times: 1 }),
+      Effect.catchTag('WorktreeCloseError', () =>
+        Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'worktree close failure' }))
+      )
+    );
+    yield* afterMerge.pipe(
+      Effect.catch((error) => Console.error(`Failed to finish the done of ticket ${ticket.id} on the Source after the merge`, error))
+    );
+    yield* ledger.recordDone(ticket.id);
+    yield* Console.log(`${ticket.label} is done`);
+    yield* ledger.release(ticket.id);
+  });
+
 export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
   Effect.gen(function* () {
     const harnessSelector = yield* HarnessSelector;
@@ -40,7 +71,6 @@ export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
     yield* Effect.annotateCurrentSpan('harness', harness.name);
     const ledger = yield* Ledger;
     const strategies = yield* StrategySelector;
-    const worktrees = yield* WorktreeManager;
     yield* ledger.assignRunner(ticket.id, runnerId).pipe(Effect.withSpan('runner.claim'));
     const strategy = yield* strategies.select(ticket.kind);
     yield* Effect.annotateCurrentSpan('strategy', strategy.name);
@@ -63,20 +93,7 @@ export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
       .run(ticket, harnessInWorktree(harness, worktree.path))
       .pipe(Effect.withSpan('strategy.run', { attributes: { harness: harness.name, strategy: strategy.name } }));
     yield* Result.match(outcome, {
-      onSuccess: () =>
-        Effect.suspend(() =>
-          Console.log(`${ticket.label} is merging worktree ${worktree.branch}`).pipe(
-            Effect.andThen(worktrees.mergeAndClose(worktree))
-          )
-        ).pipe(
-          Effect.retry({ times: 1 }),
-          Effect.catchTag('WorktreeCloseError', () =>
-            Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'worktree close failure' }))
-          ),
-          Effect.andThen(Console.log(`${ticket.label} is done`)),
-          Effect.andThen(completeTicket({ ticketId: ticket.id })),
-          Effect.andThen(ledger.release(ticket.id))
-        ),
+      onSuccess: () => complete(ticket, worktree),
       onFailure: () => escalate(ticket, worktree, 'strategy failure'),
     });
   }).pipe(

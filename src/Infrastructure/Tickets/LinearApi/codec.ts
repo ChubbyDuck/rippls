@@ -2,7 +2,7 @@ import { Option, Schema } from 'effect';
 
 import { Ticket, TicketFromInput } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Hitl';
-import { formatTicketId, parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import type { TicketStatus } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketStatus';
 import type { LinearIssue, LinearLabel, LinearMetadata } from '~/Core/Tickets/Ports/LinearApi';
@@ -164,16 +164,8 @@ export const retryWrites = (issueId: string, metadata: LinearMetadata): readonly
   return labelId === undefined ? [] : [{ op: 'setLabels', issueId, addedLabelIds: [], removedLabelIds: [labelId] }];
 };
 
-export const ticketToWrites = (ticket: Ticket, metadata: LinearMetadata): readonly LinearWrite[] => {
-  const issueId = parseTicketId(ticket.id).native;
-  if (ticket.status === 'done') {
-    const stateId = firstStateId(metadata, 'completed');
-    return stateId === undefined ? [] : [{ op: 'setState', issueId, stateId }];
-  }
-
-  if (ticket.status !== 'ready-for-agent') {
-    return [];
-  }
-
-  return releaseWrites(issueId, metadata);
+/** Done on Linear: move the Issue to the first `completed` state. */
+export const doneWrites = (issueId: string, metadata: LinearMetadata): readonly LinearWrite[] => {
+  const stateId = firstStateId(metadata, 'completed');
+  return stateId === undefined ? [] : [{ op: 'setState', issueId, stateId }];
 };

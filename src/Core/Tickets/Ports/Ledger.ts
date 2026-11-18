@@ -9,8 +9,8 @@ import type { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import type { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 
 /**
- * The Engine's own record of Ticket Processing, keyed by ticket identity. It is
- * local for every Ticket Source.
+ * The Engine's own record of Ticket Processing, keyed by ticket identity: Claims,
+ * Escalations, and done. It is local for every Ticket Source.
  */
 export class Ledger extends Context.Service<
   Ledger,
@@ -51,5 +51,12 @@ export class Ledger extends Context.Service<
     readonly escalations: (
       tickets: readonly TicketId[]
     ) => Effect.Effect<ReadonlyMap<TicketId, Escalation>, LedgerError>;
+    /**
+     * Records that the ticket is done, once its work is merged. Done never
+     * reverts. Recording a ticket that is already done does nothing.
+     */
+    readonly recordDone: (ticket: TicketId) => Effect.Effect<void, LedgerError>;
+    /** The given tickets that the Ledger records as done. */
+    readonly done: (tickets: readonly TicketId[]) => Effect.Effect<ReadonlySet<TicketId>, LedgerError>;
   }
 >()('Ledger') {}

@@ -1,12 +1,20 @@
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 
-/** A Ticket whose work is complete. A done Ticket is never Eligible. */
-export const isDone = (ticket: Ticket): boolean => ticket.status === 'done';
+/** A Ticket that its Source sees as done: in `done/`, or completed on Linear. */
+export const isDoneInSource = (ticket: Ticket): boolean => ticket.status === 'done';
 
-/** The identities of the done Tickets among the tickets a Source returned. */
-export const doneTicketIds = (tickets: readonly Ticket[]): ReadonlySet<TicketId> =>
-  new Set(tickets.filter(isDone).map((ticket) => ticket.id));
+/** The identities of the Tickets among the tickets a Source returned that it sees as done. */
+export const doneInSourceIds = (tickets: readonly Ticket[]): ReadonlySet<TicketId> =>
+  new Set(tickets.filter(isDoneInSource).map((ticket) => ticket.id));
+
+/**
+ * A Ticket whose work is complete: its Source sees it as done, or it is among the
+ * done tickets, which hold the tickets the Source sees as done and the ones the
+ * Ledger records as done. Neither fact reverts. A done Ticket is never Eligible.
+ */
+export const isDone = (ticket: Ticket, done: ReadonlySet<TicketId>): boolean =>
+  isDoneInSource(ticket) || done.has(ticket.id);
 
 /**
  * A Ticket whose blockers are all done. A blocker that is not among the done
@@ -25,8 +33,9 @@ export const isEscalated = (ticket: Ticket, escalated: ReadonlySet<TicketId>): b
 export const isUnattended = (ticket: Ticket): boolean => ticket.hitl === 'no';
 
 /**
- * What the Engine knows of other tickets: which are done, which hold a Claim in
- * the Ledger that is not a Stale Claim, and which have an Escalation in the Ledger.
+ * What the Engine knows of other tickets: which are done, as their Source sees them
+ * or as the Ledger records them, which hold a Claim in the Ledger that is not a
+ * Stale Claim, and which have an Escalation in the Ledger.
  */
 export type EligibilityFacts = {
   readonly done: ReadonlySet<TicketId>;
@@ -42,7 +51,7 @@ export type EligibilityFacts = {
  * may take.
  */
 export const isEligible = (ticket: Ticket, { done, claimed, escalated }: EligibilityFacts): boolean =>
-  !isDone(ticket) &&
+  !isDone(ticket, done) &&
   !isEscalated(ticket, escalated) &&
   isUnblocked(ticket, done) &&
   isUnclaimed(ticket, claimed) &&

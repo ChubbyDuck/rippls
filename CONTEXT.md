@@ -97,8 +97,8 @@ retried. The Ticket's next Ticket Processing continues in its retained Ticket Wo
 _Avoid_: Reset, requeue, resume
 
 **Ledger**:
-The Engine's own record of Ticket Processing, keyed by ticket identity: Claims and
-Escalations. It is local to the Repository Root for every Source; a Source is never
+The Engine's own record of Ticket Processing, keyed by ticket identity: Claims,
+Escalations, and done. It is local to the Repository Root for every Source; a Source is never
 the Ledger.
 _Avoid_: Database, store, registry
 
@@ -158,8 +158,9 @@ _Avoid_: Worktree Repository
 ## Sources
 
 **Ticket Source** (short form: **Source**):
-The origin a Ticket is read from and written to, responsible for converting external
-records to uniform Tickets and Ticket changes back to those records. Source identity
+The origin a Ticket is read from, with events reported to it: claimed, released,
+escalated, retried, and done. It converts external records to uniform Tickets and
+expresses each event in its own way; nothing saves a Ticket to it. Source identity
 travels with the Ticket's identity and does not affect processing rules.
 _Avoid_: Backend, provider, tracker, store, repository
 
@@ -174,6 +175,13 @@ An external record in a tracker such as Linear that a Source converts into a Tic
 _Avoid_: Ticket, task
 
 ## Eligibility
+
+**Done**:
+A Ticket whose work has landed: its Source sees it as done, or the Ledger records it
+as done. Neither fact reverts. The Engine marks a Ticket done by reporting done to the
+Source, which moves it without changing its content, and by recording done in the
+Ledger once its work is merged.
+_Avoid_: Completed, resolved, closed
 
 **Unblocked**:
 A Ticket whose blockers are all done. A blocker that cannot be found blocks.

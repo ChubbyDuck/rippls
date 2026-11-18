@@ -45,8 +45,12 @@ describe('deriveTicketStatus', () => {
     expect(deriveTicketStatus(ticket(), { ...nothing, escalated: one })).toBe('escalated');
   });
 
-  it('is done for a done ticket', () => {
-    expect(deriveTicketStatus(ticket().done(), nothing)).toBe('done');
+  it('is done for a ticket that its Source sees as done', () => {
+    expect(deriveTicketStatus(ticket({ status: 'done' }), nothing)).toBe('done');
+  });
+
+  it('is done for a ticket that the Ledger records as done while its Source still sees it open', () => {
+    expect(deriveTicketStatus(ticket(), { ...nothing, done: one })).toBe('done');
   });
 
   describe('when several values apply, shows the first of done, escalated, claimed, not ready, blocked', () => {
@@ -54,7 +58,7 @@ describe('deriveTicketStatus', () => {
     const all = { done: none, claimed: one, escalated: one };
 
     it('shows done over every other value', () => {
-      expect(deriveTicketStatus(notReadyAndBlocked.done(), all)).toBe('done');
+      expect(deriveTicketStatus(notReadyAndBlocked, { ...all, done: one })).toBe('done');
     });
 
     it('shows escalated over claimed, not ready, and blocked', () => {
@@ -73,7 +77,7 @@ describe('deriveTicketStatus', () => {
   it('is eligible exactly when the eligibility rule holds', () => {
     const tickets = [
       ticket(),
-      ticket().done(),
+      ticket({ status: 'done' }),
       ticket({ hitl: 'yes' }),
       ticket({ blockedBy: [id(9)] }),
       ticket({ blockedBy: [id(2)] }),
@@ -81,6 +85,7 @@ describe('deriveTicketStatus', () => {
     const factsList = [
       nothing,
       { ...nothing, done: new Set([id(2)]) },
+      { ...nothing, done: one },
       { ...nothing, claimed: one },
       { ...nothing, escalated: one },
     ];

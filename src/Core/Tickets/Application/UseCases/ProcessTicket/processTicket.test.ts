@@ -74,7 +74,7 @@ test('processTicket can be reused independently with the services supplied by ea
 
   for (const name of ['first-harness', 'second-harness']) {
     const events: string[] = [];
-    const saved: Ticket[] = [];
+    const doneReported: TicketId[] = [];
     const harness: Harness = {
       name,
       model: 'test-model',
@@ -90,17 +90,11 @@ test('processTicket can be reused independently with the services supplied by ea
       Layer.succeed(TicketSource, {
         getOneBy: () => Effect.succeed(ticket),
         getManyBy: () => Effect.succeed([]),
-        save: (value) =>
+        reportDone: (id) =>
           Effect.sync(() => {
-            events.push(`save ${value.status}`);
-            saved.push(value);
-          }),
-        saveMany: (values) =>
-          Effect.sync(() => {
-            for (const value of values) {
-              events.push(`save ${value.status}`);
-              saved.push(value);
-            }
+            events.push('report done');
+            doneReported.push(id);
+            return Effect.void;
           }),
         report: () => Effect.void,
       }),
@@ -124,8 +118,8 @@ test('processTicket can be reused independently with the services supplied by ea
     );
 
     expect(Effect.runSync(work.pipe(Effect.provide(withClaims(services))))).toBeUndefined();
-    expect(events).toEqual(['select harness', 'select implementation', 'run strategy', 'save done']);
-    expect(saved).toEqual([ticket.done()]);
+    expect(events).toEqual(['select harness', 'select implementation', 'run strategy', 'report done']);
+    expect(doneReported).toEqual([ticket.id]);
     expect(ticket.status).toBe('ready-for-agent');
   }
 });
@@ -140,7 +134,7 @@ test('processTicket runs a ticket that omits project', () => {
     blocks: [],
     body: 'Ticket instructions',
   });
-  const saved: Ticket[] = [];
+  const doneReported: TicketId[] = [];
   const services = Layer.mergeAll(
     Layer.succeed(HarnessSelector, {
       select: Effect.succeed({
@@ -152,11 +146,11 @@ test('processTicket runs a ticket that omits project', () => {
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(withoutProject),
       getManyBy: () => Effect.succeed([]),
-      save: (value) =>
+      reportDone: (id) =>
         Effect.sync(() => {
-          saved.push(value);
+          doneReported.push(id);
+          return Effect.void;
         }),
-      saveMany: () => Effect.void,
       report: () => Effect.void,
     }),
     Layer.succeed(StrategySelector, {
@@ -172,12 +166,12 @@ test('processTicket runs a ticket that omits project', () => {
   expect(
     Effect.runSync(processTicket({ ticket: withoutProject, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))))
   ).toBeUndefined();
-  expect(saved.map((value) => value.project)).toEqual([undefined]);
+  expect(doneReported).toEqual([withoutProject.id]);
 });
 
 const failingServices = (
-  saved: Ticket[],
-  report: (ticket: TicketId, event: TicketEvent) => Effect.Effect<void, TicketEventNotReported> = () => Effect.void
+  doneReported: TicketId[],
+  report: (ticket: TicketId, event: Exclude<TicketEvent, 'done'>) => Effect.Effect<void, TicketEventNotReported> = () => Effect.void
 ) =>
   Layer.mergeAll(
     Layer.succeed(HarnessSelector, {
@@ -190,13 +184,10 @@ const failingServices = (
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(ticket),
       getManyBy: () => Effect.succeed([]),
-      save: (value) =>
+      reportDone: (id) =>
         Effect.sync(() => {
-          saved.push(value);
-        }),
-      saveMany: (values) =>
-        Effect.sync(() => {
-          saved.push(...values);
+          doneReported.push(id);
+          return Effect.void;
         }),
       report,
     }),
@@ -211,10 +202,10 @@ const failingServices = (
   );
 
 test('processTicket escalates the ticket in the Ledger and halts the run when the strategy fails', () => {
-  const saved: Ticket[] = [];
+  const doneReported: TicketId[] = [];
   const reported: TicketEvent[] = [];
   const ledger = ledgerClaiming(ticket);
-  const services = failingServices(saved, (_, event) =>
+  const services = failingServices(doneReported, (_, event) =>
     Effect.sync(() => {
       reported.push(event);
     })
@@ -228,7 +219,7 @@ test('processTicket escalates the ticket in the Ledger and halts the run when th
   );
 
   expect(halt).toEqual(new EngineHalted({ ticketId: ticket.id, reason: 'strategy failure' }));
-  expect(saved).toEqual([]);
+  expect(doneReported).toEqual([]);
   expect(reported).toEqual(['escalated']);
   expect(ledger.claims.size).toBe(0);
   expect(ledger.escalated.get(ticket.id)).toEqual(
@@ -262,7 +253,7 @@ test('processTicket keeps the escalation, logs the failed report, and halts when
 });
 
 test('processTicket propagates a missing strategy and does not mark the ticket done', () => {
-  const saved: Ticket[] = [];
+  const doneReported: TicketId[] = [];
   const failure = new StrategyNotFound({ kind: ticket.kind });
   const harness: Harness = {
     name: 'test-harness',
@@ -276,13 +267,10 @@ test('processTicket propagates a missing strategy and does not mark the ticket d
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.fail(new TicketNotFound()),
       getManyBy: () => Effect.succeed([]),
-      save: (value) =>
+      reportDone: (id) =>
         Effect.sync(() => {
-          saved.push(value);
-        }),
-      saveMany: (values) =>
-        Effect.sync(() => {
-          saved.push(...values);
+          doneReported.push(id);
+          return Effect.void;
         }),
       report: () => Effect.void,
     }),
@@ -295,7 +283,7 @@ test('processTicket propagates a missing strategy and does not mark the ticket d
   expect(
     Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip))
   ).toBe(failure);
-  expect(saved).toEqual([]);
+  expect(doneReported).toEqual([]);
 });
 
 const harnessRecordingCwd = (cwds: Array<string | undefined>): Harness => ({
@@ -320,8 +308,7 @@ const probingStrategy = Layer.succeed(StrategySelector, {
 const ticketRepoIgnoringReads = Layer.succeed(TicketSource, {
   getOneBy: () => Effect.succeed(ticket),
   getManyBy: () => Effect.succeed([]),
-  save: () => Effect.void,
-  saveMany: () => Effect.void,
+  reportDone: () => Effect.succeed(Effect.void),
   report: () => Effect.void,
 });
 
@@ -344,8 +331,7 @@ test('processTicket hands the strategy a harness bound to the ticket worktree', 
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(withoutProject),
       getManyBy: () => Effect.succeed([]),
-      save: () => Effect.void,
-      saveMany: () => Effect.void,
+      reportDone: () => Effect.succeed(Effect.void),
       report: () => Effect.void,
     }),
     probingStrategy,
@@ -399,11 +385,7 @@ test('two tickets that name the same project run in distinct ticket worktrees', 
         return found === undefined ? Effect.fail(new TicketNotFound()) : Effect.succeed(found);
       },
       getManyBy: () => Effect.succeed([]),
-      save: (value) =>
-        Effect.sync(() => {
-          store.set(value.id, value);
-        }),
-      saveMany: () => Effect.void,
+      reportDone: () => Effect.succeed(Effect.void),
       report: () => Effect.void,
     }),
     probingStrategy,
@@ -469,7 +451,7 @@ test('processTicket retains the ticket worktree when the strategy fails', () => 
 });
 
 test('a project-worktree create failure is retried once and then halts without escalating the ticket', () => {
-  const saved: Ticket[] = [];
+  const doneReported: TicketId[] = [];
   let attempts = 0;
   const services = Layer.mergeAll(
     Layer.succeed(HarnessSelector, {
@@ -482,11 +464,11 @@ test('a project-worktree create failure is retried once and then halts without e
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(ticket),
       getManyBy: () => Effect.succeed([]),
-      save: (value) =>
+      reportDone: (id) =>
         Effect.sync(() => {
-          saved.push(value);
+          doneReported.push(id);
+          return Effect.void;
         }),
-      saveMany: () => Effect.void,
       report: () => Effect.void,
     }),
     Layer.succeed(StrategySelector, {
@@ -512,7 +494,7 @@ test('a project-worktree create failure is retried once and then halts without e
 
   expect(halt).toBeInstanceOf(EngineHalted);
   expect(attempts).toBe(2);
-  expect(saved).toEqual([]);
+  expect(doneReported).toEqual([]);
 });
 
 test('a project-worktree create failure that succeeds on retry processes the ticket', () => {
@@ -541,8 +523,9 @@ test('a project-worktree create failure that succeeds on retry processes the tic
   expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder:1']);
 });
 
-test('a ticket-worktree close failure is retried once and then halts without escalating the ticket', () => {
-  const saved: Ticket[] = [];
+test('a ticket-worktree close failure is retried once and then halts with no done in the Ledger and no escalation', () => {
+  const doneReported: TicketId[] = [];
+  const ledger = ledgerClaiming(ticket);
   let attempts = 0;
   const services = Layer.mergeAll(
     Layer.succeed(HarnessSelector, {
@@ -555,11 +538,11 @@ test('a ticket-worktree close failure is retried once and then halts without esc
     Layer.succeed(TicketSource, {
       getOneBy: () => Effect.succeed(ticket),
       getManyBy: () => Effect.succeed([]),
-      save: (value) =>
+      reportDone: (id) =>
         Effect.sync(() => {
-          saved.push(value);
+          doneReported.push(id);
+          return Effect.void;
         }),
-      saveMany: () => Effect.void,
       report: () => Effect.void,
     }),
     Layer.succeed(StrategySelector, {
@@ -580,12 +563,14 @@ test('a ticket-worktree close failure is retried once and then halts without esc
   );
 
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip)
+    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(Layer.merge(services, ledger.layer)), Effect.flip)
   );
 
   expect(halt).toBeInstanceOf(EngineHalted);
   expect(attempts).toBe(2);
-  expect(saved).toEqual([]);
+  expect(doneReported).toEqual([ticket.id]);
+  expect(ledger.done.size).toBe(0);
+  expect(ledger.escalated.size).toBe(0);
 });
 
 const succeedingServices = (strategyRun: () => Effect.Effect<Result.Result<void, StrategyRuntimeError>>) =>
@@ -618,4 +603,46 @@ test('processTicket names its Runner in the Claim and releases the Claim once th
 
   expect(seen).toEqual([new Claim({ ticket: ticket.id, engine, process: 1, host: 'memory', runner: runnerId })]);
   expect(ledger.claims.has(ticket.id)).toBe(false);
+});
+
+test('a done report that fails escalates the ticket, merges nothing, and records no done', () => {
+  const ledger = ledgerClaiming(ticket);
+  const closed: string[] = [];
+  const reported: TicketEvent[] = [];
+  const services = Layer.mergeAll(
+    Layer.succeed(HarnessSelector, {
+      select: Effect.succeed({
+        name: 'test-harness',
+        model: 'test-model',
+        run: () => Effect.succeed({ completionSignal: undefined }),
+      }),
+    }),
+    Layer.succeed(TicketSource, {
+      getOneBy: () => Effect.succeed(ticket),
+      getManyBy: () => Effect.succeed([]),
+      report: (_, event) =>
+        Effect.sync(() => {
+          reported.push(event);
+        }),
+      reportDone: (id) => Effect.fail(new TicketEventNotReported({ ticketId: id, event: 'done' })),
+    }),
+    Layer.succeed(StrategySelector, {
+      select: () => Effect.succeed({ name: 'implementation', run: () => Effect.succeed(Result.succeed(undefined)) }),
+    }),
+    recordingWorktrees(closed)
+  );
+
+  const halt = Effect.runSync(
+    processTicket({ ticket, runnerId, repositoryRoot }).pipe(
+      Effect.provide(Layer.merge(services, ledger.layer)),
+      Effect.flip
+    )
+  );
+
+  expect(halt).toEqual(new EngineHalted({ ticketId: ticket.id, reason: 'done report failure' }));
+  expect(closed).toEqual([]);
+  expect(reported).toEqual(['escalated']);
+  expect(ledger.done.size).toBe(0);
+  expect(ledger.claims.size).toBe(0);
+  expect(ledger.escalated.get(ticket.id)?.reason).toBe('done report failure');
 });

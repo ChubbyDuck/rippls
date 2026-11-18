@@ -5,13 +5,14 @@ import { parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Tic
 import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import { TicketNotSaved } from '~/Core/Tickets/Domain/Exceptions/TicketNotSaved';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { LinearApi, type LinearIssue, type LinearMetadata } from '~/Core/Tickets/Ports/LinearApi';
-import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
+import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource';
+import type { Worktree } from '~/Core/Tickets/Ports/WorktreeManager';
 
 import {
   claimWrites,
+  doneWrites,
   escalateWrites,
   issueToTicket,
   NEEDS_HUMAN_LABEL,
@@ -19,7 +20,6 @@ import {
   type LinearWrite,
   releaseWrites,
   retryWrites,
-  ticketToWrites,
 } from '~/Infrastructure/Tickets/LinearApi/codec';
 
 // A read by identity also finds a started Issue, so the Engine can complete the
@@ -128,12 +128,6 @@ export const TicketSourceLinearLive = Layer.effect(
             Effect.flatMap((needed) => Effect.forEach(needed, applyWrite, { discard: true }))
           );
 
-    const save = (ticket: Ticket): Effect.Effect<void, TicketNotSaved> =>
-      api.metadata(teamId).pipe(
-        Effect.flatMap((metadata) => applyNeeded(parseTicketId(ticket.id).native, ticketToWrites(ticket, metadata))),
-        Effect.mapError(() => new TicketNotSaved())
-      );
-
     // An Issue in a started state is already claimed on Linear, perhaps by an
     // Engine on another machine since the Engine read it, so it cannot be claimed.
     const ensureNotStarted = (issueId: string) =>
@@ -154,7 +148,10 @@ export const TicketSourceLinearLive = Layer.effect(
         )
       );
 
-    const report = (ticket: TicketId, event: TicketEvent): Effect.Effect<void, TicketEventNotReported> =>
+    const report = (
+      ticket: TicketId,
+      event: Exclude<TicketEvent, 'done'>
+    ): Effect.Effect<void, TicketEventNotReported> =>
       Effect.gen(function* () {
         const metadata = yield* api.metadata(teamId);
         const issueId = parseTicketId(ticket).native;
@@ -183,9 +180,18 @@ export const TicketSourceLinearLive = Layer.effect(
         }
       }).pipe(Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event })));
 
-    const saveMany = (tickets: readonly Ticket[]): Effect.Effect<void, TicketNotSaved> =>
-      Effect.forEach(tickets, save, { discard: true });
+    // Done on Linear is a workflow state, set before the merge. Nothing is left
+    // for after it.
+    const reportDone = (ticket: TicketId, _worktree: Worktree): Effect.Effect<AfterMerge, TicketEventNotReported> =>
+      api.metadata(teamId).pipe(
+        Effect.flatMap((metadata) => {
+          const issueId = parseTicketId(ticket).native;
+          return applyNeeded(issueId, doneWrites(issueId, metadata));
+        }),
+        Effect.as(Effect.void),
+        Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event: 'done' }))
+      );
 
-    return { getOneBy, getManyBy, save, saveMany, report };
+    return { getOneBy, getManyBy, report, reportDone };
   })
 );

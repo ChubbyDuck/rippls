@@ -19,12 +19,12 @@ import { RepositoryRootNotFound } from '~/Core/Tickets/Domain/Exceptions/Reposit
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import { TicketNotSaved } from '~/Core/Tickets/Domain/Exceptions/TicketNotSaved';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
-import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
-import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
+import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource';
+import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 import { StrategySelectorNoop } from '~/Infrastructure/Tickets/StrategySelector/noop';
 
@@ -61,20 +61,26 @@ const id = (value: number) => formatTicketId('folder', String(value));
 // A fake Source that keeps tickets in memory, in the order they were added. A read
 // for the tickets in scope returns every one of them, narrowed only by Project:
 // the Engine, not the Source, decides which ticket is Eligible. The other reads
-// (by identity and blocked-by) answer as the real Sources do. A saved ticket
-// replaces the stored one. Every reported event is recorded.
-type Reported = { readonly ticket: TicketId; readonly event: TicketEvent };
+// (by identity and blocked-by) answer as the real Sources do. Every reported
+// event is recorded, and every ticket reported done. A done report changes
+// nothing in the store, as for a Project ticket whose move has not reached the
+// Repository Root: the Ledger alone makes the ticket done.
+type Reported = { readonly ticket: TicketId; readonly event: Exclude<TicketEvent, 'done'> };
 
 const fakeSource = (
   seed: readonly Ticket[] = [],
   options: {
-    readonly save?: (ticket: Ticket) => Effect.Effect<void, TicketNotSaved>;
-    readonly report?: (ticket: TicketId, event: TicketEvent) => Effect.Effect<void, TicketEventNotReported>;
+    readonly report?: (
+      ticket: TicketId,
+      event: Exclude<TicketEvent, 'done'>
+    ) => Effect.Effect<void, TicketEventNotReported>;
+    readonly reportDone?: (ticket: TicketId, worktree: Worktree) => Effect.Effect<AfterMerge, TicketEventNotReported>;
   } = {}
 ) => {
   const store = new Map(seed.map((ticket) => [ticket.id, ticket]));
   const scopeReads: TicketQuery[] = [];
   const reports: Reported[] = [];
+  const doneReported: TicketId[] = [];
   const read = (query: TicketQuery) =>
     Array.from(store.values()).filter(
       (ticket) =>
@@ -83,14 +89,6 @@ const fakeSource = (
         (query.project === undefined || ticket.project === query.project)
     );
   const isScopeRead = (query: TicketQuery) => query.id === undefined && query.blockedBy === undefined;
-  const save = (ticket: Ticket): Effect.Effect<void, TicketNotSaved> =>
-    (options.save ?? (() => Effect.void))(ticket).pipe(
-      Effect.andThen(
-        Effect.sync(() => {
-          store.set(ticket.id, ticket);
-        })
-      )
-    );
   const layer = Layer.succeed(TicketSource, {
     getOneBy: (query) =>
       Effect.suspend(() => {
@@ -104,8 +102,6 @@ const fakeSource = (
         }
         return read(query);
       }),
-    save,
-    saveMany: (tickets) => Effect.forEach(tickets, save, { discard: true }),
     report: (ticket, event) =>
       (options.report ?? (() => Effect.void))(ticket, event).pipe(
         Effect.andThen(
@@ -114,11 +110,19 @@ const fakeSource = (
           })
         )
       ),
+    reportDone: (ticket, worktree) =>
+      (options.reportDone ?? (() => Effect.succeed(Effect.void)))(ticket, worktree).pipe(
+        Effect.tap(() =>
+          Effect.sync(() => {
+            doneReported.push(ticket);
+          })
+        )
+      ),
   });
   const add = (ticket: Ticket) => {
     store.set(ticket.id, ticket);
   };
-  return { layer, store, scopeReads, reports, add };
+  return { layer, store, scopeReads, reports, doneReported, add };
 };
 
 // A Claim that another Engine holds in the shared Ledger.
@@ -139,6 +143,20 @@ const sampleFields = (value = 1) => ({
 });
 
 const sampleTicket = (value = 1) => Ticket.create(sampleFields(value));
+
+// The ticket as its Source sees it once it is done.
+const seenAsDone = (ticket: Ticket) =>
+  new Ticket({
+    id: ticket.id,
+    title: ticket.title,
+    project: ticket.project,
+    status: 'done',
+    blockedBy: ticket.blockedBy,
+    blocks: ticket.blocks,
+    kind: ticket.kind,
+    hitl: ticket.hitl,
+    body: ticket.body,
+  });
 
 const blockedTicket = (value: number, blockedBy: number) =>
   Ticket.create({
@@ -251,14 +269,8 @@ test('runEngine runs tickets that appear after an empty poll', async () => {
 });
 
 test('runEngine claims each ticket and reports the Claim before a Runner takes it', async () => {
-  const saved: Ticket[] = [];
   const messages: string[] = [];
-  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
-    save: (ticket) =>
-      Effect.sync(() => {
-        saved.push(ticket);
-      }),
-  });
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
   const layer = Layer.mergeAll(
     source.layer,
     HarnessSelectorNoop,
@@ -266,8 +278,10 @@ test('runEngine claims each ticket and reports the Claim before a Runner takes i
     Layer.succeed(Console.Console, capturingConsole(messages))
   );
 
-  expect(await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => saved.length === 2)).toBeUndefined();
-  expect(saved).toEqual([sampleTicket(1).done(), sampleTicket(2).done()]);
+  expect(
+    await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => source.doneReported.length === 2)
+  ).toBeUndefined();
+  expect(source.doneReported).toEqual([id(1), id(2)]);
   expect(source.reports).toEqual([
     { ticket: id(1), event: 'claimed' },
     { ticket: id(2), event: 'claimed' },
@@ -295,21 +309,13 @@ test('runEngine claims each ticket and reports the Claim before a Runner takes i
 test('runEngine claims a ticket in the Ledger before a Runner processes it, and releases it once done', async () => {
   const ledger = makeLedgerMemory();
   const seen: Array<Claim | undefined> = [];
-  const saved: Ticket[] = [];
-  const layer = Layer.mergeAll(
-    fakeSource([sampleTicket(1)], {
-      save: (ticket) =>
-        Effect.sync(() => {
-          saved.push(ticket);
-        }),
-    }).layer,
-    HarnessSelectorNoop,
-    claimRecordingImplementation(ledger, seen)
-  );
+  const source = fakeSource([sampleTicket(1)]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, claimRecordingImplementation(ledger, seen));
 
   expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
   expect(seen).toEqual([new Claim({ ticket: id(1), engine: engineId, process: 1, host: 'memory', runner: claiming })]);
-  expect(saved).toEqual([sampleTicket(1).done()]);
+  expect(source.doneReported).toEqual([id(1)]);
+  expect([...ledger.done]).toEqual([id(1)]);
   expect(ledger.claims.size).toBe(0);
 });
 
@@ -454,8 +460,7 @@ test('runEngine takes the next Eligible ticket when the chosen one is no longer 
   expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
 
-test('runEngine takes a blocked ticket once its blocker is done, without writing to it before', async () => {
-  const saved: Ticket[] = [];
+test('runEngine takes a blocked ticket once its blocker is done in the Ledger, without writing to it before', async () => {
   const ran: Ticket[] = [];
   // Ticket 1 comes first in the order of the Source, so it would be taken first if
   // it were Eligible while ticket 2 is open. Its stored status does not gate it.
@@ -470,22 +475,17 @@ test('runEngine takes a blocked ticket once its blocker is done, without writing
     body: '',
   });
   const blocker = sampleTicket(2);
-  const source = fakeSource([dependent, blocker], {
-    save: (ticket) =>
-      Effect.sync(() => {
-        saved.push(ticket);
-      }),
-  });
+  const source = fakeSource([dependent, blocker]);
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
 
   expect(await Effect.runPromise(runEngine({ project, limit: 2 }).pipe(Effect.provide(layer)))).toBeUndefined();
   expect(ran).toEqual([blocker, dependent]);
-  expect(saved).toEqual([blocker.done(), dependent.done()]);
+  expect(source.doneReported).toEqual([id(2), id(1)]);
+  expect(source.store.get(id(1))).toEqual(dependent);
 });
 
 test('runEngine does not take a ticket while its blocker is not done, and takes it once the blocker is done', async () => {
   const ran: Ticket[] = [];
-  const saved: Ticket[] = [];
   const attendedBlocker = Ticket.create({
     id: id(2),
     title: 'Attended blocker',
@@ -498,12 +498,7 @@ test('runEngine does not take a ticket while its blocker is not done, and takes 
     body: '',
   });
   const dependent = blockedTicket(1, 2);
-  const source = fakeSource([dependent, attendedBlocker], {
-    save: (ticket) =>
-      Effect.sync(() => {
-        saved.push(ticket);
-      }),
-  });
+  const source = fakeSource([dependent, attendedBlocker]);
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
 
   await Effect.runPromise(
@@ -511,20 +506,20 @@ test('runEngine does not take a ticket while its blocker is not done, and takes 
       const fiber = yield* runEngine({ project }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
       yield* TestClock.adjust('0 millis');
       expect(ran).toEqual([]);
-      expect(saved).toEqual([]);
-      source.add(attendedBlocker.done());
+      expect(source.doneReported).toEqual([]);
+      source.add(seenAsDone(attendedBlocker));
       yield* TestClock.adjust('10 seconds');
       expect(ran).toEqual([dependent]);
       yield* Fiber.interrupt(fiber);
     }).pipe(Effect.provide(TestClock.layer()))
   );
 
-  expect(saved).toEqual([dependent.done()]);
+  expect(source.doneReported).toEqual([id(1)]);
 });
 
 test('runEngine keeps a ticket blocked by a blocker that the Source cannot find', async () => {
   const ran: Ticket[] = [];
-  const source = fakeSource([blockedTicket(1, 99), sampleTicket(2).done()]);
+  const source = fakeSource([blockedTicket(1, 99), seenAsDone(sampleTicket(2))]);
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
 
   await Effect.runPromise(
@@ -552,7 +547,7 @@ test('runEngine resolves a blocker of another Project against every ticket of th
       blocks: [],
       body: '',
     });
-  const doneElsewhere = elsewhere(2).done();
+  const doneElsewhere = seenAsDone(elsewhere(2));
   const openElsewhere = elsewhere(4);
   const source = fakeSource([blockedTicket(1, 2), blockedTicket(3, 4), doneElsewhere, openElsewhere]);
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
@@ -597,15 +592,9 @@ const failingStrategy = Layer.succeed(StrategySelector, {
     }),
 });
 
-test('runEngine records an escalation in the Ledger, saves nothing to the Source, and halts when the strategy fails', () => {
-  const saved: Ticket[] = [];
+test('runEngine records an escalation in the Ledger, reports no done to the Source, and halts when the strategy fails', () => {
   const ledger = makeLedgerMemory();
-  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
-    save: (ticket) =>
-      Effect.sync(() => {
-        saved.push(ticket);
-      }),
-  });
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, failingStrategy);
 
   expect(Effect.runSync(runEngine({ project }, ledger).pipe(Effect.provide(layer), Effect.flip))).toEqual(
@@ -619,7 +608,8 @@ test('runEngine records an escalation in the Ledger, saves nothing to the Source
       worktree: '/repo/.sandcastle/worktrees/ticket-folder:1',
     }),
   ]);
-  expect(saved).toEqual([]);
+  expect(source.doneReported).toEqual([]);
+  expect(ledger.done.size).toBe(0);
   expect(source.store.get(id(1))).toEqual(sampleTicket(1));
   expect(ledger.claims.size).toBe(0);
   expect(source.reports).toEqual([
@@ -726,30 +716,153 @@ test('runEngine does not process a ticket that another Engine escalated after th
   expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
 
-test('runEngine fails when the done write cannot be saved, and releases its Claim on exit', () => {
-  const saved: Ticket[] = [];
+// A Worktree Manager whose merge of a Ticket Worktree records each step in the
+// timeline, and fails when `merge` says so.
+const timelineWorktrees = (timeline: string[], merge: Effect.Effect<void, WorktreeCloseError> = Effect.void) =>
+  Layer.succeed(WorktreeManager, {
+    prepareProject: (value) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${value}`, branch: value }),
+    prepareTicket: ({ id: ticket }) =>
+      Effect.succeed({ path: `/repo/.sandcastle/worktrees/ticket-${ticket}`, branch: `ticket-${ticket}` }),
+    mergeAndClose: () =>
+      Effect.sync(() => {
+        timeline.push('merge and close');
+      }).pipe(Effect.andThen(merge)),
+  });
+
+// The memory Ledger, recording in the timeline each done it records and each
+// Claim it releases.
+const timelineLedger = (timeline: string[]) => {
+  const ledger = makeLedgerMemory();
+  const real = Effect.runSync(Ledger.pipe(Effect.provide(ledger.layer)));
+  const layer = Layer.succeed(Ledger, {
+    ...real,
+    recordDone: (ticket) =>
+      Effect.sync(() => {
+        timeline.push(`done in the Ledger ${ticket}`);
+      }).pipe(Effect.andThen(real.recordDone(ticket))),
+    release: (ticket) =>
+      Effect.sync(() => {
+        timeline.push(`Claim released ${ticket}`);
+      }).pipe(Effect.andThen(real.release(ticket))),
+  });
+  return { ...ledger, layer };
+};
+
+test('runEngine does not process a ticket that another Engine completed after this Engine read the Ledger', async () => {
   const ran: Ticket[] = [];
   const ledger = makeLedgerMemory();
-  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
-    save: (ticket) =>
-      ticket.status === 'done'
-        ? Effect.fail(new TicketNotSaved())
-        : Effect.sync(() => {
-            saved.push(ticket);
-          }),
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+  // The poll reads done before another Engine records ticket 1 as done and
+  // releases its Claim, so the read misses that done.
+  const real = Effect.runSync(Ledger.pipe(Effect.provide(ledger.layer)));
+  let reads = 0;
+  const lateDone = Layer.succeed(Ledger, {
+    ...real,
+    done: (tickets) =>
+      reads++ === 0 ? real.done(tickets).pipe(Effect.tap(() => real.recordDone(id(1)))) : real.done(tickets),
   });
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
 
-  expect(Effect.runSync(runEngine({ project }, ledger).pipe(Effect.provide(layer), Effect.flip))).toEqual(
-    new TicketNotSaved()
+  expect(
+    await Effect.runPromise(
+      executeEngine({ project, limit: 1 }).pipe(
+        Random.withSeed('test'),
+        Effect.provide(Layer.mergeAll(EngineStartupTest, lateDone, layer))
+      )
+    )
+  ).toBeUndefined();
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
+  expect(ledger.claims.has(id(1))).toBe(false);
+  expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
+});
+
+test('runEngine reports done to the Source, merges and closes, records done in the Ledger, then releases the Claim', async () => {
+  const timeline: string[] = [];
+  const ledger = timelineLedger(timeline);
+  const source = fakeSource([sampleTicket(1)], {
+    reportDone: (ticket) =>
+      Effect.sync((): AfterMerge => {
+        timeline.push(`done reported ${ticket}`);
+        return Effect.sync(() => {
+          timeline.push(`after the merge ${ticket}`);
+        });
+      }),
+  });
+  const layer = Layer.mergeAll(
+    EngineStartupTest,
+    timelineWorktrees(timeline),
+    ledger.layer,
+    source.layer,
+    HarnessSelectorNoop,
+    StrategySelectorNoop
   );
-  expect(ran).toEqual([sampleTicket(1)]);
-  expect(saved).toEqual([]);
+
+  expect(
+    await Effect.runPromise(executeEngine({ project, limit: 1 }).pipe(Random.withSeed('test'), Effect.provide(layer)))
+  ).toBeUndefined();
+  expect(timeline).toEqual([
+    `done reported ${id(1)}`,
+    'merge and close',
+    `after the merge ${id(1)}`,
+    `done in the Ledger ${id(1)}`,
+    `Claim released ${id(1)}`,
+  ]);
+});
+
+test('runEngine records no done in the Ledger when the merge fails, halts, and releases its Claim on exit', async () => {
+  const timeline: string[] = [];
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    reportDone: () =>
+      Effect.succeed(
+        Effect.sync(() => {
+          timeline.push('after the merge');
+        })
+      ),
+  });
+  const layer = Layer.mergeAll(
+    EngineStartupTest,
+    timelineWorktrees(timeline, Effect.fail(new WorktreeCloseError())),
+    ledger.layer,
+    source.layer,
+    HarnessSelectorNoop,
+    StrategySelectorNoop
+  );
+
+  expect(
+    await Effect.runPromise(executeEngine({ project }).pipe(Random.withSeed('test'), Effect.provide(layer), Effect.flip))
+  ).toEqual(new EngineHalted({ ticketId: id(1), reason: 'worktree close failure' }));
+  expect(timeline).toEqual(['merge and close', 'merge and close']);
+  expect(source.doneReported).toEqual([id(1)]);
+  expect(ledger.done.size).toBe(0);
   expect(ledger.claims.size).toBe(0);
   expect(source.reports).toEqual([
     { ticket: id(1), event: 'claimed' },
     { ticket: id(1), event: 'released' },
   ]);
+});
+
+test('runEngine does not take a Project ticket that the Ledger records as done while its file is still open, and takes its dependent', async () => {
+  const ran: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  ledger.done.add(id(1));
+  const source = fakeSource([sampleTicket(1), blockedTicket(2, 1)]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine({ project }, ledger).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true })
+      );
+      yield* TestClock.adjust('10 seconds');
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(TestClock.layer()))
+  );
+
+  expect(source.store.get(id(1))?.status).toBe('ready-for-agent');
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
+  expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
 
 test('runEngine keeps polling when the provided repository has no ticket', async () => {

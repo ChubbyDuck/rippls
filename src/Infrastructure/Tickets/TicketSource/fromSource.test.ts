@@ -1,16 +1,16 @@
-import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem';
-import * as NodePath from '@effect/platform-node/NodePath';
+import * as NodeServices from '@effect/platform-node/NodeServices';
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from 'effect';
 import { expect, test } from 'vitest';
 
 import { engineConfig, resolveTicketSource } from '~/Core/Shared/Domain/EngineConfig';
+import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { LinearApi, type LinearIssue, LinearIssueNotFound } from '~/Core/Tickets/Ports/LinearApi';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import { ticketSourceLive } from './fromSource';
 
-const NodeFs = Layer.mergeAll(NodeFileSystem.layer, NodePath.layer);
+const NodeFs = NodeServices.layer;
 
 const folderSource = (ticketsDir: string) =>
   engineConfig.parse(ConfigProvider.fromUnknown({
@@ -37,7 +37,7 @@ test('ticketSourceLive reads from the folder source', async () => {
       const resolved = yield* folderSource(dir);
       const tickets = yield* TicketSource.pipe(
         Effect.flatMap((source) => source.getManyBy(TicketQuery.build())),
-        Effect.provide(ticketSourceLive(resolved))
+        Effect.provide(ticketSourceLive(resolved).pipe(Layer.provide(Layer.succeed(RepositoryRoot, dir))))
       );
       return tickets.map((ticket) => ticket.title);
     }).pipe(Effect.provide(NodeFs))

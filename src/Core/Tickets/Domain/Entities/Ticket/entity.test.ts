@@ -56,12 +56,6 @@ describe('Ticket', () => {
     expect(() => Ticket.create({ ...validImplementation, status: 'claiming' })).toThrow(Schema.SchemaError);
   });
 
-  it('marks a ticket as done', () => {
-    const done = Ticket.create(validImplementation).done();
-
-    expect(done.status).toBe('done');
-  });
-
   it('rejects a non-positive id', () => {
     expect(() => Ticket.create({ ...validImplementation, id: 0 })).toThrow(Schema.SchemaError);
   });
@@ -81,13 +75,6 @@ describe('Ticket', () => {
     expect(ticket.project).toBeUndefined();
   });
 
-  it('keeps an omitted project when completing', () => {
-    const { project: _project, ...withoutProject } = validImplementation;
-    const done = Ticket.create(withoutProject).done();
-
-    expect(done.project).toBeUndefined();
-  });
-
   it('ignores a provided hitl on implied kinds and uses the mapping', () => {
     const implementation = Ticket.create({ ...validImplementation, hitl: 'yes' });
     expect(implementation.hitl).toBe('no');
@@ -103,12 +90,6 @@ describe('Ticket', () => {
   it('rejects a ticket that omits body', () => {
     const { body: _body, ...withoutBody } = validImplementation;
     expect(() => Ticket.create(withoutBody)).toThrow(Schema.SchemaError);
-  });
-
-  it('keeps the body when completing', () => {
-    const ticket = Ticket.create({ ...validImplementation, body: 'Do the work.' });
-    expect(ticket.body).toBe('Do the work.');
-    expect(ticket.done().body).toBe('Do the work.');
   });
 
   it('reports whether a ticket is blocked by a given id', () => {

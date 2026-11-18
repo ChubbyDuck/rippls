@@ -13,13 +13,15 @@ import { type ClaimHolder, isStaleFor } from './holder';
  * A Ledger held in memory. Every Engine given its layer shares one set of Claims
  * and Escalations, so several Engines can run against one Ledger. The processes
  * in `running` run on the holder's host; the holder's own process is one of them.
- * A cleared Escalation moves to `cleared`, which keeps its attempt count.
+ * A cleared Escalation moves to `cleared`, which keeps its attempt count. `done`
+ * holds the tickets recorded as done.
  */
 export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memory' }) => {
   const claims = new Map<TicketId, Claim>();
   const running = new Set([holder.process]);
   const escalated = new Map<TicketId, Escalation>();
   const cleared = new Map<TicketId, Escalation>();
+  const done = new Set<TicketId>();
   const pick = <A>(records: ReadonlyMap<TicketId, A>, tickets: readonly TicketId[]): ReadonlyMap<TicketId, A> =>
     new Map(
       tickets.flatMap((ticket) => {
@@ -84,6 +86,11 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
         }
       }),
     escalations: (tickets) => Effect.sync(() => pick(escalated, tickets)),
+    recordDone: (ticket) =>
+      Effect.sync(() => {
+        done.add(ticket);
+      }),
+    done: (tickets) => Effect.sync(() => new Set(tickets.filter((ticket) => done.has(ticket)))),
   });
-  return { layer, claims, running, escalated, cleared };
+  return { layer, claims, running, escalated, cleared, done };
 };

@@ -33,8 +33,7 @@ export const TicketSourceLive = Layer.sync(TicketSource, () => {
         Effect.map((kind) => sampleTicket(++created, kind))
       ),
     getManyBy: () => Effect.succeed([]),
-    save: () => Effect.void,
-    saveMany: () => Effect.void,
     report: () => Effect.void,
+    reportDone: () => Effect.succeed(Effect.void),
   };
 });

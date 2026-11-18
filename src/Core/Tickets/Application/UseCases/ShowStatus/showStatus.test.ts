@@ -53,9 +53,8 @@ const fakeSource = (tickets: readonly Ticket[]) => {
         return found === undefined ? Effect.fail(new TicketNotFound()) : Effect.succeed(found);
       }),
     getManyBy: (query) => Effect.sync(() => read(query)),
-    save: () => Effect.void,
-    saveMany: () => Effect.void,
     report: () => Effect.void,
+    reportDone: () => Effect.succeed(Effect.void),
   });
 };
 
@@ -69,9 +68,20 @@ const escalationOf = (ticket: TicketId) =>
 
 const setup = (
   tickets: readonly Ticket[],
-  { claims = [], escalations = [] }: { readonly claims?: readonly Claim[]; readonly escalations?: readonly Escalation[] } = {}
+  {
+    claims = [],
+    escalations = [],
+    done = [],
+  }: {
+    readonly claims?: readonly Claim[];
+    readonly escalations?: readonly Escalation[];
+    readonly done?: readonly TicketId[];
+  } = {}
 ) => {
   const ledger = makeLedgerMemory();
+  for (const ticket of done) {
+    ledger.done.add(ticket);
+  }
   for (const claim of claims) {
     ledger.claims.set(claim.ticket, claim);
   }
@@ -108,7 +118,7 @@ describe('ticketStatuses', () => {
   it('derives one Ticket Status for every ticket in scope, one ticket for each value', async () => {
     const layer = setup(
       [
-        ticket(1).done(),
+        ticket(1, { status: 'done' }),
         ticket(2),
         ticket(3),
         ticket(4, { hitl: 'yes' }),
@@ -131,7 +141,7 @@ describe('ticketStatuses', () => {
   it('shows the first of done, escalated, claimed, not ready, and blocked when several apply', async () => {
     const several = { hitl: 'yes', blockedBy: [id(9)] };
     const layer = setup(
-      [ticket(1, several).done(), ticket(2, several), ticket(3, several), ticket(4, several)],
+      [ticket(1, { ...several, status: 'done' }), ticket(2, several), ticket(3, several), ticket(4, several)],
       {
         claims: [claimOf(id(1)), claimOf(id(2)), claimOf(id(3))],
         escalations: [escalationOf(id(1)), escalationOf(id(2))],
@@ -162,15 +172,24 @@ describe('ticketStatuses', () => {
   });
 
   it('resolves a blocker of another Project when a Project is given', async () => {
-    const layer = setup([ticket(1, { project: web }).done(), ticket(2, { blockedBy: [id(1)] })]);
+    const layer = setup([ticket(1, { project: web, status: 'done' }), ticket(2, { blockedBy: [id(1)] })]);
 
     expect(await statusesOf(layer, { project: billing })).toEqual([[id(2), 'eligible']]);
+  });
+
+  it('shows done for a ticket that the Ledger records as done while its file is still open, and unblocks its dependent', async () => {
+    const layer = setup([ticket(1), ticket(2, { blockedBy: [id(1)] })], { done: [id(1)] });
+
+    expect(await statusesOf(layer)).toEqual([
+      [id(1), 'done'],
+      [id(2), 'eligible'],
+    ]);
   });
 });
 
 describe('showStatus', () => {
   it('prints the identity, the Title, and the Ticket Status of every ticket', async () => {
-    const layer = setup([ticket(1).done(), ticket(2)]);
+    const layer = setup([ticket(1, { status: 'done' }), ticket(2)]);
 
     expect(await printed(layer)).toEqual(['folder:1  Ticket 1  done', 'folder:2  Ticket 2  eligible']);
   });

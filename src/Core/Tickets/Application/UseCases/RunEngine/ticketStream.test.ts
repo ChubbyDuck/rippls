@@ -45,9 +45,8 @@ const scriptedSource = (next: () => Ticket | undefined) => {
         seen.set(ticket.id, ticket);
         return [ticket];
       }),
-    save: () => Effect.void,
-    saveMany: () => Effect.void,
     report: () => Effect.void,
+    reportDone: () => Effect.succeed(Effect.void),
   });
 };
 

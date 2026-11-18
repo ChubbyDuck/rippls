@@ -6,7 +6,7 @@ import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import type { RunnerId } from '~/Core/Shared/Domain/Properties/RunnerId';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import { Escalation, type EscalationCause } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
-import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
@@ -21,6 +21,7 @@ const decodeClaim = Schema.decodeUnknownOption(ClaimJson);
 const EscalationJson = Schema.fromJsonString(Escalation);
 const encodeEscalation = Schema.encodeSync(EscalationJson);
 const decodeEscalation = Schema.decodeUnknownOption(EscalationJson);
+const encodeDone = Schema.encodeSync(Schema.fromJsonString(Schema.Struct({ ticket: TicketId })));
 const isReason = (tag: PlatformError.SystemErrorTag) => (error: PlatformError.PlatformError) =>
   error.reason._tag === tag;
 
@@ -43,7 +44,8 @@ const processRuns = (pid: number): Effect.Effect<boolean> =>
  * appears in a merge, and it needs no ignore rule. A Claim is the record in the
  * folder itself; an Escalation is a record in its `escalations` folder, so it
  * outlives the Claim that is released when the ticket is escalated. A cleared
- * Escalation moves to the `cleared` folder, which keeps its attempt count.
+ * Escalation moves to the `cleared` folder, which keeps its attempt count. A done
+ * ticket has a record in the `done` folder.
  */
 export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
   Layer.effect(
@@ -54,10 +56,12 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
       const dir = path.join(gitCommonDir, 'rippls', 'ledger');
       const escalationsDir = path.join(dir, 'escalations');
       const clearedDir = path.join(dir, 'cleared');
+      const doneDir = path.join(dir, 'done');
       const fileName = (ticket: TicketId) => `${encodeURIComponent(ticket)}${RECORD_SUFFIX}`;
       const recordOf = (ticket: TicketId) => path.join(dir, fileName(ticket));
       const escalationOf = (ticket: TicketId) => path.join(escalationsDir, fileName(ticket));
       const clearedOf = (ticket: TicketId) => path.join(clearedDir, fileName(ticket));
+      const doneOf = (ticket: TicketId) => path.join(doneDir, fileName(ticket));
 
       // A record is written whole in a scratch folder next to the records, so a
       // reader never sees a partial record.
@@ -193,6 +197,24 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
       const escalations = (tickets: readonly TicketId[]) =>
         readMany(tickets, (ticket) => readEscalation(escalationOf(ticket)));
 
+      // The record names the ticket; its presence is the fact.
+      const recordDone = (ticket: TicketId) =>
+        Effect.gen(function* () {
+          const scratch = yield* writeScratch(encodeDone({ ticket }));
+          yield* fs.makeDirectory(doneDir, { recursive: true }).pipe(
+            Effect.andThen(fs.rename(scratch, doneOf(ticket))),
+            Effect.mapError(toLedgerError)
+          );
+        }).pipe(Effect.scoped);
+
+      const done = (tickets: readonly TicketId[]) =>
+        Effect.forEach(tickets, (ticket) =>
+          fs.exists(doneOf(ticket)).pipe(
+            Effect.map((exists) => (exists ? [ticket] : [])),
+            Effect.mapError(toLedgerError)
+          )
+        ).pipe(Effect.map((found) => new Set(found.flat())));
+
       return {
         claim,
         assignRunner,
@@ -204,6 +226,8 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
         escalate,
         clearEscalation,
         escalations,
+        recordDone,
+        done,
       };
     })
   );

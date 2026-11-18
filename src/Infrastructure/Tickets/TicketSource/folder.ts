@@ -1,14 +1,17 @@
 import { Config, Effect, FileSystem, Layer, Option, Path, Schema, Stream } from 'effect';
-import { parse, stringify } from 'yaml';
+import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
+import { parse } from 'yaml';
 
 import { TicketsDir } from '~/Core/Shared/Domain/EngineConfig';
+import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { Ticket, TicketFromInput } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import { TicketNotSaved } from '~/Core/Tickets/Domain/Exceptions/TicketNotSaved';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
-import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
+import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource';
+import type { Worktree } from '~/Core/Tickets/Ports/WorktreeManager';
 
 const FOLDER_SOURCE = 'folder';
 
@@ -52,7 +55,8 @@ const CLAIM_STATUSES = new Set(['claiming', 'claimed']);
 const withoutClaim = (status: unknown): unknown =>
   typeof status === 'string' && CLAIM_STATUSES.has(status) ? 'ready-for-agent' : status;
 
-const headToTicket = (text: string, fileId: number): Option.Option<Ticket> => {
+// A ticket in `done/` is done, whatever its front matter says.
+const headToTicket = (text: string, fileId: number, inDone: boolean): Option.Option<Ticket> => {
   const fields = parseFrontMatter(text);
   if (fields === undefined || typeof fields !== 'object' || fields === null || Array.isArray(fields)) {
     return Option.none();
@@ -61,7 +65,7 @@ const headToTicket = (text: string, fileId: number): Option.Option<Ticket> => {
   return Schema.decodeUnknownOption(TicketFromInput)({
     ...record,
     id: toFolderId(fileId),
-    status: withoutClaim(record.status),
+    status: inDone ? 'done' : withoutClaim(record.status),
     blockedBy: namespaceIds(record.blockedBy),
     blocks: namespaceIds(record.blocks),
     body: '',
@@ -86,16 +90,8 @@ const withBody = (ticket: Ticket, body: string): Ticket =>
     body,
   });
 
-const toFrontMatter = (ticket: Ticket) => ({
-  id: toNativeNumber(ticket.id),
-  title: ticket.title,
-  project: ticket.project,
-  status: ticket.status,
-  kind: ticket.kind,
-  hitl: ticket.hitl,
-  blockedBy: ticket.blockedBy.map(toNativeNumber),
-  blocks: ticket.blocks.map(toNativeNumber),
-});
+/** The fixed message of the commit that moves a ticket into `done/` on its ticket branch. */
+export const doneMoveMessage = (ticket: TicketId): string => `chore: move ticket ${ticket} to done`;
 
 const matchesQuery =
   (query: TicketQuery) =>
@@ -124,18 +120,19 @@ const sortByIdName =
     return withId.map((entry) => entry.file);
   };
 
-// TODO: we have a hard question of transactioning file processing...
 export const TicketSourceFolderLive = Layer.effect(
   TicketSource,
   Effect.all({
     fs: FileSystem.FileSystem,
     path: Path.Path,
+    spawner: ChildProcessSpawner.ChildProcessSpawner,
+    root: RepositoryRoot,
     dir: Config.schema(TicketsDir, 'ticketsDir'),
   }).pipe(
-    Effect.map(({ fs, path, dir }) => {
+    Effect.map(({ fs, path, spawner, root, dir }) => {
       const doneDir = path.join(dir, 'done');
 
-      const readHeadIn = (folder: string) => (file: string): Effect.Effect<Option.Option<Ticket>> => {
+      const readHeadIn = (folder: string, inDone: boolean) => (file: string): Effect.Effect<Option.Option<Ticket>> => {
         const fileId = idFromFilename(file);
         if (fileId === undefined) {
           return Effect.succeedNone;
@@ -145,16 +142,13 @@ export const TicketSourceFolderLive = Layer.effect(
           Stream.scan('', (accumulated, chunk) => accumulated + chunk),
           Stream.takeUntil(hasClosingDelimiter),
           Stream.runLast,
-          Effect.map(Option.flatMap((text) => headToTicket(text, fileId))),
+          Effect.map(Option.flatMap((text) => headToTicket(text, fileId, inDone))),
           Effect.catchCause(() => Effect.succeedNone)
         );
       };
 
-      const readHead = readHeadIn(dir);
-
-      // A ticket in `done/` is done, whatever its front matter says.
-      const readDoneHead = (file: string): Effect.Effect<Option.Option<Ticket>> =>
-        readHeadIn(doneDir)(file).pipe(Effect.map(Option.map((ticket) => ticket.done())));
+      const readHead = readHeadIn(dir, false);
+      const readDoneHead = readHeadIn(doneDir, true);
 
       const getOneBy = (query: TicketQuery): Effect.Effect<Ticket, TicketNotFound> =>
         fs.readDirectory(dir).pipe(
@@ -214,45 +208,104 @@ export const TicketSourceFolderLive = Layer.effect(
           Effect.map(([current, done]) => [...current, ...done])
         );
 
-      const save = (ticket: Ticket): Effect.Effect<void, TicketNotSaved> => {
-        const block = `---\n${stringify(toFrontMatter(ticket))}---`;
-        return Effect.gen(function* () {
-          const files = yield* fs.readDirectory(dir).pipe(Effect.catchCause(() => Effect.succeed<string[]>([])));
-          const nativeId = toNativeNumber(ticket.id);
-          const basename = findFileForId(files, nativeId) ?? `${nativeId}.md`;
-          const rootFile = path.join(dir, basename);
-          const dest = ticket.status === 'done' ? path.join(dir, 'done', basename) : rootFile;
-          if (ticket.status === 'done') {
-            yield* fs.makeDirectory(path.join(dir, 'done'), { recursive: true });
-          }
-          const source = yield* fs.exists(rootFile).pipe(Effect.map((exists) => (exists ? rootFile : dest)));
-          const next = yield* fs.exists(source).pipe(
-            Effect.flatMap((exists) =>
-              exists
-                ? fs.readFileString(source).pipe(
-                    Effect.map((content) =>
-                      hasClosingDelimiter(content)
-                        ? content.replace(FRONT_MATTER, () => block)
-                        : `${block}\n\n${content}`
-                    )
-                  )
-                : Effect.succeed(`${block}\n\n${ticket.body}`)
-            )
-          );
-          yield* fs.writeFileString(dest, next);
-          if (source !== dest) {
-            yield* fs.remove(source);
-          }
-        }).pipe(Effect.mapError(() => new TicketNotSaved()));
-      };
-
-      const saveMany = (tickets: readonly Ticket[]): Effect.Effect<void, TicketNotSaved> =>
-        Effect.forEach(tickets, save, { discard: true });
-
       // The folder Source keeps no trace of a Claim or an escalation: the Ledger holds them.
-      const report = (_ticket: TicketId, _event: TicketEvent): Effect.Effect<void> => Effect.void;
+      const report = (_ticket: TicketId, _event: Exclude<TicketEvent, 'done'>): Effect.Effect<void> => Effect.void;
 
-      return { getOneBy, getManyBy, save, saveMany, report };
+      const notReported = (ticket: TicketId) => () => new TicketEventNotReported({ ticketId: ticket, event: 'done' });
+
+      // Runs Git and fails when it exits with a code other than zero.
+      const git = (args: readonly string[], cwd: string) =>
+        spawner.exitCode(ChildProcess.make('git', args, { cwd })).pipe(
+          Effect.filterOrFail(
+            (code) => code === 0,
+            (code) => `git ${args.join(' ')} exited with ${code}`
+          )
+        );
+
+      // Whether Git tracks the file in the worktree.
+      const isTracked = (worktree: string, file: string) =>
+        spawner
+          .exitCode(ChildProcess.make('git', ['ls-files', '--error-unmatch', '--', file], { cwd: worktree }))
+          .pipe(Effect.map((code) => code === 0));
+
+      // The name of the ticket's file in the tickets folder or in `done/`.
+      const fileOf = (ticket: TicketId) =>
+        Effect.gen(function* () {
+          const native = toNativeNumber(ticket);
+          const open = findFileForId(yield* fs.readDirectory(dir), native);
+          if (open !== undefined) {
+            return Option.some({ name: open, inDone: false });
+          }
+          const done = yield* fs.readDirectory(doneDir).pipe(Effect.catchCause(() => Effect.succeed<string[]>([])));
+          return Option.map(Option.fromNullishOr(findFileForId(done, native)), (name) => ({ name, inDone: true }));
+        });
+
+      // The move into `done/` in the tickets folder, once the merge succeeded. It
+      // never changes the file's content, and a file already in `done/` stays.
+      const moveInTicketsFolder = (ticket: TicketId, name: string): AfterMerge =>
+        Effect.gen(function* () {
+          const from = path.join(dir, name);
+          const to = path.join(doneDir, name);
+          if ((yield* fs.exists(to)) || !(yield* fs.exists(from))) {
+            return;
+          }
+          yield* fs.makeDirectory(doneDir, { recursive: true });
+          yield* fs.rename(from, to);
+        }).pipe(Effect.mapError(notReported(ticket)));
+
+      // The move into `done/` on the ticket branch, committed with a fixed message
+      // so it lands with the work. Commit hooks run. When the commit fails, the
+      // move is undone, so the Ticket Worktree is left as it was.
+      const commitMoveInWorktree = (ticket: TicketId, worktree: string, from: string, to: string) =>
+        Effect.gen(function* () {
+          yield* fs.makeDirectory(path.join(worktree, path.dirname(to)), { recursive: true });
+          yield* git(['mv', '--', from, to], worktree);
+          yield* git(['commit', '--quiet', '-m', doneMoveMessage(ticket), '--', from, to], worktree).pipe(
+            Effect.tapError(() => git(['mv', '--', to, from], worktree).pipe(Effect.ignore))
+          );
+        });
+
+      // Done moves the file into `done/`. A file that the Ticket Worktree tracks is
+      // moved there and the move is committed on the ticket branch before the
+      // merge, so the merge moves the copy in the Repository Root, or the Ledger
+      // covers it for a Project ticket. Any other file, as in a tickets folder
+      // that Git ignores, waits for the merge: its name is returned. A file
+      // already in `done/` stays where it is.
+      const moveBeforeMerge = (ticket: TicketId, worktree: Worktree) =>
+        Effect.gen(function* () {
+          const file = yield* fileOf(ticket);
+          if (Option.isNone(file) || file.value.inDone) {
+            return Option.none<string>();
+          }
+          const { name } = file.value;
+          const inRepository = path.relative(root, dir);
+          if (inRepository.startsWith('..') || path.isAbsolute(inRepository)) {
+            return Option.some(name);
+          }
+          const from = path.join(inRepository, name);
+          const to = path.join(inRepository, 'done', name);
+          if (yield* isTracked(worktree.path, to)) {
+            return Option.none<string>();
+          }
+          if (yield* isTracked(worktree.path, from)) {
+            yield* commitMoveInWorktree(ticket, worktree.path, from, to);
+            return Option.none<string>();
+          }
+          return Option.some(name);
+        });
+
+      const reportDone = (ticket: TicketId, worktree: Worktree): Effect.Effect<AfterMerge, TicketEventNotReported> =>
+        moveBeforeMerge(ticket, worktree).pipe(
+          Effect.map(
+            Option.match({
+              onNone: (): AfterMerge => Effect.void,
+              onSome: (name) => moveInTicketsFolder(ticket, name),
+            })
+          ),
+          Effect.mapError(notReported(ticket))
+        );
+
+      return { getOneBy, getManyBy, report, reportDone };
     })
   )
 );
