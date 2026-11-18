@@ -1,13 +1,15 @@
 import { run } from '@ai-hero/sandcastle';
+import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem';
 import * as NodePath from '@effect/platform-node/NodePath';
-import { Console, Effect, Layer, Path } from 'effect';
+import { Console, Effect, FileSystem, Layer, Path, type PlatformError } from 'effect';
 import { beforeEach, expect, test, vi } from 'vitest';
 
 import { registeredHarnessesOf } from './registered';
 
 const repositoryRoot = '/repo';
 const path = Effect.runSync(Path.Path.pipe(Effect.provide(NodePath.layer)));
-const { Claude } = registeredHarnessesOf(repositoryRoot, path);
+const fs = Effect.runSync(FileSystem.FileSystem.pipe(Effect.provide(NodeFileSystem.layer)));
+const { Claude } = registeredHarnessesOf(repositoryRoot, path, fs);
 
 vi.mock('@ai-hero/sandcastle', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@ai-hero/sandcastle')>();
@@ -101,7 +103,7 @@ test('a run with a model demand uses the first matching model', async () => {
 });
 
 test('the same demand resolves against the harness that is running', async () => {
-  const { Cursor } = registeredHarnessesOf(repositoryRoot, path);
+  const { Cursor } = registeredHarnessesOf(repositoryRoot, path, fs);
 
   await Effect.runPromise(Cursor.run('do the work', { label: 'ticket-11', model: { tier: 'high', fast: true } }));
 
@@ -109,7 +111,7 @@ test('the same demand resolves against the harness that is running', async () =>
 });
 
 test('a run with several matches uses the first listed model', async () => {
-  const { Cursor } = registeredHarnessesOf(repositoryRoot, path);
+  const { Cursor } = registeredHarnessesOf(repositoryRoot, path, fs);
 
   await Effect.runPromise(Cursor.run('do the work', { label: 'ticket-11', model: { tier: 'high' } }));
 
@@ -129,4 +131,41 @@ test('a run with a demand no model satisfies uses the default and says so', asyn
   expect(messages).toEqual([
     "ticket-11 is using default model 'claude-opus-4-8' because no previous-generation model matched",
   ]);
+});
+
+const sandboxEnvOf = (call: unknown) => (call as { sandbox: { env: Record<string, string> } }).sandbox.env;
+
+// Runs a Claude run in a Ticket Worktree of a new Repository Root, which `prepare` may fill.
+const runInTemporaryRoot = (prepare: (root: string) => Effect.Effect<void, PlatformError.PlatformError>) =>
+  Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: 'rippls-root-env-' });
+        yield* prepare(root);
+        const { Claude: harness } = registeredHarnessesOf(root, path, fs);
+        yield* harness.run('do the work', { label: 'ticket-11', cwd: path.join(root, 'worktree') });
+      })
+    )
+  );
+
+test("a run in a Ticket Worktree gets the keys of the Repository Root's .sandcastle/.env", async () => {
+  await runInTemporaryRoot((root) =>
+    fs.makeDirectory(path.join(root, '.sandcastle')).pipe(
+      Effect.andThen(
+        fs.writeFileString(
+          path.join(root, '.sandcastle', '.env'),
+          '# keys for the Agent\nRIPPLS_ROOT_ONLY_KEY=from-the-root\n'
+        )
+      )
+    )
+  );
+
+  expect(sandboxEnvOf(runMock.mock.calls[0]?.[0])).toEqual({ RIPPLS_ROOT_ONLY_KEY: 'from-the-root' });
+});
+
+test('a run with no .sandcastle/.env in the Repository Root still runs, with no extra keys', async () => {
+  await runInTemporaryRoot(() => Effect.void);
+
+  expect(runMock).toHaveBeenCalledTimes(1);
+  expect(sandboxEnvOf(runMock.mock.calls[0]?.[0])).toEqual({});
 });

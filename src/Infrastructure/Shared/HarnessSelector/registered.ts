@@ -1,6 +1,7 @@
 import { type AgentProvider, claudeCode, codex, cursor, opencode, run } from '@ai-hero/sandcastle';
+import { parseEnv } from 'node:util';
 import { noSandbox } from '@ai-hero/sandcastle/sandboxes/no-sandbox';
-import { Console, Effect, type Path } from 'effect';
+import { Console, Effect, type FileSystem, type Path, type PlatformError } from 'effect';
 
 import { HarnessRuntimeError } from '~/Core/Shared/Domain/Exceptions/HarnessRuntimeError';
 import type { HarnessName } from '~/Core/Shared/Domain/Properties/HarnessName';
@@ -105,11 +106,43 @@ const loggingOf = (path: Path.Path, repositoryRoot: string, label: string) => ({
   verbose: true,
 });
 
+const isNotFound = (error: PlatformError.PlatformError) => error.reason._tag === 'NotFound';
+
+// The keys of the Repository Root's `.sandcastle/.env`. Sandcastle reads that file
+// from the run's working directory, and in a Ticket Worktree it does not exist (Git
+// ignores it), so Rippls passes its keys as the run's environment. Like Sandcastle,
+// a key with an empty value is left to the shell. A missing file has no keys.
+const keysOf = (text: string): Record<string, string> => {
+  const keys: Record<string, string> = {};
+  for (const [key, value] of Object.entries(parseEnv(text))) {
+    if (value !== undefined && value !== '') {
+      keys[key] = value;
+    }
+  }
+  return keys;
+};
+
+const rootEnvOf = (
+  fs: FileSystem.FileSystem,
+  path: Path.Path,
+  repositoryRoot: string
+): Effect.Effect<Record<string, string>, HarnessRuntimeError> =>
+  fs.readFileString(path.join(repositoryRoot, '.sandcastle', '.env')).pipe(
+    Effect.map(keysOf),
+    Effect.catchIf(isNotFound, () => Effect.succeed({})),
+    Effect.mapError(() => new HarnessRuntimeError())
+  );
+
 // Runs one prompt through the Sandcastle API on the host, with no container. With
 // a working directory, the Agent works in that directory as it is: a Ticket
 // Worktree, whether it was created in this run or reused from disk. The full
 // harness log goes to a file, not to the main output.
-const sandcastleHarness = (name: HarnessName, repositoryRoot: string, path: Path.Path): Harness => ({
+const sandcastleHarness = (
+  name: HarnessName,
+  repositoryRoot: string,
+  path: Path.Path,
+  fs: FileSystem.FileSystem
+): Harness => ({
   name,
   model: catalogs[name].default,
   run: (prompt, options: HarnessRunOptions) =>
@@ -121,11 +154,12 @@ const sandcastleHarness = (name: HarnessName, repositoryRoot: string, path: Path
         );
       }
       const provider = providers[name][selected.id]!;
+      const env = yield* rootEnvOf(fs, path, repositoryRoot);
       return yield* Effect.tryPromise({
         try: (signal) =>
           run({
             agent: provider,
-            sandbox: noSandbox(),
+            sandbox: noSandbox({ env }),
             prompt,
             signal,
             ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
@@ -137,9 +171,13 @@ const sandcastleHarness = (name: HarnessName, repositoryRoot: string, path: Path
     }).pipe(Effect.map((result) => ({ completionSignal: result.completionSignal }))),
 });
 
-export const registeredHarnessesOf = (repositoryRoot: string, path: Path.Path): Record<HarnessName, Harness> => ({
-  Codex: sandcastleHarness('Codex', repositoryRoot, path),
-  Cursor: sandcastleHarness('Cursor', repositoryRoot, path),
-  Claude: sandcastleHarness('Claude', repositoryRoot, path),
-  OpenCode: sandcastleHarness('OpenCode', repositoryRoot, path),
+export const registeredHarnessesOf = (
+  repositoryRoot: string,
+  path: Path.Path,
+  fs: FileSystem.FileSystem
+): Record<HarnessName, Harness> => ({
+  Codex: sandcastleHarness('Codex', repositoryRoot, path, fs),
+  Cursor: sandcastleHarness('Cursor', repositoryRoot, path, fs),
+  Claude: sandcastleHarness('Claude', repositoryRoot, path, fs),
+  OpenCode: sandcastleHarness('OpenCode', repositoryRoot, path, fs),
 });

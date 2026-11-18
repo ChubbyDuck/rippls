@@ -258,9 +258,34 @@ export const commitConfig: Config.Config<CommitConfig> = Config.schema(CommitFil
 // up to `retries` times, and then fails the Strategy.
 const StepPrompt = Schema.NonEmptyString;
 
+// A record keyed by the names of one kind, such as Harness names. An unknown key is a
+// config error that names it and the valid names, so a typo never falls back silently.
+const recordOfKnownNames = <const Names extends ReadonlyArray<string>, Value extends Schema.Constraint>(
+  noun: string,
+  names: Schema.Literals<Names>,
+  value: Value
+) => {
+  const known: ReadonlyArray<string> = names.literals;
+  const expected = known.map((name) => `"${name}"`).join(', ');
+  return Schema.Record(Schema.String, value)
+    .check(
+      Schema.makeFilter((record: Readonly<Record<string, unknown>>) =>
+        Object.keys(record)
+          .filter((key) => !known.includes(key))
+          .map((key) => ({ path: [key], issue: `Unknown ${noun} "${key}"; expected one of ${expected}` }))
+      )
+    )
+    .pipe(
+      Schema.decodeTo(Schema.Record(names, Schema.optionalKey(Schema.toType(value))), {
+        decode: SchemaGetter.passthrough({ strict: false }),
+        encode: SchemaGetter.passthrough({ strict: false }),
+      })
+    );
+};
+
 export const StrategyStep = Schema.Struct({
   prompt: StepPrompt,
-  prompts: Schema.optionalKey(Schema.Record(HarnessName, Schema.optionalKey(StepPrompt))),
+  prompts: Schema.optionalKey(recordOfKnownNames('Harness', HarnessName, StepPrompt)),
   model: Schema.optionalKey(ModelDemandConfig),
   timeLimit: Schema.optionalKey(Schema.DurationFromString),
   retries: Schema.optionalKey(AttemptCount),
@@ -270,7 +295,7 @@ export const StrategyStep = Schema.Struct({
 export type StrategyStep = typeof StrategyStep.Type;
 
 // A Strategy is the steps it runs, in order, for the Ticket Kind it is configured for.
-export const StrategiesFileConfig = Schema.Record(TicketKind, Schema.optionalKey(Schema.NonEmptyArray(StrategyStep)));
+export const StrategiesFileConfig = recordOfKnownNames('Ticket Kind', TicketKind, Schema.NonEmptyArray(StrategyStep));
 
 export type StrategiesConfig = typeof StrategiesFileConfig.Type;
 

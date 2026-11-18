@@ -1,4 +1,4 @@
-import { Clock, DateTime, Effect, Layer, Path } from 'effect';
+import { Clock, DateTime, Effect, FileSystem, Layer, Path } from 'effect';
 
 import type { HarnessName } from '~/Core/Shared/Domain/Properties/HarnessName';
 import { type ConfiguredHarness, EngineConfig, engineConfig } from '~/Core/Shared/Domain/EngineConfig';
@@ -66,7 +66,7 @@ export const HarnessSelectorLive = Layer.effect(
   HarnessSelector,
   Effect.gen(function* () {
     const config = yield* EngineConfig;
-    const registered = registeredHarnessesOf(yield* RepositoryRoot, yield* Path.Path);
+    const registered = registeredHarnessesOf(yield* RepositoryRoot, yield* Path.Path, yield* FileSystem.FileSystem);
     const resolve = (name: HarnessName): Harness => registered[name];
     const fallback = makeRotation(config.harnesses, resolve);
     const islands = (config.schedule ?? []).map((island) => ({

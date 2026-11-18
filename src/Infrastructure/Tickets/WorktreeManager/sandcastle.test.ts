@@ -317,7 +317,7 @@ test('a Ticket Worktree on disk is reused by a new manager, and a Harness run, m
         const reused = yield* manager.prepareTicket({ id: ticketId });
         const earlierLog = yield* git(reused.path, ['log', '--format=%s']);
         const uncommitted = yield* git(reused.path, ['status', '--porcelain']);
-        const { Claude } = registeredHarnessesOf(root, path);
+        const { Claude } = registeredHarnessesOf(root, path, fs);
         yield* Claude.run('continue the work', { label: 'ticket-folder-17', cwd: reused.path });
         yield* manager.mergeAndClose(reused);
         return {

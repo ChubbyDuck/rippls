@@ -1,3 +1,4 @@
+import * as NodeFileSystem from '@effect/platform-node/NodeFileSystem';
 import * as NodePath from '@effect/platform-node/NodePath';
 import { ConfigProvider, Effect, Layer } from 'effect';
 import { TestClock } from 'effect/testing';
@@ -13,7 +14,7 @@ const namesOf = (harnesses: ReadonlyArray<{ readonly name: string }>) => harness
 const withHarnesses = (entries: Record<string, unknown>) =>
   ConfiguredHarnessesLive.pipe(
     Layer.provide(ConfigProvider.layer(ConfigProvider.fromUnknown(entries))),
-    Layer.provide(Layer.mergeAll(Layer.succeed(RepositoryRoot, '/repo'), NodePath.layer))
+    Layer.provide(Layer.mergeAll(Layer.succeed(RepositoryRoot, '/repo'), NodePath.layer, NodeFileSystem.layer))
   );
 
 const take = (count: number, entries: Record<string, unknown>) =>

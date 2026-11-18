@@ -16,6 +16,7 @@ import {
   defaultPollInterval,
   defaultStrategies,
   engineConfig,
+  EngineConfigSchema,
   engineConfigProvider,
   resolveTicketSource,
   strategiesConfig,
@@ -645,4 +646,36 @@ test('strategiesConfig rejects an empty Strategy, a step without a prompt, negat
   expect(failureOf({ implementation: [{ verdict: true }] })).toContain('at ["strategies"]["implementation"][0]["prompt"]');
   expect(failureOf({ task: [{ prompt: 'Do it.', retries: -1 }] })).toContain('at ["strategies"]["task"][0]["retries"]');
   expect(failureOf({ task: [{ prompt: 'Do it.', timeLimit: 'soon' }] })).toContain('at ["strategies"]["task"][0]["timeLimit"]');
+});
+
+test('strategiesConfig rejects an unknown Harness name in prompts, and names the valid ones', () => {
+  const message = Effect.runSync(
+    loadStrategies({ strategies: { task: [{ prompt: 'Do it.', prompts: { Claud: '/do-it' } }] } }).pipe(Effect.flip)
+  ).cause.message;
+
+  expect(message).toBe(
+    'Unknown Harness "Claud"; expected one of "Codex", "Cursor", "Claude", "OpenCode"\n' +
+      '  at ["strategies"]["task"][0]["prompts"]["Claud"]'
+  );
+});
+
+test('strategiesConfig rejects an unknown Ticket Kind, and names the valid ones', () => {
+  const message = Effect.runSync(
+    loadStrategies({ strategies: { implementaton: [{ prompt: 'Build it.' }] } }).pipe(Effect.flip)
+  ).cause.message;
+
+  expect(message).toBe(
+    'Unknown Ticket Kind "implementaton"; expected one of "implementation", "research", "prototype", "grilling", "task"\n' +
+      '  at ["strategies"]["implementaton"]'
+  );
+});
+
+test('EngineConfigSchema rejects an unknown Harness name in prompts and an unknown Ticket Kind', () => {
+  const issues = (strategies: unknown) =>
+    Effect.runSync(
+      Schema.decodeUnknownEffect(EngineConfigSchema)({ harnesses: [{ name: 'Claude' }], strategies }).pipe(Effect.flip)
+    ).message;
+
+  expect(issues({ task: [{ prompt: 'Do it.', prompts: { Claud: '/do-it' } }] })).toContain('Unknown Harness "Claud"');
+  expect(issues({ implementaton: [{ prompt: 'Build it.' }] })).toContain('Unknown Ticket Kind "implementaton"');
 });
