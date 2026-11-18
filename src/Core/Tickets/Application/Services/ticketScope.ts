@@ -47,10 +47,10 @@ const doneFor = (tickets: readonly Ticket[], project?: Project) =>
 const claimsIn = (tickets: readonly Ticket[]) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
-    const read = yield* ledger.read(tickets.map((ticket) => ticket.id));
+    const recorded = yield* ledger.read(tickets.map((ticket) => ticket.id));
     const stale = new Map<TicketId, Claim>();
     const claims = new Map<TicketId, Claim>();
-    for (const [id, claim] of read) {
+    for (const [id, claim] of recorded) {
       if (yield* ledger.isStale(claim)) {
         stale.set(id, claim);
       } else {

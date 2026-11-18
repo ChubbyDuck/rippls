@@ -39,12 +39,6 @@ const AppLive = Layer.mergeAll(
 
 const Concurrency = Schema.Int.check(Schema.isGreaterThan(0));
 
-// The Project and Source flags scope both the Engine and `rippls status`.
-const scopeFlags = {
-  source: Flag.choice('source', TicketSourceTag.literals).pipe(Flag.optional),
-  project: Flag.string('project').pipe(Flag.withSchema(Project), Flag.optional),
-};
-
 const ticketSourceFor = (source: Option.Option<TicketSourceTag>) =>
   Effect.gen(function* () {
     const config = yield* EngineConfig;
@@ -52,17 +46,9 @@ const ticketSourceFor = (source: Option.Option<TicketSourceTag>) =>
     return liveTicketSource(resolved);
   });
 
-const status = Command.make('status', scopeFlags, ({ source, project }) =>
-  Effect.gen(function* () {
-    const ticketSource = yield* ticketSourceFor(source);
-    return yield* showStatus({ project: Option.getOrUndefined(project) }).pipe(Effect.provide(ticketSource));
-  })
-).pipe(Command.withDescription('Print every ticket in scope with its Ticket Status'));
-
-const command = Command.make(
+const engine = Command.make(
   'rippls',
   {
-    ...scopeFlags,
     limit: Flag.integer('limit').pipe(Flag.optional),
     concurrency: Flag.integer('concurrency').pipe(Flag.withSchema(Concurrency), Flag.withDefault(1)),
     idleTimeout: Flag.string('idle-timeout').pipe(
@@ -73,8 +59,15 @@ const command = Command.make(
       Flag.withSchema(Schema.DurationFromString),
       Flag.withFallbackConfig(pollIntervalConfig)
     ),
-  },
-  ({ source, project, limit, concurrency, idleTimeout, pollInterval }) =>
+  }
+).pipe(
+  // The Project and Source flags scope both the Engine and `rippls status`, and
+  // may stand before or after the subcommand.
+  Command.withSharedFlags({
+    source: Flag.choice('source', TicketSourceTag.literals).pipe(Flag.optional),
+    project: Flag.string('project').pipe(Flag.withSchema(Project), Flag.optional),
+  }),
+  Command.withHandler(({ source, project, limit, concurrency, idleTimeout, pollInterval }) =>
     Effect.gen(function* () {
       const ticketSource = yield* ticketSourceFor(source);
       return yield* runEngine({
@@ -85,7 +78,18 @@ const command = Command.make(
         pollInterval,
       }).pipe(Effect.provide(ticketSource));
     })
-).pipe(Command.withSubcommands([status]));
+  )
+);
+
+const status = Command.make('status', {}, () =>
+  Effect.gen(function* () {
+    const { source, project } = yield* engine;
+    const ticketSource = yield* ticketSourceFor(source);
+    return yield* showStatus({ project: Option.getOrUndefined(project) }).pipe(Effect.provide(ticketSource));
+  })
+).pipe(Command.withDescription('Print every ticket in scope with its Ticket Status'));
+
+const command = engine.pipe(Command.withSubcommands([status]));
 
 export const program = Command.run(command, { version: '0.0.2' }).pipe(
   Effect.provide(AppLive.pipe(Layer.provideMerge(NodeServices.layer)))

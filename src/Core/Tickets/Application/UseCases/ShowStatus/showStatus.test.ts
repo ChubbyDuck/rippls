@@ -169,17 +169,26 @@ describe('ticketStatuses', () => {
 });
 
 describe('showStatus', () => {
-  it('prints the identity, the Ticket Status, and the Title of every ticket', async () => {
+  it('prints the identity, the Title, and the Ticket Status of every ticket', async () => {
     const layer = setup([ticket(1).done(), ticket(2)]);
 
-    expect(await printed(layer)).toEqual(['folder:1  done       Ticket 1', 'folder:2  eligible   Ticket 2']);
+    expect(await printed(layer)).toEqual(['folder:1  Ticket 1  done', 'folder:2  Ticket 2  eligible']);
+  });
+
+  it('aligns the Title and Ticket Status columns across tickets', async () => {
+    const layer = setup([ticket(1, { title: 'Short' }), ticket(12, { title: 'A longer title', blockedBy: [id(1)] })]);
+
+    expect(await printed(layer)).toEqual([
+      'folder:1   Short           eligible',
+      'folder:12  A longer title  blocked',
+    ]);
   });
 
   it('prints the Engine, the Runner, the process, and the host of the Claim of a claimed ticket', async () => {
     const layer = setup([ticket(3)], { claims: [claimOf(id(3))] });
 
     expect(await printed(layer)).toEqual([
-      'folder:3  claimed    Ticket 3 (Claim: Engine engine-1234, Runner engine-1234:runner-a, process 1, host memory)',
+      'folder:3  Ticket 3  claimed  (Claim: Engine engine-1234, Runner engine-1234:runner-a, process 1, host memory)',
     ]);
   });
 
@@ -188,7 +197,7 @@ describe('showStatus', () => {
     const layer = setup([ticket(3)], { claims: [claim] });
 
     expect(await printed(layer)).toEqual([
-      'folder:3  claimed    Ticket 3 (Claim: Engine engine-1234, no Runner yet, process 1, host memory)',
+      'folder:3  Ticket 3  claimed  (Claim: Engine engine-1234, no Runner yet, process 1, host memory)',
     ]);
   });
 
@@ -196,7 +205,7 @@ describe('showStatus', () => {
     const layer = setup([ticket(5)], { escalations: [escalationOf(id(5))] });
 
     expect(await printed(layer)).toEqual([
-      'folder:5  escalated  Ticket 5 (Escalation: strategy failure, 2 attempts, Ticket Worktree /repo/.sandcastle/worktrees/ticket-5)',
+      'folder:5  Ticket 5  escalated  (Escalation: strategy failure, 2 attempts, Ticket Worktree /repo/.sandcastle/worktrees/ticket-5)',
     ]);
   });
 

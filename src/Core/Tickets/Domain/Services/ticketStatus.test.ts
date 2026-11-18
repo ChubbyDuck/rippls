@@ -50,23 +50,23 @@ describe('deriveTicketStatus', () => {
   });
 
   describe('when several values apply, shows the first of done, escalated, claimed, not ready, blocked', () => {
-    const attendedAndBlocked = ticket({ hitl: 'yes', blockedBy: [id(9)] });
+    const notReadyAndBlocked = ticket({ hitl: 'yes', blockedBy: [id(9)] });
     const all = { done: none, claimed: one, escalated: one };
 
     it('shows done over every other value', () => {
-      expect(deriveTicketStatus(attendedAndBlocked.done(), all)).toBe('done');
+      expect(deriveTicketStatus(notReadyAndBlocked.done(), all)).toBe('done');
     });
 
     it('shows escalated over claimed, not ready, and blocked', () => {
-      expect(deriveTicketStatus(attendedAndBlocked, all)).toBe('escalated');
+      expect(deriveTicketStatus(notReadyAndBlocked, all)).toBe('escalated');
     });
 
     it('shows claimed over not ready and blocked', () => {
-      expect(deriveTicketStatus(attendedAndBlocked, { ...all, escalated: none })).toBe('claimed');
+      expect(deriveTicketStatus(notReadyAndBlocked, { ...all, escalated: none })).toBe('claimed');
     });
 
     it('shows not ready over blocked', () => {
-      expect(deriveTicketStatus(attendedAndBlocked, nothing)).toBe('not ready');
+      expect(deriveTicketStatus(notReadyAndBlocked, nothing)).toBe('not ready');
     });
   });
 

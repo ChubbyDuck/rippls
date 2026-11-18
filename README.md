@@ -225,8 +225,8 @@ Repository Root stay in place, so two Engines can run side by side.
 rippls status [--project <name>] [--source folder|linear]
 ```
 
-`rippls status` prints one line for every ticket in scope: its identity, its
-**Ticket Status**, and its title. It changes nothing. The Ticket Status is derived from
+`rippls status` prints one line for every ticket in scope: its identity, its title,
+and its **Ticket Status**. It changes nothing. The Ticket Status is derived from
 the ticket, the Ledger, and the done tickets; the ticket file does not hold it.
 
 | Ticket Status | Meaning |
@@ -246,15 +246,15 @@ Runner yet`), the process ID, and the host. An escalated ticket shows the reason
 Escalation, the attempt count, and the path of its retained Ticket Worktree.
 
 ```text
-folder:1  claimed    Add login (Claim: Engine honey-wren-c9w5, Runner honey-wren-c9w5:0, process 21474, host build-box)
-folder:2  blocked    Add logout
-folder:3  done       Add the session store
-folder:4  escalated  Add sign-up (Escalation: strategy failure, 1 attempt, Ticket Worktree /repo/.sandcastle/worktrees/ticket-folder-4)
-folder:5  not ready  Choose the password policy
+folder:1  Add login                   claimed  (Claim: Engine honey-wren-c9w5, Runner honey-wren-c9w5:0, process 21474, host build-box)
+folder:2  Add logout                  blocked
+folder:3  Add the session store       done
+folder:4  Add sign-up                 escalated  (Escalation: strategy failure, 1 attempt, Ticket Worktree /repo/.sandcastle/worktrees/ticket-folder-4)
+folder:5  Choose the password policy  not ready
 ```
 
-`--project` and `--source` scope the list as they scope the Engine. `rippls` without a
-subcommand runs the Engine, as before.
+`--project` and `--source` scope the list as they scope the Engine, before or after
+`status`. `rippls` without a subcommand runs the Engine, as before.
 
 ## Claims and the Ledger
 
