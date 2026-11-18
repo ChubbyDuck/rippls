@@ -787,6 +787,37 @@ test('runEngine claims a single unblocked ticket once', async () => {
   expect(store.get(id(2))?.status).toBe('ready-for-agent');
 });
 
+test('runEngine replaces a stale Claim: it reports released before the new claimed, and takes the ticket', async () => {
+  const ran: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1)]);
+  // The other Engine's process no longer runs on this host.
+  ledger.claims.set(id(1), new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(1)]);
+  expect(source.reports).toEqual([
+    { ticket: id(1), event: 'released' },
+    { ticket: id(1), event: 'claimed' },
+  ]);
+});
+
+test('runEngine does not take a ticket whose Claim another running Engine holds', async () => {
+  const ran: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+  const live = new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' });
+  ledger.running.add(2);
+  ledger.claims.set(id(1), live);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
+  expect(ledger.claims.get(id(1))).toEqual(live);
+  expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
+});
+
 test('runEngine releases only its own Claims on exit and reports each release', async () => {
   const ledger = makeLedgerMemory();
   const source = fakeSource([sampleTicket(1), sampleTicket(2), blockedTicket(3, 1)]);

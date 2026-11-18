@@ -21,7 +21,7 @@ export const isUnclaimed = (ticket: Ticket, claimed: ReadonlySet<TicketId>): boo
 /** A Ticket whose HITL is no, allowing it to proceed without a human. */
 export const isUnattended = (ticket: Ticket): boolean => ticket.hitl === 'no';
 
-/** What the Engine knows of other tickets: which are done, and which hold a Claim in the Ledger. */
+/** What the Engine knows of other tickets: which are done, and which hold a Claim in the Ledger that is not stale. */
 export type EligibilityFacts = {
   readonly done: ReadonlySet<TicketId>;
   readonly claimed: ReadonlySet<TicketId>;

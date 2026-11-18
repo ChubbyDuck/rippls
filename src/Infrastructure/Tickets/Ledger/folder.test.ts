@@ -1,5 +1,5 @@
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { Effect, FileSystem, Layer, Path, Result, Schema } from 'effect';
+import { Effect, FileSystem, Layer, Path, type PlatformError, Result, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { expect, test } from 'vitest';
 
@@ -26,7 +26,9 @@ const gitCommonDir = FileSystem.FileSystem.pipe(
 const inLedger = <A, E>(dir: string, use: Effect.Effect<A, E, Ledger>) =>
   use.pipe(Effect.provide(ledgerFolder(dir, holder)));
 
-const run = <A, E>(effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path>) =>
+const run = <A, E>(
+  effect: Effect.Effect<A, E, FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner>
+) =>
   Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
 
 test('of two competing Claims on one ticket exactly one succeeds', async () => {
@@ -144,6 +146,80 @@ test('a second Ledger on the same Git common directory sees the Claims of the fi
   );
 
   expect([...claims.keys()]).toEqual([ticket(1)]);
+});
+
+// A process that ran on this host and has exited.
+const deadProcess = ChildProcessSpawner.ChildProcessSpawner.pipe(
+  Effect.flatMap((spawner) => spawner.spawn(ChildProcess.make(process.execPath, ['-e', '']))),
+  Effect.tap((child) => child.exitCode),
+  Effect.map((child): number => child.pid),
+  Effect.scoped
+);
+
+// The Claim that a Ledger of the holder on the given host makes on ticket 1, read
+// back by a Ledger of the test holder, with whether that Ledger finds it stale.
+const staleness = (
+  host: string,
+  processOf: Effect.Effect<number, PlatformError.PlatformError, ChildProcessSpawner.ChildProcessSpawner>
+) =>
+  run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      const other = { process: yield* processOf, host };
+      yield* Ledger.pipe(
+        Effect.flatMap((ledger) => ledger.claim(ticket(1), second)),
+        Effect.provide(ledgerFolder(dir, other))
+      );
+      return yield* inLedger(
+        dir,
+        Effect.gen(function* () {
+          const ledger = yield* Ledger;
+          const held = (yield* ledger.read([ticket(1)])).get(ticket(1))!;
+          return yield* ledger.isStale(held);
+        })
+      );
+    })
+  );
+
+test('a Claim of a process that no longer runs on this host is stale', async () => {
+  expect(await staleness(holder.host, deadProcess)).toBe(true);
+});
+
+test('a Claim of a process that runs on this host is not stale', async () => {
+  expect(await staleness(holder.host, Effect.succeed(process.pid))).toBe(false);
+});
+
+test('a Claim from another host is not stale, even when no such process runs here', async () => {
+  expect(await staleness('other-host', deadProcess)).toBe(false);
+});
+
+test('releasing a stale Claim removes it, and leaves a Claim made since then in place', async () => {
+  const { afterStale, afterReplaced } = await run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      const dead = { process: yield* deadProcess, host: holder.host };
+      yield* Ledger.pipe(
+        Effect.flatMap((ledger) => ledger.claim(ticket(1), second)),
+        Effect.provide(ledgerFolder(dir, dead))
+      );
+      return yield* inLedger(
+        dir,
+        Effect.gen(function* () {
+          const ledger = yield* Ledger;
+          const stale = (yield* ledger.read([ticket(1)])).get(ticket(1))!;
+          yield* ledger.releaseStale(stale);
+          const afterStale = yield* ledger.read([ticket(1)]);
+          yield* ledger.claim(ticket(1), first);
+          yield* ledger.releaseStale(stale);
+          const afterReplaced = yield* ledger.read([ticket(1)]);
+          return { afterStale, afterReplaced };
+        })
+      );
+    })
+  );
+
+  expect(afterStale.size).toBe(0);
+  expect(afterReplaced.get(ticket(1))?.engine).toBe(first);
 });
 
 const git = (dir: string, args: string[]) =>

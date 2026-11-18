@@ -10,7 +10,7 @@ import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 
-import type { ClaimHolder } from './holder';
+import { type ClaimHolder, isSameClaim } from './holder';
 
 const RECORD_SUFFIX = '.json';
 
@@ -25,6 +25,14 @@ const isNotFound = isReason('NotFound');
 const isAlreadyExists = isReason('AlreadyExists');
 
 const toLedgerError = (cause: unknown) => new LedgerError({ cause });
+
+// Signal 0 tests that a process exists without signalling it. Only ESRCH says
+// that no such process runs; a process of another user answers EPERM.
+const processRuns = (pid: number): Effect.Effect<boolean> =>
+  Effect.try({
+    try: () => process.kill(pid, 0),
+    catch: (error) => (error instanceof Error && 'code' in error ? String(error.code) : 'UNKNOWN'),
+  }).pipe(Effect.match({ onSuccess: () => true, onFailure: (code) => code !== 'ESRCH' }));
 
 /**
  * The Ledger as one record per ticket in a folder for Rippls inside the Git common
@@ -86,6 +94,18 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
 
       const release = (ticket: TicketId) => removeRecord(recordOf(ticket));
 
+      const isStale = (held: Claim) =>
+        held.host === holder.host ? processRuns(held.process).pipe(Effect.map((runs) => !runs)) : Effect.succeed(false);
+
+      // The record is read again just before it is removed, so a Claim that
+      // another Engine made after replacing the same stale Claim stays in place.
+      const releaseStale = (stale: Claim) =>
+        readRecord(recordOf(stale.ticket)).pipe(
+          Effect.flatMap((held) =>
+            Option.exists(held, (current) => isSameClaim(current, stale)) ? release(stale.ticket) : Effect.void
+          )
+        );
+
       const records = fs.readDirectory(dir).pipe(
         Effect.catchIf(isNotFound, () => Effect.succeed<string[]>([])),
         Effect.mapError(toLedgerError),
@@ -107,7 +127,7 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
           )
         );
 
-      return { claim, assignRunner, release, releaseAllOf, read };
+      return { claim, assignRunner, release, isStale, releaseStale, releaseAllOf, read };
     })
   );
 

@@ -6,14 +6,16 @@ import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 
-import type { ClaimHolder } from './holder';
+import { type ClaimHolder, isSameClaim } from './holder';
 
 /**
  * A Ledger held in memory. Every Engine given its layer shares one set of Claims,
- * so several Engines can run against one Ledger.
+ * so several Engines can run against one Ledger. The processes in `running` run
+ * on the holder's host; the holder's own process is one of them.
  */
 export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memory' }) => {
   const claims = new Map<TicketId, Claim>();
+  const running = new Set([holder.process]);
   const layer = Layer.succeed(Ledger, {
     claim: (ticket, engine) =>
       Effect.suspend(() => {
@@ -37,6 +39,14 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
       Effect.sync(() => {
         claims.delete(ticket);
       }),
+    isStale: (held) => Effect.sync(() => held.host === holder.host && !running.has(held.process)),
+    releaseStale: (stale) =>
+      Effect.sync(() => {
+        const held = claims.get(stale.ticket);
+        if (held !== undefined && isSameClaim(held, stale)) {
+          claims.delete(stale.ticket);
+        }
+      }),
     releaseAllOf: (engine) =>
       Effect.sync(() => {
         const released = [...claims.values()].filter((held) => held.engine === engine).map((held) => held.ticket);
@@ -56,5 +66,5 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
           )
       ),
   });
-  return { layer, claims };
+  return { layer, claims, running };
 };

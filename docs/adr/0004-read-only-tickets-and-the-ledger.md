@@ -22,9 +22,11 @@ The Engine signals a Source only through operations that do not depend on the ti
 - A Claim is made by creating its record exclusively (a hard link onto the record's name), so only one caller can succeed. The record names the Engine, the process, and the host, and it gains the Runner when a Runner starts Ticket Processing.
 - The Engine claims a ticket when it takes it from the Ticket Stream. Unclaimed means the Ledger holds no Claim on the ticket.
 - On exit an Engine releases only the Claims it holds.
+- A Claim is stale when its process no longer runs on this host. A Claim whose process still runs is never stale, and a Claim from another host is never treated as stale, since the Engine cannot see the processes of another host. When the Engine looks for the next ticket and meets a stale Claim, it replaces it: it reports released to the Ticket Source, removes the stale record, and then claims the ticket in the normal way. The record is removed only while it still holds that stale Claim, so a Claim that another Engine made in the meantime stays in place.
 
 ## Consequences
 
 - A `claimedBy` field and the claim statuses that earlier Engines wrote into folder tickets are read and ignored. Existing tickets need no migration.
 - Two Engines can run on one Repository Root: one never releases or takes the Claims of the other.
 - If the Ledger is deleted, its Claims are forgotten and their tickets become Eligible again. Linear keeps its own signals.
+- A Claim left by a killed Engine no longer blocks its ticket on the same host. A Claim left on another host stays until someone removes its record.
