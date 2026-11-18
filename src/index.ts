@@ -28,7 +28,7 @@ import { TicketNotOfSource } from '~/Core/Tickets/Domain/Exceptions/TicketNotOfS
 import { ConfiguredHarnessesLive } from '~/Infrastructure/Shared/HarnessSelector/configured';
 import { makeTracingLayer } from '~/Infrastructure/Shared/Tracing/otlp';
 import { LedgerFolderLive } from '~/Infrastructure/Tickets/Ledger/folder';
-import { StrategySelectorDefault } from '~/Infrastructure/Tickets/StrategySelector/default';
+import { StrategySelectorLive } from '~/Infrastructure/Tickets/StrategySelector/configured';
 import { liveTicketSource } from '~/Infrastructure/Tickets/TicketSource/fromSource';
 import { WorktreeManagerLive } from '~/Infrastructure/Tickets/WorktreeManager/sandcastle';
 
@@ -37,7 +37,7 @@ const TracingLive = Layer.unwrap(
 );
 
 const AppLive = Layer.mergeAll(
-  StrategySelectorDefault,
+  StrategySelectorLive,
   ConfiguredHarnessesLive,
   Layer.unwrap(RepositoryRoot.pipe(Effect.map(WorktreeManagerLive))),
   LedgerFolderLive({ process: process.pid, host: hostname() }),

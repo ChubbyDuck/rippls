@@ -37,7 +37,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 | Port (in `Core/**/Ports`) | Adapter(s) | Wraps |
 | --- | --- | --- |
 | `TicketSource` | [folder.ts](src/Infrastructure/Tickets/TicketSource/folder.ts), [linear.ts](src/Infrastructure/Tickets/TicketSource/linear.ts) | Markdown front matter / Linear GraphQL |
-| `StrategySelector` | [default.ts](src/Infrastructure/Tickets/StrategySelector/default.ts) | Kind → Strategy map |
+| `StrategySelector` | [configured.ts](src/Infrastructure/Tickets/StrategySelector/configured.ts) | Kind → Strategy of configured steps (`strategies` in config, defaults in [EngineConfig.ts](src/Core/Shared/Domain/EngineConfig.ts)) |
 | `HarnessSelector` | [configured.ts](src/Infrastructure/Shared/HarnessSelector/configured.ts), [registered.ts](src/Infrastructure/Shared/HarnessSelector/registered.ts) | Sandcastle agent providers |
 | `WorktreeManager` | [sandcastle.ts](src/Infrastructure/Tickets/WorktreeManager/sandcastle.ts) | Sandcastle `createWorktree` + `git merge --no-ff` |
 | `Ledger` | [folder.ts](src/Infrastructure/Tickets/Ledger/folder.ts) | One Claim record per ticket in `<git-common-dir>/rippls/ledger/`, Escalations in its `escalations/` folder, cleared ones in `cleared/` ([ADR 0004](docs/adr/0004-read-only-tickets-and-the-ledger.md)) |
@@ -51,7 +51,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 3. [runEngine.ts](src/Core/Tickets/Application/UseCases/RunEngine/runEngine.ts) holds the runner pool, the stream, the idle timeout and the release on exit.
 4. [processTicket.ts](src/Core/Tickets/Application/UseCases/ProcessTicket/processTicket.ts) is the lifecycle in the diagram above.
 5. [entity.ts](src/Core/Tickets/Domain/Entities/Ticket/entity.ts) is the Ticket and its `done` transition. The Claim and the Escalation are not in the Ticket: they live in the Ledger.
-6. [implementation.ts](src/Infrastructure/Tickets/StrategySelector/implementation.ts) is the only real Strategy: implement, then gate (10 minutes, one retry), then commit.
+6. [configured.ts](src/Infrastructure/Tickets/StrategySelector/configured.ts) runs a Strategy: its configured steps in order, each with its own prompt, model demand, time limit, retries, and optional verdict.
 
 After that, read whichever adapter you need. The tests sit next to the source and show the style: fake each port with `Layer.succeed`, as in [processTicket.test.ts](src/Core/Tickets/Application/UseCases/ProcessTicket/processTicket.test.ts).
 
@@ -60,8 +60,7 @@ After that, read whichever adapter you need. The tests sit next to the source an
 - **Your local `rippls.config.ts` is silently ignored.** It exports `harnessFileConfig` with an `agents` key, but [load.ts:26-31](src/config/load.ts#L26-L31) only reads `engineFileConfig` or `default`. Runs in this repo therefore use the defaults: all four Harnesses in rotation and no tracing, not Cursor only with OTLP.
 - **Eligibility ignores status.** The poll query is unblocked + unclaimed + not escalated + `hitl: no`, so a folder ticket with `status: open` and no blockers gets picked up. Unblocked means every blocker is done, so a `status: blocked` ticket whose blockers are in `done/` is taken too.
 - **One Strategy failure stops the run.** `EngineHalted` propagates out of the stream, and a worktree create or merge failure does the same after one retry.
-- **Only `implementation` is real.** `research` and `task` are a single Harness call via `named()` in [noop.ts](src/Infrastructure/Tickets/StrategySelector/noop.ts); `prototype` and `grilling` imply `hitl: yes`, so they are never taken.
-- **The implementation Strategy depends on things outside this repo.** It sends `/implement-bare`, `/acceptance-gate` and `/commit`, which must exist as slash commands in the target repo's Harness. [circumstances.ts](src/Infrastructure/Tickets/StrategySelector/circumstances.ts) also tells agents to use `pnx chubby <alias> <script>`, a leftover from the monorepo this was extracted from.
+- **`prototype` and `grilling` have no default Strategy.** They imply `hitl: yes`, so they are not taken unless a ticket says `hitl: no`; then the run stops with `StrategyNotFound` unless config gives the kind a Strategy.
 - **Model IDs are hard-coded.** The catalog is in [registered.ts:23-53](src/Infrastructure/Shared/HarnessSelector/registered.ts#L23-L53); a Strategy asks for a tier/fast/generation and falls back to the Harness default when nothing matches.
 - **A Claim from another host is never stale.** The Engine replaces a Claim whose process no longer runs on its own host, but it cannot see the processes of another host, so such a Claim keeps its ticket claimed until someone removes the Ledger record.
 - **Ticket IDs are namespaced strings** (`folder:42`, `linear:<uuid>`), and the domain never branches on the source ([ADR 0002](docs/adr/0002-source-namespaced-string-ticket-id.md)). On disk the folder Source still uses plain numbers.

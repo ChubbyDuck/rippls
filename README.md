@@ -3,7 +3,7 @@
 ![A duck creating concentric ripples on a calm pond](docs/assets/pond-ripple-hero.jpg)
 
 Rippls is an opinionated ticket workflow engine for AI agents. It defines a ticket format, lifecycle
-rules, and reusable **Strategies** built around specific skills. A pool of named
+rules, and reusable **Strategies** of configured steps. A pool of named
 **Runners** processes a **Ticket Stream**, with work performed in isolated Git worktrees.
 
 Rippls is a CLI. Install it with npm or pnpm, then run it from the Git repository
@@ -33,7 +33,7 @@ you want it to process. No clone of this project is required.
 | **Ledger** | The Engine's own local record of Ticket Processing, where each Claim and Escalation lives. |
 | **Ticket Stream** | The ongoing sequence of uniform Tickets supplied for processing. |
 | **Ticket Processing** | The shared lifecycle: claim, apply a Strategy, then complete or escalate. |
-| **Strategy** | A reusable procedure for performing a Ticket's work through a Harness. |
+| **Strategy** | A reusable procedure for performing a Ticket's work through a Harness: a named list of configured steps. |
 | **Harness** | A coding integration such as Claude Code, Codex, Cursor, or OpenCode. |
 | **Agent** | A running instance of a Harness's model on a Runner; each invocation creates a new Agent. |
 
@@ -198,11 +198,13 @@ from the default implies nothing: a bare note is HITL `yes`. For a folder where 
 file is ready, set `defaultHitl: 'no'` on the folder Source (see
 [Folder Source](#folder-source)).
 
-Only `implementation` currently has the full implement and acceptance-gate workflow.
-`research` and an unattended `task` invoke the Harness once and then complete; they do
-not run that two-step workflow. The Engine makes sure the work of every kind is
-committed (see [Commit prompt](#commit-prompt)). `prototype` and `grilling` imply
-`hitl: yes`, so the Engine does not claim them.
+Each kind runs the Strategy configured for it (see [Strategies](#strategies)). By
+default `implementation` runs an implement step and then a verdict step, and `research`
+and an unattended `task` run one step. The Engine makes sure the work of every kind is
+committed (see [Commit prompt](#commit-prompt)). `prototype` and `grilling` have no
+default Strategy; they imply `hitl: yes`, so the Engine does not claim them unless a
+ticket states `hitl: no`, and then the run stops with an error unless config gives the
+kind a Strategy.
 
 ## Running the Engine
 
@@ -554,8 +556,8 @@ check: {
 - **Not configured.** With no command for the ticket, the check is skipped and the
   Engine logs that it was skipped. An empty string is no command.
 
-The gate step of the [Implementation Strategy](#implementation-strategy) still runs as
-before; the check runs after it.
+The steps of the [Strategy](#strategies), verdict steps included, run first; the check
+runs after them.
 
 ### Commit prompt
 
@@ -586,6 +588,71 @@ commit: {
   `high`), `fast`, and `generation` (`current` or `previous`). A demand that is set
   replaces the default one whole. When the Harness has no matching model, it uses its
   default model.
+
+### Strategies
+
+A Strategy is a named list of steps. The Strategy Selector picks the Strategy of a
+ticket by its kind, and the Engine sends each step's prompt to the Harness in turn, in
+the same Ticket Worktree. Each step is a separate Harness invocation, so each creates a
+new **Agent**; the **Runner** stays the same throughout Ticket Processing.
+
+Out of the box Rippls names no skill, so it works in a repository with nothing
+installed. The default Strategies are plain prose:
+
+- `implementation`: an implement step, then a verdict step that judges the work against
+  the ticket's acceptance criteria, with a ten-minute limit and one retry.
+- `research`: one step that does the research the ticket asks for.
+- `task`: one step that carries out the task.
+
+A Strategy you configure for a kind replaces the default for that kind whole; the other
+defaults stay. A kind with no Strategy, such as `prototype` unless you configure one,
+stops the run with an error when a ticket of it is taken.
+
+This example drives `implementation` with skills:
+
+```ts
+strategies: {
+  implementation: [
+    {
+      prompt: 'Use the implement skill on ticket {{id}}: {{title}}\n\n{{body}}',
+      prompts: { Claude: '/implement {{body}}' },
+      model: { tier: 'high' },
+    },
+    {
+      prompt: 'Use the acceptance-gate skill on this ticket:\n\n{{body}}',
+      prompts: { Claude: '/acceptance-gate {{body}}' },
+      timeLimit: '10 minutes',
+      retries: 1,
+      verdict: true,
+    },
+  ],
+},
+```
+
+- **Prompt.** A template over the ticket, as the [commit prompt](#commit-prompt) is:
+  `{{id}}`, `{{title}}`, `{{body}}`, and `{{project}}`. Include `{{body}}`: the Engine
+  tells the Agent that the ticket text is in the prompt.
+- **Prompt per Harness.** `prompts` gives a prompt for one Harness by its name (`Codex`,
+  `Cursor`, `Claude`, or `OpenCode`). When the selected Harness has one, it is sent in
+  place of `prompt`. A slash command is the syntax of one Harness, and how the others
+  resolve one in a headless run varies, so keep `prompt` in plain prose that every
+  Harness in the rotation can follow, and put a slash command in `prompts`.
+- **Model.** The model demand of the step, as for the commit prompt. Unset, the Harness
+  uses its default model. When the Harness has no matching model, Rippls logs the
+  fallback and uses its default model.
+- **Time limit.** A step that runs longer than `timeLimit` is ended and counts as
+  failed. Unset, a step has no limit.
+- **Retries.** A failed step runs again, as a new Agent, up to `retries` times (default
+  `0`). A step that still fails fails the Strategy, which escalates the ticket (see
+  [Escalation](#escalation)).
+- **Verdict.** With `verdict: true`, the Engine appends an instruction to print a pass
+  or a fail signal at the end, and reads the signal back. Anything but the pass signal,
+  no signal included, fails the step. Your prompt only has to say what to judge.
+
+After each step's prompt the Engine appends the facts it arranged: the Agent is in the
+Ticket Worktree, workspace dependencies are installed, and the ticket text is in the
+prompt. No Strategy sends a commit command: after the check command, the Engine sends
+the [commit prompt](#commit-prompt) when the work is not committed yet.
 
 ### Runtime defaults and tracing
 
@@ -875,24 +942,6 @@ changes.
 
 Before a run, keep the branch receiving merges in a reviewable state. Merge or otherwise
 integrate a completed project branch yourself.
-
-## Implementation Strategy
-
-An `implementation` ticket runs two steps in the same Ticket Worktree, each through
-a separate Harness invocation:
-
-1. **Implement** executes the ticket body with `/implement-bare`.
-2. **Gate** runs `/acceptance-gate`, beginning with the repository's typecheck, lint,
-  and tests. It has a ten-minute limit and retries once.
-
-The Strategy sends no commit command of its own. After the check command, the Engine
-sends the [commit prompt](#commit-prompt) when the work is not committed yet.
-
-Each invocation creates a new **Agent**, including a gate retry. The **Runner** remains
-the same throughout Ticket Processing and can process further Tickets afterward.
-
-If the configured Harness has no model matching a step's demand, Rippls logs the fallback
-and uses that Harness's default model.
 
 ## Generate folder tickets
 

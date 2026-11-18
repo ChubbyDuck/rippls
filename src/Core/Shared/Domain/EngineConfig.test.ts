@@ -14,9 +14,11 @@ import {
   defaultFixPrompt,
   defaultIdleTimeout,
   defaultPollInterval,
+  defaultStrategies,
   engineConfig,
   engineConfigProvider,
   resolveTicketSource,
+  strategiesConfig,
 } from './EngineConfig';
 
 const defaultValues = {
@@ -570,4 +572,77 @@ test('commitConfig rejects an unknown model tier', () => {
   expect(Effect.runSync(loadCommit({ commit: { model: { tier: 'top' } } }).pipe(Effect.flip)).cause.message).toContain(
     'at ["commit"]["model"]["tier"]'
   );
+});
+
+const loadStrategies = (entries: Record<string, unknown>) => strategiesConfig.parse(engineConfigProvider(entries));
+
+test('strategiesConfig reads a step with every option', () => {
+  expect(
+    Effect.runSync(
+      loadStrategies({
+        strategies: {
+          implementation: [
+            {
+              prompt: 'Judge ticket {{id}}: {{title}}\n\n{{body}}',
+              prompts: { Claude: '/acceptance-gate {{body}}', Codex: '$acceptance-gate {{body}}' },
+              model: { tier: 'mid', fast: false, generation: 'current' },
+              timeLimit: '15 minutes',
+              retries: 2,
+              verdict: true,
+            },
+          ],
+        },
+      })
+    ).implementation
+  ).toEqual([
+    {
+      prompt: 'Judge ticket {{id}}: {{title}}\n\n{{body}}',
+      prompts: { Claude: '/acceptance-gate {{body}}', Codex: '$acceptance-gate {{body}}' },
+      model: { tier: 'mid', fast: false, generation: 'current' },
+      timeLimit: Duration.minutes(15),
+      retries: 2,
+      verdict: true,
+    },
+  ]);
+});
+
+test('strategiesConfig reads a step with only a prompt', () => {
+  expect(Effect.runSync(loadStrategies({ strategies: { task: [{ prompt: 'Do {{title}}.' }] } })).task).toEqual([
+    { prompt: 'Do {{title}}.' },
+  ]);
+});
+
+test('strategiesConfig has the default Strategies unless set: implement and a verdict for implementation, one step for research and task', () => {
+  expect(Effect.runSync(loadStrategies({}))).toEqual(defaultStrategies);
+  expect(Effect.runSync(loadStrategies({ strategies: {} }))).toEqual(defaultStrategies);
+  expect(Object.keys(defaultStrategies).toSorted()).toEqual(['implementation', 'research', 'task']);
+  const [implement, verdict] = defaultStrategies.implementation!;
+  expect(implement!.verdict).toBeUndefined();
+  expect(verdict).toMatchObject({ verdict: true, timeLimit: Duration.minutes(10), retries: 1 });
+  expect(verdict!.prompt).toContain('acceptance criteria');
+  expect(defaultStrategies.implementation).toHaveLength(2);
+  expect(defaultStrategies.research).toHaveLength(1);
+  expect(defaultStrategies.task).toHaveLength(1);
+});
+
+test('strategiesConfig replaces the default Strategy of a configured Ticket Kind and keeps the other defaults', () => {
+  const strategies = Effect.runSync(
+    loadStrategies({ strategies: { implementation: [{ prompt: 'Build it.' }], grilling: [{ prompt: 'Grill me.' }] } })
+  );
+
+  expect(strategies).toEqual({
+    ...defaultStrategies,
+    implementation: [{ prompt: 'Build it.' }],
+    grilling: [{ prompt: 'Grill me.' }],
+  });
+});
+
+test('strategiesConfig rejects an empty Strategy, a step without a prompt, negative retries, a bad time limit, and an unknown Kind', () => {
+  const failureOf = (strategies: unknown) =>
+    Effect.runSync(loadStrategies({ strategies }).pipe(Effect.flip)).cause.message;
+
+  expect(failureOf({ implementation: [] })).toContain('at ["strategies"]["implementation"]');
+  expect(failureOf({ implementation: [{ verdict: true }] })).toContain('at ["strategies"]["implementation"][0]["prompt"]');
+  expect(failureOf({ task: [{ prompt: 'Do it.', retries: -1 }] })).toContain('at ["strategies"]["task"][0]["retries"]');
+  expect(failureOf({ task: [{ prompt: 'Do it.', timeLimit: 'soon' }] })).toContain('at ["strategies"]["task"][0]["timeLimit"]');
 });

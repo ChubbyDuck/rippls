@@ -250,6 +250,77 @@ export const commitConfig: Config.Config<CommitConfig> = Config.schema(CommitFil
   Config.withDefault(defaultCommitConfig)
 );
 
+// One step of a Strategy: a prompt the Engine sends to the Harness. The prompt is a
+// template over the ticket (see `renderPrompt`). A prompt for the selected Harness
+// replaces it, since a slash command is the syntax of one Harness. A verdict step
+// must end with the pass signal; anything else fails it. A failed step runs again
+// up to `retries` times, and then fails the Strategy.
+const StepPrompt = Schema.NonEmptyString;
+
+const StepRetries = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0));
+
+export const StrategyStep = Schema.Struct({
+  prompt: StepPrompt,
+  prompts: Schema.optionalKey(Schema.Record(HarnessName, Schema.optionalKey(StepPrompt))),
+  model: Schema.optionalKey(ModelDemandConfig),
+  timeLimit: Schema.optionalKey(Schema.DurationFromString),
+  retries: Schema.optionalKey(StepRetries),
+  verdict: Schema.optionalKey(Schema.Boolean),
+});
+
+export type StrategyStep = typeof StrategyStep.Type;
+
+// A Strategy is the steps it runs, in order, for the Ticket Kind it is configured for.
+export const StrategiesFileConfig = Schema.Record(TicketKind, Schema.optionalKey(Schema.NonEmptyArray(StrategyStep)));
+
+export type StrategiesConfig = typeof StrategiesFileConfig.Type;
+
+const ticketText = 'Ticket {{id}}: {{title}}\n\n{{body}}';
+
+// The Strategies Rippls ships. They are plain prose and name no skill, so they work
+// in a repository with nothing installed. A Kind with no Strategy is not processed.
+export const defaultStrategies: StrategiesConfig = {
+  implementation: [
+    {
+      prompt:
+        'Implement the ticket below. Do the work it describes so that each of its acceptance criteria is met, ' +
+        'with tests where the repository has them, and leave the work in this worktree.\n\n' +
+        ticketText,
+    },
+    {
+      prompt:
+        'An earlier step implemented the ticket below in this worktree. Judge that work against each of the ' +
+        "ticket's acceptance criteria: look for the evidence of each in the code and its tests, and run the " +
+        "repository's checks where they help. A criterion with no evidence is not met. " +
+        'Where a criterion is not met, complete the work so that it is, then judge again.\n\n' +
+        ticketText,
+      timeLimit: Duration.minutes(10),
+      retries: 1,
+      verdict: true,
+    },
+  ],
+  research: [
+    {
+      prompt:
+        'Do the research the ticket below asks for, and leave its findings in this worktree.\n\n' + ticketText,
+    },
+  ],
+  task: [
+    {
+      prompt: 'Carry out the task the ticket below describes, and leave its work in this worktree.\n\n' + ticketText,
+    },
+  ],
+};
+
+// A Strategy configured for a Ticket Kind replaces the default for that Kind whole.
+export const strategiesConfig: Config.Config<StrategiesConfig> = Config.schema(
+  StrategiesFileConfig,
+  'strategies'
+).pipe(
+  Config.map((strategies) => ({ ...defaultStrategies, ...strategies })),
+  Config.withDefault(defaultStrategies)
+);
+
 export const EngineConfigSchema = Schema.Struct({
   harnesses: ConfiguredHarnesses,
   schedule: Schema.optionalKey(ScheduledConfigs),
@@ -260,6 +331,7 @@ export const EngineConfigSchema = Schema.Struct({
   source: Schema.optionalKey(TicketSourceConfig),
   check: Schema.optionalKey(CheckFileConfig),
   commit: Schema.optionalKey(CommitFileConfig),
+  strategies: Schema.optionalKey(StrategiesFileConfig),
 });
 
 export type EngineConfigValue = typeof EngineConfigSchema.Type;
