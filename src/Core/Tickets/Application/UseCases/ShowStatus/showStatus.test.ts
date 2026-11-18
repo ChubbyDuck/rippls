@@ -334,6 +334,30 @@ describe('showStatus', () => {
     ]);
   });
 
+  it('prints a folder and a ticket file that cannot be read, with the reason', async () => {
+    const layer = setup([ticket(1)], {
+      unreadable: [
+        new UnreadableTicket({
+          name: 'web/',
+          reason: 'folder cannot be read',
+          detail: 'PermissionDenied: FileSystem.readDirectory (/repo/tickets/web)',
+        }),
+        new UnreadableTicket({
+          name: '02-locked.md',
+          id: id(2),
+          reason: 'file cannot be read',
+          detail: 'PermissionDenied: FileSystem.readFile (/repo/tickets/02-locked.md)',
+        }),
+      ],
+    });
+
+    expect(await printed(layer)).toEqual([
+      'folder:1  Ticket 1      eligible',
+      '-         web/          unreadable  (folder cannot be read: PermissionDenied: FileSystem.readDirectory (/repo/tickets/web))',
+      'folder:2  02-locked.md  unreadable  (file cannot be read: PermissionDenied: FileSystem.readFile (/repo/tickets/02-locked.md))',
+    ]);
+  });
+
   it('prints the open and the unresolved blockers of a blocked ticket', async () => {
     const layer = setup([ticket(1, { hitl: 'yes' }), ticket(3, { blockedBy: [id(1), id(9)] }), ticket(4, { blockedBy: [id(1)] })]);
 

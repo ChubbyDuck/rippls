@@ -256,13 +256,16 @@ npx rippls --help
 Before it takes a ticket, the Engine prints what it cannot read or resolve, then runs
 as usual:
 
-- one line for each ticket that is unreadable because of its front matter or an invalid
-  hint, with the reason;
+- one line for each ticket that is unreadable because of its front matter, an invalid
+  hint, or a file that cannot be read from disk, with the reason;
+- one line for each folder below the tickets folder that cannot be read, with the
+  reason: none of its tickets is taken, and the tickets of every other folder are;
 - one line for each blocker that cannot be resolved, with the ticket and the reference;
 - one line with the count of Markdown files that have no numeric prefix.
 
 ```text
 folder:7 (07-broken.md) is unreadable and is not taken: unparseable front matter: it has no closing `---`
+web/ is unreadable, so none of its tickets is taken: folder cannot be read: PermissionDenied: FileSystem.readDirectory (/repo/.agents/tickets/web)
 folder:3 has a blocker that cannot be resolved, so it stays blocked: folder:99
 2 files have no numeric prefix, so they are not read as tickets
 ```
@@ -303,8 +306,9 @@ Runner yet`), the process ID, and the host. An escalated ticket shows the reason
 Escalation, the attempt count, and the path of its retained Ticket Worktree. A blocked
 ticket shows which of its blockers are open and which cannot be resolved; any other
 ticket that is not done shows the blockers that cannot be resolved. After the
-tickets, every unreadable file or Issue is listed with its reason, under its identity
-when Rippls can tell one and `-` otherwise.
+tickets, every unreadable file, folder, or Issue is listed with its reason, under its
+identity when Rippls can tell one and `-` otherwise. A folder is named by its path with
+a trailing `/`.
 
 ```text
 folder:1  Add login                   claimed  (Claim: Engine honey-wren-c9w5, Runner honey-wren-c9w5:0, process 21474, host build-box)
@@ -843,7 +847,10 @@ Done ticket files move to the `done/` of their folder unchanged (see
 [Completion and `done/`](#completion-and-done)).
 
 A Markdown file is unreadable when its name has no numeric prefix, its front matter
-cannot be parsed, or a hint it states has an invalid value, such as an unknown `kind`.
+cannot be parsed, a hint it states has an invalid value, such as an unknown `kind`, or
+the file cannot be read from disk (`file cannot be read`). A folder below the tickets
+folder that cannot be read is unreadable too (`folder cannot be read`); the tickets of
+every other folder are still read. A missing `done/` folder is no error.
 Rippls does not take an unreadable ticket, and it reports every one: at Engine start
 and in `rippls status`, with the reason (see [Reported at Engine start](#reported-at-engine-start)).
 A blocker that cannot be resolved is reported the same way.

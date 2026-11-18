@@ -56,7 +56,8 @@ _Avoid_: Status, label, triage state
 **Ticket Status**:
 A Ticket's position in its lifecycle, derived from the Ticket, the Ledger, and done,
 or unreadable for a ticket that its Source cannot read: a file whose name has no
-numeric prefix, front matter that cannot be parsed, or an invalid hint. An unreadable
+numeric prefix, front matter that cannot be parsed, an invalid hint, a file that
+cannot be read from disk, or a ticket in a folder that cannot be read. An unreadable
 ticket is no Ticket, so no other value applies to it. The values are unreadable, done,
 escalated, claimed, not ready, blocked, and eligible. When several apply, the first in
 that order is the Ticket Status. Claimed means a Claim other than a Stale Claim; not

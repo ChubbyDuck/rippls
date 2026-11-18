@@ -4,18 +4,26 @@ import { TicketId } from '../Ticket/properties/TicketId';
 
 /**
  * Why a Source cannot read a ticket: a file whose name has no numeric prefix, front
- * matter that cannot be parsed, or a hint stated with an invalid value.
+ * matter that cannot be parsed, a hint stated with an invalid value, a file that
+ * cannot be read from disk, or a folder that cannot be read, so its tickets are not.
  */
-export const UnreadableReason = Schema.Literals(['no numeric prefix', 'unparseable front matter', 'invalid hint']);
+export const UnreadableReason = Schema.Literals([
+  'no numeric prefix',
+  'unparseable front matter',
+  'invalid hint',
+  'file cannot be read',
+  'folder cannot be read',
+]);
 
 export type UnreadableReason = typeof UnreadableReason.Type;
 
 /**
  * A ticket that its Source cannot read, so it is never taken. Its name tells a
  * human where it is: a path below the tickets folder, or the identifier of an
- * Issue, such as `ENG-12`.
+ * Issue, such as `ENG-12`. A folder that cannot be read is named by its path with
+ * a trailing `/`.
  * It has an identity when the Source can tell one, as a file with a numeric prefix
- * can. The detail says what failed, for the front matter or a hint.
+ * can. The detail says what failed, for the front matter, a hint, or a read from disk.
  */
 export class UnreadableTicket extends Schema.Class<UnreadableTicket>('UnreadableTicket')({
   name: Schema.NonEmptyString,

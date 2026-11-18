@@ -103,6 +103,18 @@ const withoutNumber = (relative: readonly string[]): UnreadableTicket | undefine
   return new UnreadableTicket({ name: pathOf({ directories: relative.slice(0, -1), name }), reason: 'no numeric prefix' });
 };
 
+// A folder below the tickets folder that cannot be read, named by its path with a
+// trailing `/`, and the tickets folder itself as `./`.
+const unreadableFolder = (folder: readonly string[], message: string): UnreadableTicket =>
+  new UnreadableTicket({
+    name: `${folder.length === 0 ? '.' : folder.join('/')}/`,
+    reason: 'folder cannot be read',
+    detail: detailOf(message),
+  });
+
+/** What a walk below the tickets folder finds: its files, as their segments, and the folders it cannot read. */
+type Found = { readonly files: readonly (readonly string[])[]; readonly unreadable: readonly UnreadableTicket[] };
+
 // Folders in the order of their paths, segment by segment, so the tickets folder
 // itself comes first and a folder comes before the folders below it.
 const compareFolders = (left: readonly string[], right: readonly string[]): number => {
@@ -343,20 +355,73 @@ export const TicketSourceFolderLive = Layer.effect(
     Effect.map(({ fs, path, spawner, root, dir, kind, hitl }) => {
       const fallbacks: TicketFallbacks = { kind, hitl };
 
-      const readTicket = (file: TicketFile): Effect.Effect<Option.Option<Result.Result<Ticket, UnreadableTicket>>> =>
+      // The Ticket a file reads as, or why it is unreadable, as when it cannot be
+      // read from disk.
+      const readTicket = (file: TicketFile): Effect.Effect<Result.Result<Ticket, UnreadableTicket>> =>
         fs.readFileString(path.join(dir, ...file.directories, file.name)).pipe(
-          Effect.map((text) => Option.some(fileToTicket(text, file, fallbacks))),
-          Effect.catchCause(() => Effect.succeedNone)
+          Effect.match({
+            onFailure: (error) =>
+              Result.fail(
+                new UnreadableTicket({
+                  name: pathOf(file),
+                  id: ticketIdIn(file.folder.join('/'), file.number),
+                  reason: 'file cannot be read',
+                  detail: detailOf(error.message),
+                })
+              ),
+            onSuccess: (text) => fileToTicket(text, file, fallbacks),
+          })
         );
 
-      // The paths below the tickets folder, at any depth, in or out of a `done/`,
-      // as their segments.
-      const entries = fs
-        .readDirectory(dir, { recursive: true })
-        .pipe(Effect.map((found) => found.map((entry) => entry.split(path.sep))));
+      // Whether a path is a folder to read: a directory that is no symbolic link,
+      // as a recursive listing would read it. A path that cannot be inspected is
+      // taken as a file, so a ticket file there is reported when it cannot be read.
+      const isFolder = (full: string): Effect.Effect<boolean> =>
+        fs.stat(full).pipe(
+          Effect.flatMap((info) =>
+            info.type === 'Directory'
+              ? fs.readLink(full).pipe(
+                  Effect.as(false),
+                  Effect.orElseSucceed(() => true)
+                )
+              : Effect.succeed(false)
+          ),
+          Effect.orElseSucceed(() => false)
+        );
+
+      // The paths of the files below a folder, at any depth, in or out of a
+      // `done/`, as their segments, and the folders that cannot be read. Each
+      // folder is read on its own, so one that cannot be read hides only its own
+      // files. A folder that no longer exists has none.
+      const walk = (folder: readonly string[]): Effect.Effect<Found> =>
+        fs.readDirectory(path.join(dir, ...folder)).pipe(
+          Effect.matchEffect({
+            onFailure: (error) =>
+              Effect.succeed<Found>(
+                error.reason._tag === 'NotFound'
+                  ? { files: [], unreadable: [] }
+                  : { files: [], unreadable: [unreadableFolder(folder, error.message)] }
+              ),
+            onSuccess: (names) =>
+              Effect.forEach(names, (name) => {
+                const entry = [...folder, name];
+                return isFolder(path.join(dir, ...entry)).pipe(
+                  Effect.flatMap((sub) => (sub ? walk(entry) : Effect.succeed<Found>({ files: [entry], unreadable: [] })))
+                );
+              }).pipe(
+                Effect.map((found) => ({
+                  files: found.flatMap((each) => each.files),
+                  unreadable: found.flatMap((each) => each.unreadable),
+                }))
+              ),
+          })
+        );
+
+      // Everything below the tickets folder.
+      const entries = walk([]);
 
       // The ticket files below the tickets folder, at any depth, in or out of a `done/`.
-      const ticketFiles = entries.pipe(Effect.map((found) => found.flatMap((entry) => ticketFileOf(entry) ?? [])));
+      const ticketFiles = entries.pipe(Effect.map(({ files }) => files.flatMap((entry) => ticketFileOf(entry) ?? [])));
 
       // The readable tickets that match the query, in processing order, with or
       // without the done ones.
@@ -369,11 +434,8 @@ export const TicketSourceFolderLive = Layer.effect(
           Stream.flatMap(Stream.fromIterable),
           Stream.mapEffect(readTicket, { concurrency: 1 }),
           Stream.filterMap((read) =>
-            Option.isSome(read) && Result.isSuccess(read.value) && matchesQuery(query)(read.value.success)
-              ? Result.succeed(read.value.success)
-              : Result.failVoid
-          ),
-          Stream.catchCause(() => Stream.empty)
+            Result.isSuccess(read) && matchesQuery(query)(read.success) ? Result.succeed(read.success) : Result.failVoid
+          )
         );
 
       const getOneBy = (query: TicketQuery): Effect.Effect<Ticket, TicketNotFound> =>
@@ -392,18 +454,17 @@ export const TicketSourceFolderLive = Layer.effect(
       const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
         Stream.runCollect(readTickets(query, true));
 
-      // The Markdown files without a numeric prefix, then the ticket files that
-      // cannot be read as tickets, in processing order, done ones included.
+      // The folders that cannot be read, the Markdown files without a numeric
+      // prefix, then the ticket files that cannot be read as tickets, in
+      // processing order, done ones included.
       const getUnreadable: Effect.Effect<readonly UnreadableTicket[]> = Effect.gen(function* () {
         const found = yield* entries;
-        const withoutNumbers = found.flatMap((entry) => withoutNumber(entry) ?? []);
-        const files = sortByFolderAndNumber(found.flatMap((entry) => ticketFileOf(entry) ?? []));
+        const withoutNumbers = found.files.flatMap((entry) => withoutNumber(entry) ?? []);
+        const files = sortByFolderAndNumber(found.files.flatMap((entry) => ticketFileOf(entry) ?? []));
         const reads = yield* Effect.forEach(files, readTicket);
-        const unreadable = reads.flatMap((read) =>
-          Option.isSome(read) && Result.isFailure(read.value) ? [read.value.failure] : []
-        );
-        return [...withoutNumbers, ...unreadable];
-      }).pipe(Effect.catchCause(() => Effect.succeed([])));
+        const unreadable = reads.flatMap((read) => (Result.isFailure(read) ? [read.failure] : []));
+        return [...found.unreadable, ...withoutNumbers, ...unreadable];
+      });
 
       // The folder Source keeps no trace of a Claim or an escalation: the Ledger holds them.
       const report = (_ticket: TicketId, _event: ReportedEvent): Effect.Effect<void> => Effect.void;

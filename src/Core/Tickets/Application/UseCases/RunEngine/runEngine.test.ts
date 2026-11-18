@@ -555,7 +555,7 @@ test('runEngine keeps a ticket blocked by a blocker that the Source cannot find'
   expect(ran).toEqual([]);
 });
 
-test('runEngine prints the unreadable tickets, the unresolved blockers, and the files without a numeric prefix at start, then takes its Eligible tickets', async () => {
+test('runEngine prints the unreadable tickets and folders, the unresolved blockers, and the files without a numeric prefix at start, then takes its Eligible tickets', async () => {
   const ran: Ticket[] = [];
   const messages: string[] = [];
   const unreadable = [
@@ -572,6 +572,17 @@ test('runEngine prints the unreadable tickets, the unresolved blockers, and the 
       id: id(8),
       reason: 'invalid hint',
       detail: 'Expected "implementation" | "research", got "chore" at ["kind"]',
+    }),
+    new UnreadableTicket({
+      name: 'web/',
+      reason: 'folder cannot be read',
+      detail: 'PermissionDenied: FileSystem.readDirectory (/repo/tickets/web)',
+    }),
+    new UnreadableTicket({
+      name: '09-locked.md',
+      id: id(9),
+      reason: 'file cannot be read',
+      detail: 'PermissionDenied: FileSystem.readFile (/repo/tickets/09-locked.md)',
     }),
   ];
   const source = fakeSource(
@@ -591,9 +602,11 @@ test('runEngine prints the unreadable tickets, the unresolved blockers, and the 
   );
 
   expect(await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => ran.length === 1)).toBeUndefined();
-  expect(messages.slice(0, 4)).toEqual([
+  expect(messages.slice(0, 6)).toEqual([
     'folder:7 (07-broken.md) is unreadable and is not taken: unparseable front matter: it has no closing `---`',
     'folder:8 (08-unknown-kind.md) is unreadable and is not taken: invalid hint: Expected "implementation" | "research", got "chore" at ["kind"]',
+    'web/ is unreadable, so none of its tickets is taken: folder cannot be read: PermissionDenied: FileSystem.readDirectory (/repo/tickets/web)',
+    'folder:9 (09-locked.md) is unreadable and is not taken: file cannot be read: PermissionDenied: FileSystem.readFile (/repo/tickets/09-locked.md)',
     'folder:3 has a blocker that cannot be resolved, so it stays blocked: folder:99',
     '2 files have no numeric prefix, so they are not read as tickets',
   ]);

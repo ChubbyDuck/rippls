@@ -822,6 +822,71 @@ test('getUnreadable reports an invalid value for a known hint, and names the hin
   ]);
 });
 
+// A user without permissions on a path can still read it as root.
+const asRoot = process.getuid?.() === 0;
+
+// The readable tickets and the unreadable ones of a fresh tickets folder in which
+// the locked paths cannot be read. The locks are lifted afterwards, so the
+// temporary folder can be removed.
+const readLocked = (files: ReadonlyArray<readonly [string, string]>, locked: readonly string[]) =>
+  Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const dir = yield* setup(files);
+      const lock = (mode: number) => Effect.forEach(locked, (each) => fs.chmod(path.join(dir, each), mode));
+      return yield* lock(0o000).pipe(
+        Effect.andThen(
+          TicketSource.pipe(
+            Effect.flatMap((source) =>
+              Effect.all({ tickets: source.getManyBy(TicketQuery.build()), unreadable: source.getUnreadable })
+            ),
+            Effect.provide(withDir(dir))
+          )
+        ),
+        Effect.map(({ tickets, unreadable }) => ({
+          ids: tickets.map((ticket) => ticket.id),
+          unreadable: unreadable.map(({ name, id, reason, detail }) => ({ name, id, reason, detail })),
+        })),
+        Effect.ensuring(lock(0o755).pipe(Effect.ignore))
+      );
+    }).pipe(Effect.provide(NodeFs))
+  );
+
+test.skipIf(asRoot)('a folder that cannot be read is reported, and the tickets of every other folder are read', async () => {
+  const { ids, unreadable } = await readLocked(
+    [
+      ['1.md', '# Top\n'],
+      ['api/1.md', '# Api\n'],
+      ['api/done/2.md', '# Api done\n'],
+      ['web/1.md', '# Locked away\n'],
+      ['web/done/2.md', '# Locked away too\n'],
+    ],
+    ['web']
+  );
+
+  expect(ids).toEqual([folderId(1), formatTicketId('folder', 'api/1'), formatTicketId('folder', 'api/2')]);
+  expect(unreadable).toEqual([
+    { name: 'web/', id: undefined, reason: 'folder cannot be read', detail: expect.stringContaining('PermissionDenied') },
+  ]);
+});
+
+test.skipIf(asRoot)('a ticket file that cannot be read is reported, and the other tickets are read', async () => {
+  const { ids, unreadable } = await readLocked(
+    [
+      ['1.md', '# Locked\n'],
+      ['2.md', '# Readable\n'],
+      ['web/3.md', '# Readable too\n'],
+    ],
+    ['1.md']
+  );
+
+  expect(ids).toEqual([folderId(2), formatTicketId('folder', 'web/3')]);
+  expect(unreadable).toEqual([
+    { name: '1.md', id: folderId(1), reason: 'file cannot be read', detail: expect.stringContaining('PermissionDenied') },
+  ]);
+});
+
 test('a "Blocked by" line names blockers by number, ignores the text after each number, and reads none as no blockers', async () => {
   const tickets = await readAll([
     ['1.md', '# One number\n\n**Blocked by:** 7\n'],
