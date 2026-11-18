@@ -1,4 +1,4 @@
-import { Effect } from 'effect';
+import { Effect, Option } from 'effect';
 
 import type { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import type { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
@@ -38,13 +38,26 @@ const hasBlockerOutside = (tickets: readonly Ticket[]): boolean => {
 // Blockers resolve against the tickets in scope. A blocker of another Project is
 // not in a read narrowed by Project, so only then does the Engine read every
 // ticket of the Source to find out whether its Source sees that blocker as done.
-const doneInSourceFor = (tickets: readonly Ticket[], project?: Project) =>
+const readForBlockers = (tickets: readonly Ticket[], project?: Project) =>
   project === undefined || !hasBlockerOutside(tickets)
-    ? Effect.succeed(doneInSourceIds(tickets))
-    : TicketSource.pipe(
-        Effect.flatMap((source) => source.getManyBy(TicketQuery.build())),
-        Effect.map(doneInSourceIds)
-      );
+    ? Effect.succeed(tickets)
+    : TicketSource.pipe(Effect.flatMap((source) => source.getManyBy(TicketQuery.build())));
+
+// A Source may leave a blocker out of every read of tickets in scope, as the
+// Linear Source leaves out a completed Issue, so a blocker that is still not known
+// as done is read by its identity, and is done when its Source sees it as done.
+const doneByIdentity = (blockers: readonly TicketId[]) =>
+  TicketSource.pipe(
+    Effect.flatMap((source) =>
+      Effect.forEach(blockers, (blocker) =>
+        source.getOneBy(TicketQuery.byId(blocker).build()).pipe(
+          Effect.option,
+          Effect.map((found) => (Option.exists(found, isDoneInSource) ? [blocker] : []))
+        )
+      )
+    ),
+    Effect.map((found) => found.flat())
+  );
 
 // Done is the union of two facts: the Source sees the ticket as done, or the
 // Ledger records it as done. The Ledger is asked about the tickets in scope and
@@ -52,10 +65,20 @@ const doneInSourceFor = (tickets: readonly Ticket[], project?: Project) =>
 const doneFor = (tickets: readonly Ticket[], project?: Project) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
-    const inSource = yield* doneInSourceFor(tickets, project);
+    const read = yield* readForBlockers(tickets, project);
     const ticketsAndBlockers = new Set(tickets.flatMap((ticket) => [ticket.id, ...ticket.blockedBy]));
     const inLedger = yield* ledger.done([...ticketsAndBlockers]);
-    return new Set([...inSource, ...inLedger]);
+    const known = new Set([...doneInSourceIds(read), ...inLedger]);
+    const readIds = new Set(read.map((ticket) => ticket.id));
+    const unknown = [
+      ...new Set(
+        tickets
+          .filter((ticket) => !known.has(ticket.id))
+          .flatMap((ticket) => ticket.blockedBy.filter((blocker) => !known.has(blocker) && !readIds.has(blocker)))
+      ),
+    ];
+    const byIdentity = yield* doneByIdentity(unknown);
+    return new Set([...known, ...byIdentity]);
   });
 
 // The Claims on the tickets in scope, split into the ones that hold their ticket

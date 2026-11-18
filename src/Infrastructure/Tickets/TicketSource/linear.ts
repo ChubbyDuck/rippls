@@ -26,11 +26,11 @@ import {
   retryWrites,
 } from '~/Infrastructure/Tickets/LinearApi/codec';
 
-// A read by identity also finds a started Issue, so the Engine can complete the
-// Issue it claimed, and a completed one, which reads as done, so a blocker that is
-// done on Linear resolves. A started Issue is already claimed on Linear, so the read
-// of every ticket in scope does not offer it for processing.
-const READABLE_STATE_TYPES: ReadonlySet<string> = new Set(['unstarted', 'started', 'completed']);
+// The read of every ticket in scope offers only unstarted Issues for processing. A
+// read by identity finds an Issue in any state: a started one, so the Engine can
+// complete the Issue it claimed, a completed one, which reads as done, and one in a
+// backlog, triage, or canceled state, which reads as not done, so a blocker in any
+// state resolves.
 const OFFERED_STATE_TYPES: ReadonlySet<string> = new Set(['unstarted']);
 
 const isNoOp = (write: LinearWrite, issue: LinearIssue): boolean => {
@@ -60,21 +60,13 @@ const matchesQuery =
     return true;
   };
 
-const toTickets = (
-  issues: readonly LinearIssue[],
-  defaultKind: TicketKind,
-  query: TicketQuery,
-  stateTypes: ReadonlySet<string>
-): readonly Ticket[] => {
-  const dated = issues.flatMap((issue) => {
-    if (!stateTypes.has(issue.state.type)) {
-      return [];
-    }
-    return Option.match(issueToTicket(issue, defaultKind), {
+const toTickets = (issues: readonly LinearIssue[], defaultKind: TicketKind, query: TicketQuery): readonly Ticket[] => {
+  const dated = issues.flatMap((issue) =>
+    Option.match(issueToTicket(issue, defaultKind), {
       onNone: () => [],
       onSome: (ticket) => (matchesQuery(query)(ticket) ? [{ ticket, createdAt: issue.createdAt }] : []),
-    });
-  });
+    })
+  );
   return dated
     .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
     .map((entry) => entry.ticket);
@@ -91,10 +83,14 @@ export const TicketSourceLinearLive = Layer.effect(
       Effect.gen(function* () {
         if (query.id !== undefined) {
           const issue = yield* api.issue(parseTicketId(query.id).native);
-          return toTickets([issue], defaultKind, query, READABLE_STATE_TYPES);
+          return toTickets([issue], defaultKind, query);
         }
         const issues = yield* api.issues(teamId);
-        return toTickets(issues, defaultKind, query, OFFERED_STATE_TYPES);
+        return toTickets(
+          issues.filter((issue) => OFFERED_STATE_TYPES.has(issue.state.type)),
+          defaultKind,
+          query
+        );
       });
 
     const getOneBy = (query: TicketQuery): Effect.Effect<Ticket, TicketNotFound> =>
@@ -141,13 +137,15 @@ export const TicketSourceLinearLive = Layer.effect(
             Effect.flatMap((needed) => Effect.forEach(needed, applyWrite, { discard: true }))
           );
 
-    // An Issue in a started state is already claimed on Linear, perhaps by an
-    // Engine on another machine since the Engine read it, so it cannot be claimed.
-    const ensureNotStarted = (issueId: string) =>
+    // Only an Issue offered for processing can be claimed. Since the Engine read it,
+    // it may have left its unstarted state: a started Issue is already claimed on
+    // Linear, perhaps by an Engine on another machine, and an Issue in another state
+    // is not offered.
+    const ensureOffered = (issueId: string) =>
       api.issue(issueId).pipe(
         Effect.filterOrFail(
-          (current) => current.state.type !== 'started',
-          () => 'The Issue is already in a started state'
+          (current) => OFFERED_STATE_TYPES.has(current.state.type),
+          () => 'The Issue is no longer in an unstarted state'
         )
       );
 
@@ -170,7 +168,7 @@ export const TicketSourceLinearLive = Layer.effect(
         const issueId = parseTicketId(ticket).native;
         switch (event) {
           case 'claimed':
-            yield* ensureNotStarted(issueId);
+            yield* ensureOffered(issueId);
             yield* applyNeeded(issueId, claimWrites(issueId, metadata));
             yield* confirmClaim(issueId, metadata);
             return;
@@ -193,16 +191,18 @@ export const TicketSourceLinearLive = Layer.effect(
         }
       }).pipe(Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event })));
 
-    // Done on Linear is a workflow state, set before the merge. Nothing is left
-    // for after it.
+    // Done on Linear is a workflow state, so nothing of it lands with the work. The
+    // report writes nothing, and the Issue moves to a completed state only after a
+    // merge that succeeds, so a failed merge leaves it as it is.
     const reportDone = (ticket: TicketId, _worktree: Worktree): Effect.Effect<AfterMerge, TicketEventNotReported> =>
-      api.metadata(teamId).pipe(
-        Effect.flatMap((metadata) => {
-          const issueId = parseTicketId(ticket).native;
-          return applyNeeded(issueId, doneWrites(issueId, metadata));
-        }),
-        Effect.as(Effect.void),
-        Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event: 'done' }))
+      Effect.succeed(
+        api.metadata(teamId).pipe(
+          Effect.flatMap((metadata) => {
+            const issueId = parseTicketId(ticket).native;
+            return applyNeeded(issueId, doneWrites(issueId, metadata));
+          }),
+          Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event: 'done' }))
+        )
       );
 
     return { getOneBy, getManyBy, getUnreadable, report, reportDone };

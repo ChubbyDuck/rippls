@@ -987,7 +987,7 @@ test('runEngine reports done to the Source, merges and closes, records done in t
   ]);
 });
 
-test('runEngine records no done in the Ledger when the merge fails, halts, and releases its Claim on exit', async () => {
+test('runEngine never runs what the Source leaves for after the merge when the merge fails, records no done in the Ledger, halts, and releases its Claim on exit', async () => {
   const timeline: string[] = [];
   const ledger = makeLedgerMemory();
   const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
@@ -1011,6 +1011,7 @@ test('runEngine records no done in the Ledger when the merge fails, halts, and r
     await Effect.runPromise(executeEngine({ project }).pipe(Random.withSeed('test'), Effect.provide(layer), Effect.flip))
   ).toEqual(new EngineHalted({ ticketId: id(1), reason: 'worktree close failure' }));
   expect(timeline).toEqual(['merge and close', 'merge and close']);
+  expect(timeline).not.toContain('after the merge');
   expect(source.doneReported).toEqual([id(1)]);
   expect(ledger.done.size).toBe(0);
   expect(ledger.claims.size).toBe(0);

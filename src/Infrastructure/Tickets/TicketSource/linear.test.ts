@@ -1,6 +1,7 @@
 import { ConfigProvider, Console, Effect, Layer } from 'effect';
 import { expect, test } from 'vitest';
 
+import { showStatus, ticketStatuses } from '~/Core/Tickets/Application/UseCases/ShowStatus/showStatus';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -9,9 +10,11 @@ import {
   type LinearIssue,
   LinearIssueNotFound,
   type LinearLabel,
+  LinearRequestError,
   type LinearMetadata,
 } from '~/Core/Tickets/Ports/LinearApi';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
+import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 import { toLinearId } from '~/Infrastructure/Tickets/LinearApi/codec';
 
 import { TicketSourceLinearLive } from './linear';
@@ -25,6 +28,9 @@ const metadata: LinearMetadata = {
     { id: 'state-unstarted', name: 'Todo', type: 'unstarted' },
     { id: 'state-started', name: 'In Progress', type: 'started' },
     { id: 'state-completed', name: 'Done', type: 'completed' },
+    { id: 'state-backlog', name: 'Backlog', type: 'backlog' },
+    { id: 'state-triage', name: 'Triage', type: 'triage' },
+    { id: 'state-canceled', name: 'Canceled', type: 'canceled' },
   ],
   labels: [
     { id: 'label-impl', name: 'kind:implementation' },
@@ -52,12 +58,7 @@ const issue = (fields: {
   description: 'Claim and complete.',
   createdAt: fields.createdAt ?? '2026-01-01T00:00:00.000Z',
   assigneeId: fields.assigneeId === undefined ? null : fields.assigneeId,
-  state:
-    fields.stateType === 'started'
-      ? { id: 'state-started', name: 'In Progress', type: 'started' }
-      : fields.stateType === 'completed'
-        ? { id: 'state-completed', name: 'Done', type: 'completed' }
-        : { id: 'state-unstarted', name: 'Todo', type: 'unstarted' },
+  state: metadata.states.find((state) => state.type === (fields.stateType ?? 'unstarted'))!,
   project: fields.project === undefined ? { id: 'proj-1', name: 'Chubby Engine', slugId: 'abc123' } : fields.project,
   labels: fields.labels ?? [{ id: 'label-impl', name: 'kind:implementation' }],
   relations: [],
@@ -80,10 +81,11 @@ type Mutation =
   | { readonly op: 'createRelation'; readonly issueId: string; readonly relatedIssueId: string }
   | { readonly op: 'deleteRelation'; readonly relationId: string };
 
-// A fake Linear API. `labels` replaces the labels of the team.
+// A fake Linear API. `labels` replaces the labels of the team, and with
+// `failStates` every change of a workflow state fails.
 const fakeLinear = (
   seed: readonly LinearIssue[],
-  options: { readonly steal?: boolean; readonly labels?: readonly LinearLabel[] } = {}
+  options: { readonly steal?: boolean; readonly labels?: readonly LinearLabel[]; readonly failStates?: boolean } = {}
 ) => {
   const issues = new Map(seed.map((item) => [item.id, item]));
   const calls: Mutation[] = [];
@@ -98,15 +100,17 @@ const fakeLinear = (
       return found === undefined ? Effect.fail(new LinearIssueNotFound()) : Effect.succeed(found);
     },
     setState: (issueId, stateId) =>
-      Effect.sync(() => {
-        calls.push({ op: 'setState', issueId, stateId });
-        const current = issues.get(issueId);
-        const state = metadata.states.find((item) => item.id === stateId);
-        if (current === undefined || state === undefined) {
-          return;
-        }
-        issues.set(issueId, { ...current, state });
-      }),
+      options.failStates === true
+        ? Effect.fail(new LinearRequestError())
+        : Effect.sync(() => {
+            calls.push({ op: 'setState', issueId, stateId });
+            const current = issues.get(issueId);
+            const state = metadata.states.find((item) => item.id === stateId);
+            if (current === undefined || state === undefined) {
+              return;
+            }
+            issues.set(issueId, { ...current, state });
+          }),
     setAssignee: (issueId, assigneeId) =>
       Effect.sync(() => {
         calls.push({ op: 'setAssignee', issueId, assigneeId });
@@ -164,12 +168,12 @@ const getManyIn = (
     Effect.provide(withRepo(api, config))
   );
 
+// The report of done, and what the Source does after the merge, which the caller runs.
 const reportDoneIn = (api: ReturnType<typeof fakeLinear>) =>
   TicketSource.pipe(
     Effect.flatMap((source) =>
       source.reportDone(toLinearId(uuid), { path: '/repo/.sandcastle/worktrees/ticket-linear', branch: 'ticket-linear' })
     ),
-    Effect.flatMap((afterMerge) => afterMerge),
     Effect.provide(withRepo(api))
   );
 
@@ -216,6 +220,18 @@ test('report of claimed fails and writes nothing for an Issue already in a start
   expect(api.calls).toEqual([]);
 });
 
+test.each(['backlog', 'triage', 'canceled', 'completed'])(
+  'report of claimed fails and writes nothing for an Issue that left its unstarted state for a %s state',
+  async (stateType) => {
+    const api = fakeLinear([issue({ stateType })]);
+
+    const error = await Effect.runPromise(reportIn(api, 'claimed').pipe(Effect.flip));
+
+    expect(error).toEqual(new TicketEventNotReported({ ticketId: toLinearId(uuid), event: 'claimed' }));
+    expect(api.calls).toEqual([]);
+  }
+);
+
 test('report of released unassigns the Issue and moves it to the first unstarted state', async () => {
   const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 
@@ -242,13 +258,26 @@ test('a started Issue is not offered for processing, and its read by identity st
   expect(byIdentity.id).toBe(toLinearId('started'));
 });
 
-test('report of done moves the Issue to the first completed state, and leaves nothing for after the merge', async () => {
+test('report of done writes nothing, and what it leaves for after the merge moves the Issue to the first completed state', async () => {
   const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 
-  await Effect.runPromise(reportDoneIn(api));
+  const afterMerge = await Effect.runPromise(reportDoneIn(api));
+
+  expect(api.calls).toEqual([]);
+  expect(api.issues.get(uuid)?.state.type).toBe('started');
+
+  await Effect.runPromise(afterMerge);
 
   expect(api.calls).toEqual([{ op: 'setState', issueId: uuid, stateId: 'state-completed' }]);
   expect(api.issues.get(uuid)?.state.type).toBe('completed');
+});
+
+test('what report of done leaves for after the merge fails as a done report when the Linear write fails', async () => {
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })], { failStates: true });
+
+  const error = await Effect.runPromise(reportDoneIn(api).pipe(Effect.flatMap((afterMerge) => afterMerge), Effect.flip));
+
+  expect(error).toEqual(new TicketEventNotReported({ ticketId: toLinearId(uuid), event: 'done' }));
 });
 
 test('report of escalated unassigns, moves to the first unstarted state, and adds needs-human, leaving the kind and hitl labels', async () => {
@@ -444,3 +473,70 @@ test('a read by identity finds a completed Issue as done', async () => {
 
   expect([byIdentity.id, byIdentity.doneInSource]).toEqual([toLinearId('completed'), true]);
 });
+
+test.each(['backlog', 'triage', 'canceled'])(
+  'an Issue in a %s state is not offered for processing, and its read by identity finds it as not done',
+  async (stateType) => {
+    const api = fakeLinear([issue({ id: 'elsewhere', stateType })]);
+
+    const offered = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+    const byIdentity = await Effect.runPromise(getOneIn(api, TicketQuery.byId(toLinearId('elsewhere')).build()));
+
+    expect(offered).toEqual([]);
+    expect([byIdentity.id, byIdentity.doneInSource]).toEqual([toLinearId('elsewhere'), false]);
+  }
+);
+
+// The Ticket Status of each ticket in scope, with the outstanding blockers, as
+// `rippls status` derives them from the Linear Source and an empty Ledger.
+const statusesIn = (api: ReturnType<typeof fakeLinear>) =>
+  Effect.runPromise(
+    ticketStatuses({}).pipe(
+      Effect.map((lines) =>
+        lines.flatMap((line) => (line.status === 'unreadable' ? [] : [[line.ticket.id, line.status, line.blockers] as const]))
+      ),
+      Effect.provide(Layer.merge(withRepo(api), makeLedgerMemory().layer))
+    )
+  );
+
+const printedIn = async (api: ReturnType<typeof fakeLinear>) => {
+  const messages: string[] = [];
+  const capturing: Console.Console = Object.assign(Object.create(console), {
+    log: (...args: ReadonlyArray<unknown>) => {
+      messages.push(args.map(String).join(' '));
+    },
+  });
+  await Effect.runPromise(
+    showStatus({}).pipe(
+      Effect.provide(Layer.merge(withRepo(api), makeLedgerMemory().layer)),
+      Effect.provideService(Console.Console, capturing)
+    )
+  );
+  return messages;
+};
+
+test('a ticket whose only blocker is a completed Issue outside the read of the tickets in scope is Eligible', async () => {
+  const api = fakeLinear([
+    issue({ id: 'dependent', inverse: [{ issueId: 'blocker' }] }),
+    issue({ id: 'blocker', stateType: 'completed' }),
+  ]);
+
+  expect(await statusesIn(api)).toEqual([[toLinearId('dependent'), 'eligible', undefined]]);
+});
+
+test.each(['backlog', 'triage', 'canceled'])(
+  'a blocker in a %s state keeps its dependent blocked and is shown as open, not unresolved',
+  async (stateType) => {
+    const api = fakeLinear([
+      issue({ id: 'dependent', inverse: [{ issueId: 'blocker' }] }),
+      issue({ id: 'blocker', stateType }),
+    ]);
+
+    expect(await statusesIn(api)).toEqual([
+      [toLinearId('dependent'), 'blocked', { open: [toLinearId('blocker')], unresolved: [] }],
+    ]);
+    expect(await printedIn(api)).toEqual([
+      `${toLinearId('dependent')}  Linear writes  blocked  (Blockers: open ${toLinearId('blocker')})`,
+    ]);
+  }
+);
