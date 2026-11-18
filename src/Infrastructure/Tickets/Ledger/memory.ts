@@ -6,11 +6,11 @@ import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 
-import type { ClaimHolder } from './folder';
+import type { ClaimHolder } from './holder';
 
 /**
- * A Ledger held in memory. Every layer made from one store shares its Claims, so
- * several Engines can run against one Ledger.
+ * A Ledger held in memory. Every Engine given its layer shares one set of Claims,
+ * so several Engines can run against one Ledger.
  */
 export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memory' }) => {
   const claims = new Map<TicketId, Claim>();

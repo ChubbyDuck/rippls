@@ -10,11 +10,7 @@ import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 
-/** The process and the host that every Claim of this Ledger names. */
-export type ClaimHolder = {
-  readonly process: number;
-  readonly host: string;
-};
+import type { ClaimHolder } from './holder';
 
 const RECORD_SUFFIX = '.json';
 
@@ -22,10 +18,11 @@ const ClaimJson = Schema.fromJsonString(Claim);
 const encodeClaim = Schema.encodeSync(ClaimJson);
 const decodeClaim = Schema.decodeUnknownOption(ClaimJson);
 
-const isReason = (tag: string) => (error: PlatformError.PlatformError) =>
+const isReason = (tag: PlatformError.SystemErrorTag) => (error: PlatformError.PlatformError) =>
   error.reason._tag === tag;
 
 const isNotFound = isReason('NotFound');
+const isAlreadyExists = isReason('AlreadyExists');
 
 const toLedgerError = (cause: unknown) => new LedgerError({ cause });
 
@@ -49,7 +46,8 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
         fs.makeDirectory(dir, { recursive: true }).pipe(
           Effect.andThen(fs.makeTempDirectoryScoped({ directory: dir, prefix: '.scratch-' })),
           Effect.map((scratch) => path.join(scratch, 'record.json')),
-          Effect.tap((file) => fs.writeFileString(file, encodeClaim(claim)))
+          Effect.tap((file) => fs.writeFileString(file, encodeClaim(claim))),
+          Effect.mapError(toLedgerError)
         );
 
       const readRecord = (file: string): Effect.Effect<Option.Option<Claim>, LedgerError> =>
@@ -65,29 +63,26 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
       // A hard link fails when the record exists, so only one caller creates it.
       const claim = (ticket: TicketId, engine: EngineId) => {
         const made = new Claim({ ticket, engine, process: holder.process, host: holder.host });
-        return writeScratch(made).pipe(
-          Effect.flatMap((scratch) => fs.link(scratch, recordOf(ticket))),
-          Effect.scoped,
-          Effect.as(made),
-          Effect.catchIf(isReason('AlreadyExists'), () => Effect.fail(new TicketAlreadyClaimed({ ticketId: ticket }))),
-          Effect.mapError((error) => (error instanceof TicketAlreadyClaimed ? error : toLedgerError(error)))
-        );
+        const link = (scratch: string) =>
+          fs
+            .link(scratch, recordOf(ticket))
+            .pipe(
+              Effect.mapError((error) =>
+                isAlreadyExists(error) ? new TicketAlreadyClaimed({ ticketId: ticket }) : toLedgerError(error)
+              )
+            );
+        return writeScratch(made).pipe(Effect.flatMap(link), Effect.scoped, Effect.as(made));
       };
 
       const assignRunner = (ticket: TicketId, runner: RunnerId) =>
-        readRecord(recordOf(ticket)).pipe(
-          Effect.flatMap(
-            Option.match({
-              onNone: () => Effect.fail(toLedgerError(`The Ledger holds no Claim on ${ticket}`)),
-              onSome: (held) =>
-                writeScratch(held.withRunner(runner)).pipe(
-                  Effect.flatMap((scratch) => fs.rename(scratch, recordOf(ticket))),
-                  Effect.scoped,
-                  Effect.mapError(toLedgerError)
-                ),
-            })
-          )
-        );
+        Effect.gen(function* () {
+          const held = yield* readRecord(recordOf(ticket));
+          if (Option.isNone(held)) {
+            return yield* toLedgerError(`The Ledger holds no Claim on ${ticket}`);
+          }
+          const scratch = yield* writeScratch(held.value.withRunner(runner));
+          yield* fs.rename(scratch, recordOf(ticket)).pipe(Effect.mapError(toLedgerError));
+        }).pipe(Effect.scoped);
 
       const release = (ticket: TicketId) => removeRecord(recordOf(ticket));
 

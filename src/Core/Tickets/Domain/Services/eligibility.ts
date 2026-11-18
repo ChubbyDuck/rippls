@@ -15,10 +15,7 @@ export const doneTicketIds = (tickets: readonly Ticket[]): ReadonlySet<TicketId>
 export const isUnblocked = (ticket: Ticket, done: ReadonlySet<TicketId>): boolean =>
   ticket.blockedBy.every((blocker) => done.has(blocker));
 
-/**
- * A Ticket with no Claim in the Ledger. A claim field or a claim status that an
- * earlier Engine wrote into the ticket is ignored.
- */
+/** A Ticket with no Claim in the Ledger. */
 export const isUnclaimed = (ticket: Ticket, claimed: ReadonlySet<TicketId>): boolean => !claimed.has(ticket.id);
 
 /** A Ticket whose HITL is no, allowing it to proceed without a human. */

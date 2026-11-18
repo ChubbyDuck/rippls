@@ -130,6 +130,16 @@ export const TicketSourceLinearLive = Layer.effect(
         Effect.mapError(() => new TicketNotSaved())
       );
 
+    // An Issue in a started state is already claimed on Linear, perhaps by an
+    // Engine on another machine since the Engine read it, so it cannot be claimed.
+    const ensureNotStarted = (issueId: string) =>
+      api.issue(issueId).pipe(
+        Effect.filterOrFail(
+          (current) => current.state.type !== 'started',
+          () => 'The Issue is already in a started state'
+        )
+      );
+
     // A Claim on Linear is confirmed by reading the Issue back: another user or
     // workspace may have taken it in between, and then the report fails.
     const confirmClaim = (issueId: string, metadata: LinearMetadata) =>
@@ -145,6 +155,7 @@ export const TicketSourceLinearLive = Layer.effect(
         const metadata = yield* api.metadata(teamId);
         const issueId = parseTicketId(ticket).native;
         if (event === 'claimed') {
+          yield* ensureNotStarted(issueId);
           yield* applyNeeded(issueId, claimWrites(issueId, metadata));
           yield* confirmClaim(issueId, metadata);
           return;

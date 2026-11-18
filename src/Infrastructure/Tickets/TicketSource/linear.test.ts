@@ -210,11 +210,13 @@ test('report of claimed fails when the read back shows a lost Claim', async () =
   expect(error).toEqual(new TicketEventNotReported({ ticketId: toLinearId(uuid), event: 'claimed' }));
 });
 
-test('report of claimed writes nothing for an Issue that is already claimed by the API-key user', async () => {
+test('report of claimed fails and writes nothing for an Issue already in a started state', async () => {
+  // Another Engine, perhaps with the same API key, claimed the Issue since it was read.
   const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 
-  await Effect.runPromise(reportIn(api, 'claimed'));
+  const error = await Effect.runPromise(reportIn(api, 'claimed').pipe(Effect.flip));
 
+  expect(error).toEqual(new TicketEventNotReported({ ticketId: toLinearId(uuid), event: 'claimed' }));
   expect(api.calls).toEqual([]);
 });
 

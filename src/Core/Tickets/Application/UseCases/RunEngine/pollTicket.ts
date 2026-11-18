@@ -37,7 +37,7 @@ const claimedIn = (tickets: readonly Ticket[]) =>
 // content and is still Eligible when it is taken. The Claim is then created in the
 // Ledger, where only one caller can succeed, and reported to the Source. When the
 // Source cannot confirm the Claim, the Engine releases it and takes another ticket.
-const claimFirstOf = (engine: EngineId, facts: EligibilityFacts) => (candidate: Ticket) =>
+const claimIfStillEligible = (engine: EngineId, facts: EligibilityFacts) => (candidate: Ticket) =>
   Effect.gen(function* () {
     const source = yield* TicketSource;
     const ledger = yield* Ledger;
@@ -46,28 +46,22 @@ const claimFirstOf = (engine: EngineId, facts: EligibilityFacts) => (candidate: 
       return Result.fail(candidate);
     }
     const ticket = fresh.value;
-    const claimed = yield* ledger.claim(ticket.id, engine).pipe(
-      Effect.as(true),
-      Effect.catchTag('TicketAlreadyClaimed', () => Effect.succeed(false))
-    );
-    if (!claimed) {
-      return Result.fail(candidate);
-    }
-    const reported = yield* source.report(ticket.id, 'claimed').pipe(
-      Effect.as(true),
-      Effect.catchTag('TicketEventNotReported', () =>
+    yield* ledger.claim(ticket.id, engine);
+    yield* source.report(ticket.id, 'claimed').pipe(
+      Effect.tapError(() =>
         Console.log(`${ticket.label} could not be claimed on the Source, taking another ticket`).pipe(
-          Effect.andThen(ledger.release(ticket.id)),
-          Effect.as(false)
+          Effect.andThen(ledger.release(ticket.id))
         )
       )
     );
-    if (!reported) {
-      return Result.fail(candidate);
-    }
     yield* Console.log(`${ticket.label} is claimed`);
     return Result.succeed(ticket);
-  });
+  }).pipe(
+    Effect.catchTags({
+      TicketAlreadyClaimed: () => Effect.succeed(Result.fail(candidate)),
+      TicketEventNotReported: () => Effect.succeed(Result.fail(candidate)),
+    })
+  );
 
 // The Source returns every ticket in scope in its processing order, done ones
 // included, the Ledger holds the Claims, and the core rule picks the Eligible
@@ -78,7 +72,7 @@ const claimNextEligibleTicket = (engine: EngineId, project?: Project) =>
     const tickets = yield* source.getManyBy(scopeQuery(project));
     const facts = { done: yield* doneFor(tickets, project), claimed: yield* claimedIn(tickets) };
     const eligible = tickets.filter((ticket) => isEligible(ticket, facts));
-    return yield* Effect.findFirstFilter(eligible, claimFirstOf(engine, facts));
+    return yield* Effect.findFirstFilter(eligible, claimIfStillEligible(engine, facts));
   });
 
 export const pollTicket = (engine: EngineId, project?: Project) =>
