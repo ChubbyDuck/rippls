@@ -623,7 +623,8 @@ case does not matter.
   blockers.
 - An item that does not start with a number, such as a bare title, cannot be resolved
   and keeps the ticket blocked. So does a number that matches no ticket, open or in
-  `done/`.
+  `done/`, and so does a line that names nothing, such as one whose items follow on
+  the next lines: write them on the line itself.
 - When a ticket has both a `blockedBy` field and a "Blocked by" line, the field wins.
   A `blockedBy` key with no value states nothing, so the line is read.
 

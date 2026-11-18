@@ -87,20 +87,29 @@ const proseLines = (body: string): readonly string[] => {
   });
 };
 
+// The match of the first prose line of the body that the pattern matches.
+const firstProseMatch = (body: string, pattern: RegExp): RegExpExecArray | undefined => {
+  for (const line of proseLines(body)) {
+    const match = pattern.exec(line);
+    if (match !== null) {
+      return match;
+    }
+  }
+  return undefined;
+};
+
 const HEADING = /^\s{0,3}#{1,6}\s+(.*?)(?:\s+#+)?\s*$/;
 const LEADING_TICKET_NUMBER = /^\d+\s*[-–—:.)](?:\s+|$)/;
 
 // The first heading of the body, without a leading ticket number and separator,
 // such as the `10 — ` of `# 10 — A ticket`.
 const headingTitle = (body: string): string | undefined => {
-  for (const line of proseLines(body)) {
-    const match = HEADING.exec(line);
-    if (match !== null) {
-      const title = (match[1] ?? '').replace(LEADING_TICKET_NUMBER, '').trim();
-      return title === '' ? undefined : title;
-    }
+  const match = firstProseMatch(body, HEADING);
+  if (match === undefined) {
+    return undefined;
   }
-  return undefined;
+  const title = (match[1] ?? '').replace(LEADING_TICKET_NUMBER, '').trim();
+  return title === '' ? undefined : title;
 };
 
 // The filename without its numeric prefix, the separator after it, and the
@@ -119,18 +128,13 @@ const markerOf = (value: unknown): Marker | undefined =>
 
 // The Marker of the first "Status" line of the body, such as `**Status:** ready-for-agent`.
 const markerInBody = (body: string): Marker | undefined => {
-  for (const line of proseLines(body)) {
-    const match = STATUS_LINE.exec(line);
-    if (match !== null) {
-      return markerOf(match[1]);
-    }
-  }
-  return undefined;
+  const match = firstProseMatch(body, STATUS_LINE);
+  return match === undefined ? undefined : markerOf(match[1]);
 };
 
 const BLOCKED_BY_LINE = /^\s*(?:[-*+]\s+)?[*_]*blocked by[*_]*\s*:[*_]*\s*(.*)$/i;
-const NONE = /^none\b/i;
-const LEADING_NUMBER = /^(\d+)/;
+const BLOCKED_BY_NONE = /^none\b/i;
+const ITEM_NUMBER = /^(\d+)/;
 
 // The items of a "Blocked by" line, split at the commas outside parentheses, so
 // that a title in parentheses stays with its item.
@@ -159,21 +163,25 @@ const blockedByItems = (line: string): readonly string[] => {
 // whatever text follows. An item without a leading number keeps its text, so it
 // resolves to no ticket and blocks.
 const blockerOf = (item: string): TicketId => {
-  const match = LEADING_NUMBER.exec(item);
+  const match = ITEM_NUMBER.exec(item);
   return toFolderId(match === null ? item : Number(match[1]));
 };
 
 // The blockers of the first "Blocked by" line of the body, such as
 // `**Blocked by:** 02 (A title), 10`. "None", with or without a remark, names none.
+// A line that names nothing, as when its items follow on the next lines, cannot be
+// resolved: the line itself is its one blocker, so the ticket stays blocked.
 const blockersInBody = (body: string): readonly TicketId[] | undefined => {
-  for (const line of proseLines(body)) {
-    const match = BLOCKED_BY_LINE.exec(line);
-    if (match !== null) {
-      const value = (match[1] ?? '').trim();
-      return NONE.test(value) ? [] : blockedByItems(value).map(blockerOf);
-    }
+  const match = firstProseMatch(body, BLOCKED_BY_LINE);
+  if (match === undefined) {
+    return undefined;
   }
-  return undefined;
+  const value = (match[1] ?? '').trim();
+  if (BLOCKED_BY_NONE.test(value)) {
+    return [];
+  }
+  const items = blockedByItems(value);
+  return items.length === 0 ? [toFolderId(match[0].trim())] : items.map(blockerOf);
 };
 
 // A key with no value states nothing, like a missing key.

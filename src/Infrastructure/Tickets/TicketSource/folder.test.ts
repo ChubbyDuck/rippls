@@ -4,10 +4,10 @@ import { expect, test } from 'vitest';
 
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
-import { doneInSourceIds, isUnblocked } from '~/Core/Tickets/Domain/Services/eligibility';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import { doneInSourceIds, isUnblocked } from '~/Core/Tickets/Domain/Services/eligibility';
 import { generateTickets } from '~/Core/Tickets/Application/UseCases/Generate/generate';
 import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/folder';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
@@ -777,16 +777,22 @@ test('a number inside the parentheses of another item is not read as a blocker',
   expect(tickets.get(folderId(1))?.blockedBy).toEqual([folderId(2), folderId(3)]);
 });
 
-test('an item without a leading number, or a number with no ticket, keeps the ticket blocked', async () => {
+test('an item without a leading number, a number with no ticket, or an empty line keeps the ticket blocked', async () => {
   const tickets = await readAll([
     ['done/1-first.md', '# First\n'],
     ['2.md', '**Blocked by:** 01 (First)\n'],
     ['3.md', '**Blocked by:** 01 (First), First\n'],
     ['4.md', '**Blocked by:** 99\n'],
+    ['5.md', '**Blocked by:**\n\n- 01 (First)\n'],
   ]);
   const done = doneInSourceIds([...tickets.values()]);
 
-  expect([2, 3, 4].map((value) => isUnblocked(tickets.get(folderId(value))!, done))).toEqual([true, false, false]);
+  expect([2, 3, 4, 5].map((value) => isUnblocked(tickets.get(folderId(value))!, done))).toEqual([
+    true,
+    false,
+    false,
+    false,
+  ]);
 });
 
 test('the blockedBy field wins over a "Blocked by" line', async () => {
