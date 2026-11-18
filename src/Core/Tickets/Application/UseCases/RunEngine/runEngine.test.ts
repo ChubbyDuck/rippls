@@ -955,6 +955,37 @@ test('runEngine does not process a ticket that another Engine completed after th
   expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
 
+test('runEngine keeps the Claim on a ticket completed since the read when it could not report the release of the Stale Claim it replaced', async () => {
+  const ran: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  ledger.claims.set(id(1), new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    report: (ticket, event) =>
+      event === 'released' ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event })) : Effect.void,
+  });
+  // Another Engine records ticket 1 as done after the poll read the Ledger, as this
+  // Engine claims it.
+  const real = Effect.runSync(Ledger.pipe(Effect.provide(ledger.layer)));
+  const lateDone = Layer.succeed(Ledger, {
+    ...real,
+    claim: (ticket, engine) =>
+      real.claim(ticket, engine).pipe(Effect.tap(() => (ticket === id(1) ? real.recordDone(id(1)) : Effect.void))),
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  expect(
+    await Effect.runPromise(
+      executeEngine({ project, limit: 1 }).pipe(
+        Random.withSeed('test'),
+        Effect.provide(Layer.mergeAll(EngineStartupTest, lateDone, layer))
+      )
+    )
+  ).toBeUndefined();
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
+  expect(ledger.claims.get(id(1))?.engine).toBe(engineId);
+  expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
+});
+
 test('runEngine reports done to the Source, merges and closes, records done in the Ledger, then releases the Claim', async () => {
   const timeline: string[] = [];
   const ledger = timelineLedger(timeline);
