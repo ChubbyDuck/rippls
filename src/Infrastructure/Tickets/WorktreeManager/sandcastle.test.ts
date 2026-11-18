@@ -392,3 +392,29 @@ test('runCommand ends a command at its time limit, with every process it started
   expect(outcome).toEqual({ _tag: 'TimedOut', output: 'started\n' });
   expect(lateFileWritten).toBe(false);
 });
+
+test('runCommand ends a command that ignores the signal of its time limit', { timeout: 15_000 }, async () => {
+  const { elapsed, outcome } = await run(
+    Effect.gen(function* () {
+      const started = yield* Clock.currentTimeMillis;
+      const { outcome } = yield* runInTicketWorktree("trap '' TERM; echo started; sleep 30", '300 millis');
+      return { elapsed: (yield* Clock.currentTimeMillis) - started, outcome };
+    })
+  );
+
+  expect(elapsed).toBeLessThan(10_000);
+  expect(outcome).toEqual({ _tag: 'TimedOut', output: 'started\n' });
+});
+
+test('runCommand takes the exit of the shell as the verdict when the command leaves a process with the output open', async () => {
+  const { elapsed, outcome } = await run(
+    Effect.gen(function* () {
+      const started = yield* Clock.currentTimeMillis;
+      const { outcome } = yield* runInTicketWorktree('(sleep 5; echo late) & echo passed', '3 seconds');
+      return { elapsed: (yield* Clock.currentTimeMillis) - started, outcome };
+    })
+  );
+
+  expect(elapsed).toBeLessThan(3000);
+  expect(outcome).toEqual({ _tag: 'Exited', exitCode: 0, output: 'passed\n' });
+});

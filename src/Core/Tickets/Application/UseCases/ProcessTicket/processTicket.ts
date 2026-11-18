@@ -91,16 +91,16 @@ export const processTicket = ({ ticket, runnerId, check = defaultCheckConfig }: 
       )
     );
     yield* Console.log(`${ticket.label} is opening worktree ${worktree.branch} at ${worktree.path}`);
-    const inWorktree = harnessInWorktree(harness, worktree.path);
+    const worktreeHarness = harnessInWorktree(harness, worktree.path);
     const outcome = yield* strategy
-      .run(ticket, inWorktree)
+      .run(ticket, worktreeHarness)
       .pipe(Effect.withSpan('strategy.run', { attributes: { harness: harness.name, strategy: strategy.name } }));
     if (Result.isFailure(outcome)) {
       return yield* escalate(ticket, worktree, 'strategy failure');
     }
     // A check command that cannot run, or a fix the Harness cannot carry out, fails
     // the check as a failing command does.
-    const passed = yield* checkTicketWorktree(ticket, worktree, inWorktree, check).pipe(
+    const passed = yield* checkTicketWorktree(ticket, worktree, worktreeHarness, check).pipe(
       Effect.catchTags({
         WorktreeCommandError: () =>
           Console.error(`${ticket.label} could not run its check command`).pipe(Effect.as(false)),

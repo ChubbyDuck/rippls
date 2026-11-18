@@ -183,15 +183,15 @@ export const CheckFileConfig = Schema.Struct({
 
 export interface CheckConfig {
   readonly command?: string;
-  readonly projects: Readonly<Record<string, string>>;
+  readonly projects: Readonly<Record<Project, string>>;
   readonly timeLimit: Duration.Duration;
   readonly fixAttempts: number;
   readonly fixPrompt: string;
 }
 
-export const defaultCheckTimeLimit = Duration.minutes(10);
+const defaultCheckTimeLimit = Duration.minutes(10);
 
-export const defaultFixAttempts = 1;
+const defaultFixAttempts = 1;
 
 export const defaultFixPrompt =
   "The repository's check command failed on the work in this worktree. " +

@@ -1,5 +1,5 @@
 import { createWorktree } from '@ai-hero/sandcastle';
-import { Console, Effect, FileSystem, Layer, Option, Path, Stream } from 'effect';
+import { Console, Effect, Fiber, FileSystem, Layer, Option, Path, Stream } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
@@ -24,6 +24,13 @@ const worktreePathOf = (path: Path.Path, repositoryRoot: string, name: string) =
 // identity of a folder ticket in a feature folder, such as `folder:auth/1`,
 // gives `ticket-folder-auth-1`.
 export const ticketBranchOf = (id: TicketId): string => `ticket-${id.replace(/[^A-Za-z0-9_-]/g, '-')}`;
+
+// A command ended by its time limit gets this long to exit after the signal before
+// it is killed.
+const KILL_GRACE = '5 seconds';
+
+// After the shell exits, its output is read for at most this long.
+const OUTPUT_DRAIN = '1 second';
 
 export const WorktreeManagerLive = (repositoryRoot: string) => {
   const projectMemo = new Map<string, Worktree>();
@@ -136,21 +143,31 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
           }),
         // The command runs through `sh -c` with no input. Its output is kept as it
         // arrives, so a command ended by the time limit still returns what it wrote.
-        // Closing the scope ends the process group of the shell, with every process
-        // the command started.
+        // The verdict is the exit of the shell: a process the command leaves behind
+        // with the output open does not hold it up, and its output is read only for a
+        // short while after. Closing the scope ends the process group of the shell,
+        // with every process the command started, and kills a process that ignores
+        // the signal after a short while.
         runCommand: ({ worktree, command, timeLimit }) =>
           Effect.scoped(
             Effect.gen(function* () {
               const chunks: string[] = [];
               const handle = yield* spawner.spawn(
-                ChildProcess.make('sh', ['-c', command], { cwd: worktree.path, stdin: 'ignore' })
+                ChildProcess.make('sh', ['-c', command], {
+                  cwd: worktree.path,
+                  stdin: 'ignore',
+                  forceKillAfter: KILL_GRACE,
+                })
               );
-              const exited = yield* handle.all.pipe(
+              const reading = yield* handle.all.pipe(
                 Stream.decodeText(),
                 Stream.runForEach((chunk) => Effect.sync(() => chunks.push(chunk))),
-                Effect.andThen(handle.exitCode),
-                Effect.timeoutOption(timeLimit)
+                Effect.forkScoped
               );
+              const exited = yield* handle.exitCode.pipe(Effect.timeoutOption(timeLimit));
+              if (Option.isSome(exited)) {
+                yield* Fiber.join(reading).pipe(Effect.timeoutOption(OUTPUT_DRAIN));
+              }
               const output = chunks.join('');
               return Option.match(exited, {
                 onNone: (): CommandRun => ({ _tag: 'TimedOut', output }),

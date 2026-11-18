@@ -527,7 +527,7 @@ check: {
   },
   timeLimit: '10 minutes', // the default
   fixAttempts: 1, // the default
-  fixPrompt: 'Fix the work so that the check command passes.', // a default in plain prose
+  fixPrompt: 'Run /fix-check on the output below.', // unset, a prose prompt that names no skill
 },
 ```
 
