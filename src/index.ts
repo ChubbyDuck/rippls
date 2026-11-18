@@ -16,6 +16,7 @@ import {
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngine/repositoryRoot';
 import { runEngine } from '~/Core/Tickets/Application/UseCases/RunEngine/runEngine';
+import { showStatus } from '~/Core/Tickets/Application/UseCases/ShowStatus/showStatus';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import { ConfiguredHarnessesLive } from '~/Infrastructure/Shared/HarnessSelector/configured';
 import { makeTracingLayer } from '~/Infrastructure/Shared/Tracing/otlp';
@@ -38,11 +39,30 @@ const AppLive = Layer.mergeAll(
 
 const Concurrency = Schema.Int.check(Schema.isGreaterThan(0));
 
+// The Project and Source flags scope both the Engine and `rippls status`.
+const scopeFlags = {
+  source: Flag.choice('source', TicketSourceTag.literals).pipe(Flag.optional),
+  project: Flag.string('project').pipe(Flag.withSchema(Project), Flag.optional),
+};
+
+const ticketSourceFor = (source: Option.Option<TicketSourceTag>) =>
+  Effect.gen(function* () {
+    const config = yield* EngineConfig;
+    const resolved = yield* resolveTicketSource(config.source, Option.getOrUndefined(source));
+    return liveTicketSource(resolved);
+  });
+
+const status = Command.make('status', scopeFlags, ({ source, project }) =>
+  Effect.gen(function* () {
+    const ticketSource = yield* ticketSourceFor(source);
+    return yield* showStatus({ project: Option.getOrUndefined(project) }).pipe(Effect.provide(ticketSource));
+  })
+).pipe(Command.withDescription('Print every ticket in scope with its Ticket Status'));
+
 const command = Command.make(
   'rippls',
   {
-    source: Flag.choice('source', TicketSourceTag.literals).pipe(Flag.optional),
-    project: Flag.string('project').pipe(Flag.withSchema(Project), Flag.optional),
+    ...scopeFlags,
     limit: Flag.integer('limit').pipe(Flag.optional),
     concurrency: Flag.integer('concurrency').pipe(Flag.withSchema(Concurrency), Flag.withDefault(1)),
     idleTimeout: Flag.string('idle-timeout').pipe(
@@ -56,17 +76,16 @@ const command = Command.make(
   },
   ({ source, project, limit, concurrency, idleTimeout, pollInterval }) =>
     Effect.gen(function* () {
-      const config = yield* EngineConfig;
-      const resolved = yield* resolveTicketSource(config.source, Option.getOrUndefined(source));
+      const ticketSource = yield* ticketSourceFor(source);
       return yield* runEngine({
         project: Option.getOrUndefined(project),
         limit: Option.getOrUndefined(limit),
         concurrency,
         idleTimeout,
         pollInterval,
-      }).pipe(Effect.provide(liveTicketSource(resolved)));
+      }).pipe(Effect.provide(ticketSource));
     })
-);
+).pipe(Command.withSubcommands([status]));
 
 export const program = Command.run(command, { version: '0.0.2' }).pipe(
   Effect.provide(AppLive.pipe(Layer.provideMerge(NodeServices.layer)))

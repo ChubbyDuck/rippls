@@ -176,6 +176,9 @@ they do not run that three-stage workflow. `prototype` and `grilling` imply
 rippls [flags]
 ```
 
+To see where each ticket stands instead, run `rippls status` (see
+[Ticket status](#ticket-status)).
+
 Common flags:
 
 - `--project <name>` processes only tickets in that project.
@@ -215,6 +218,43 @@ npx rippls --help
 Use `Ctrl-C` to stop a run. On exit an Engine releases only the Claims it holds and
 reports each release to the Source. The Claims of another Engine on the same
 Repository Root stay in place, so two Engines can run side by side.
+
+## Ticket status
+
+```text
+rippls status [--project <name>] [--source folder|linear]
+```
+
+`rippls status` prints one line for every ticket in scope: its identity, its
+**Ticket Status**, and its title. It changes nothing. The Ticket Status is derived from
+the ticket, the Ledger, and the done tickets; the ticket file does not hold it.
+
+| Ticket Status | Meaning |
+| --- | --- |
+| `done` | The ticket's work is complete. |
+| `escalated` | The Ledger holds an Escalation for it (see [Escalation](#escalation)). |
+| `claimed` | The Ledger holds a Claim on it that is not stale. |
+| `not ready` | Its `hitl` is `yes`. |
+| `blocked` | A ticket in its `blockedBy` is not done. |
+| `eligible` | The Engine may take it next (see [Which tickets are eligible?](#which-tickets-are-eligible)). |
+
+When several values apply to one ticket, the first in this table is shown. A ticket
+whose only Claim is stale shows the value it would have without that Claim.
+
+A claimed ticket also shows the owner of its Claim: the Engine, the Runner (or `no
+Runner yet`), the process ID, and the host. An escalated ticket shows the reason of its
+Escalation, the attempt count, and the path of its retained Ticket Worktree.
+
+```text
+folder:1  claimed    Add login (Claim: Engine honey-wren-c9w5, Runner honey-wren-c9w5:0, process 21474, host build-box)
+folder:2  blocked    Add logout
+folder:3  done       Add the session store
+folder:4  escalated  Add sign-up (Escalation: strategy failure, 1 attempt, Ticket Worktree /repo/.sandcastle/worktrees/ticket-folder-4)
+folder:5  not ready  Choose the password policy
+```
+
+`--project` and `--source` scope the list as they scope the Engine. `rippls` without a
+subcommand runs the Engine, as before.
 
 ## Claims and the Ledger
 
@@ -611,8 +651,8 @@ Investigate a Harness failure:
 
 1. Read the Engine error and `.sandcastle/logs/ticket-<source>-<id>-*.log`.
 2. Inspect the retained Ticket Worktree under `.sandcastle/worktrees/`.
-3. Read the Escalation in `.git/rippls/ledger/escalations/` for the reason and the
-   retained worktree.
+3. Run `npx rippls status` to see the reason of the Escalation and the retained
+   worktree, or read its record in `.git/rippls/ledger/escalations/`.
 4. Return it to unattended processing only after the problem is addressed: remove its
    Escalation record (and, on Linear, the `needs-human` label).
 

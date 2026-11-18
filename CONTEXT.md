@@ -32,8 +32,8 @@ _Avoid_: Agent, Harness
 ## Tickets
 
 **Ticket**:
-A uniform unit of work with a source-scoped identity, Title, Ticket Kind, Ticket Status,
-body, blocking relations, and an optional Project.
+A uniform unit of work with a source-scoped identity, Title, Ticket Kind, HITL, body,
+blocking relations, and an optional Project. Its Ticket Status is derived.
 _Avoid_: Issue, task (the noun), job
 
 **Ticket Kind**:
@@ -46,9 +46,12 @@ Whether a human must be in the loop for a Ticket: yes or no.
 _Avoid_: Human review, interactive, AFK
 
 **Ticket Status**:
-A Ticket's position in its lifecycle: open, ready-for-agent, done, resolved, or
-blocked. Done records completed work; resolved is a separate status. A Ticket Status
-says nothing about a Claim: the Ledger holds the Claim.
+A Ticket's position in its lifecycle, derived from the Ticket, the Ledger, and done.
+Its values are done, escalated, claimed, not ready, blocked, and eligible. When several
+apply, the first in that order is the Ticket Status. Claimed means a Claim other than
+a Stale Claim; not ready means HITL yes; eligible means Eligible. The status that a
+Ticket still stores from its Source is not the Ticket Status; the Engine reads it only
+to tell whether the Ticket is done.
 _Avoid_: State, phase
 
 **Project**:
@@ -180,5 +183,5 @@ _Avoid_: AFK, automated, no-HITL
 **Eligible**:
 An Unblocked, Unclaimed, Unattended Ticket that is neither done nor escalated, which
 the Engine may take next.
-Eligibility is distinct from the ready-for-agent Ticket Status.
+Eligibility is distinct from a stored ready-for-agent status.
 _Avoid_: Ready, next, pollable
