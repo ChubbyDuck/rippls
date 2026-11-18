@@ -175,6 +175,15 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
               });
             })
           ).pipe(Effect.mapError(() => new WorktreeCommandError())),
+        // Clean is an empty `git status`. Untracked files are listed one by one
+        // whatever `status.showUntrackedFiles` says, and ignored files never are.
+        isClean: (worktree: Worktree) =>
+          spawner
+            .string(ChildProcess.make('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: worktree.path }))
+            .pipe(
+              Effect.map((changes) => changes.trim().length === 0),
+              Effect.mapError(() => new WorktreeCommandError())
+            ),
       };
     })
   );

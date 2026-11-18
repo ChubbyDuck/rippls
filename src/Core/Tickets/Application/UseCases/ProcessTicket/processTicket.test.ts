@@ -46,6 +46,7 @@ const recordingWorktrees = (closed: string[] = []) =>
     prepareProject: () => Effect.succeed(projectWorktree),
     prepareTicket: ({ id }) => Effect.succeed(ticketWorktreeOf(id)),
     runCommand: () => Effect.die('runCommand should not be called'),
+    isClean: () => Effect.succeed(true),
     mergeAndClose: (worktree) =>
       Effect.sync(() => {
         closed.push(worktree.path);
@@ -486,6 +487,7 @@ test('a project-worktree create failure is retried once and then halts without e
       },
       prepareTicket: () => Effect.die('prepareTicket should not be called'),
       runCommand: () => Effect.die('runCommand should not be called'),
+      isClean: () => Effect.succeed(true),
       mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
     })
   );
@@ -516,6 +518,7 @@ test('a project-worktree create failure that succeeds on retry processes the tic
       },
       prepareTicket: ({ id }) => Effect.succeed(ticketWorktreeOf(id)),
       runCommand: () => Effect.die('runCommand should not be called'),
+      isClean: () => Effect.succeed(true),
       mergeAndClose: () => Effect.void,
     })
   );
@@ -560,6 +563,7 @@ test('a ticket-worktree close failure is retried once and then halts with no don
       prepareProject: () => Effect.succeed(projectWorktree),
       prepareTicket: ({ id }) => Effect.succeed(ticketWorktreeOf(id)),
       runCommand: () => Effect.die('runCommand should not be called'),
+      isClean: () => Effect.succeed(true),
       mergeAndClose: () => {
         attempts += 1;
         return Effect.fail(new WorktreeCloseError());

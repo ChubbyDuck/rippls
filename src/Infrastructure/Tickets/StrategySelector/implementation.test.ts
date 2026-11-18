@@ -42,38 +42,22 @@ const gateSignals = (signals: (string | undefined)[]): Handler => {
     });
 };
 
-test('runs implement, gate, then commit and reports success when the gate passes', async () => {
+test('runs implement then gate, sends no commit command, and reports success when the gate passes', async () => {
   const { harness, calls } = harnessOf(gateSignals(['GATE:PASS']));
 
   const outcome = await Effect.runPromise(implementationStrategy.run(ticket, harness));
 
   expect(Result.isSuccess(outcome)).toBe(true);
-  expect(calls.map((call) => call.label)).toEqual(['ticket-folder:7-implement', 'ticket-folder:7-gate', 'ticket-folder:7-commit']);
+  expect(calls.map((call) => call.label)).toEqual(['ticket-folder:7-implement', 'ticket-folder:7-gate']);
   expect(calls[0]!.prompt).toBe(`/implement-bare BODY\n\n${worktreeCircumstances}`);
   expect(calls[1]!.prompt).toBe(
     `/acceptance-gate BODY\n\n${gateCircumstances}\n\n` +
       'When you finish, print exactly "GATE:PASS" if every gate passed. Otherwise print exactly "GATE:FAIL".'
   );
-  expect(calls[2]!.prompt).toBe('/commit test ticket-folder:7');
+  expect(calls.some((call) => call.prompt.startsWith('/commit'))).toBe(false);
 });
 
-test('commits with only the ticket number when the ticket has no project', async () => {
-  const ticketWithoutProject = Ticket.create({
-    id: formatTicketId('folder', '7'),
-    title: 'Deliver a green ticket',
-    kind: 'implementation',
-    blockedBy: [],
-    body: 'BODY',
-  });
-  const { harness, calls } = harnessOf(gateSignals(['GATE:PASS']));
-
-  const outcome = await Effect.runPromise(implementationStrategy.run(ticketWithoutProject, harness));
-
-  expect(Result.isSuccess(outcome)).toBe(true);
-  expect(calls[2]!.prompt).toBe('/commit ticket-folder:7');
-});
-
-test('retries the gate once and commits when the second attempt passes', async () => {
+test('retries the gate once and succeeds when the second attempt passes', async () => {
   const { harness, calls } = harnessOf(gateSignals(['GATE:FAIL', 'GATE:PASS']));
 
   const outcome = await Effect.runPromise(implementationStrategy.run(ticket, harness));
@@ -83,11 +67,10 @@ test('retries the gate once and commits when the second attempt passes', async (
     'ticket-folder:7-implement',
     'ticket-folder:7-gate',
     'ticket-folder:7-gate',
-    'ticket-folder:7-commit',
   ]);
 });
 
-test('reports failure and does not commit when the gate fails twice', async () => {
+test('reports failure when the gate fails twice', async () => {
   const { harness, calls } = harnessOf(gateSignals(['GATE:FAIL', 'GATE:FAIL']));
 
   const outcome = await Effect.runPromise(implementationStrategy.run(ticket, harness));

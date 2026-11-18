@@ -13,6 +13,7 @@ const unusedProject = Layer.succeed(WorktreeManager, {
   prepareProject: () => Effect.die('prepareProject should not be called'),
   prepareTicket: ({ id }) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/ticket-${id}`, branch: `ticket-${id}` }),
   runCommand: () => Effect.die('runCommand should not be called'),
+  isClean: () => Effect.die('isClean should not be called'),
   mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
 });
 
@@ -26,6 +27,7 @@ test('a ticket with no project resolves to a ticket worktree', () => {
         return { path: `/repo/.sandcastle/worktrees/ticket-${id}`, branch: `ticket-${id}` };
       }),
     runCommand: () => Effect.die('runCommand should not be called'),
+    isClean: () => Effect.die('isClean should not be called'),
     mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
   });
 
@@ -52,6 +54,7 @@ test('a ticket with a project creates the project worktree then the ticket workt
         return { path: `/repo/.sandcastle/worktrees/ticket-${id}`, branch: `ticket-${id}` };
       }),
     runCommand: () => Effect.die('runCommand should not be called'),
+    isClean: () => Effect.die('isClean should not be called'),
     mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
   });
 

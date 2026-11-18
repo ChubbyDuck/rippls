@@ -61,16 +61,21 @@ successful Ticket Worktrees.
 6. Runs the selected **Strategy**, which invokes the **Harness** to create Agents for its steps.
 7. On success, runs the configured check command in the Ticket Worktree, and sends a fix
   prompt to the Harness when it fails (see [Check command](#check-command)).
-8. Once the check passes, or when none is configured, reports done to the Source, merges
-  the ticket branch, records done in the Ledger, and releases its Claim (see
+8. Once the check passes, or when none is configured, makes sure the work is committed:
+  a Ticket Worktree with uncommitted work gets the commit prompt (see
+  [Commit prompt](#commit-prompt)).
+9. Once the Ticket Worktree is clean, reports done to the Source, merges the ticket
+  branch, records done in the Ledger, and releases its Claim (see
   [Completion and `done/`](#completion-and-done)).
-9. On Strategy failure, or a check that still fails after its fix attempts, retains the
-  worktree, records an **Escalation** in the Ledger, releases the Claim, and reports the
-  escalation to the Source. The ticket keeps its kind and `hitl`.
+10. On Strategy failure, a check that still fails after its fix attempts, or work that is
+  still uncommitted after the commit prompt, retains the worktree, records an
+  **Escalation** in the Ledger, releases the Claim, and reports the escalation to the
+  Source. The ticket keeps its kind and `hitl`.
 
 The **Limit** caps Tickets taken from the stream, rather than successful completions.
 The Engine finishes processing the Tickets it has taken, or stops after the configured
-idle timeout. A Strategy failure or a failed check escalates the Ticket and halts the run.
+idle timeout. A Strategy failure, a failed check, or uncommitted work escalates the Ticket
+and halts the run.
 
 ## Before you start
 
@@ -193,9 +198,10 @@ from the default implies nothing: a bare note is HITL `yes`. For a folder where 
 file is ready, set `defaultHitl: 'no'` on the folder Source (see
 [Folder Source](#folder-source)).
 
-Only `implementation` currently has the full implement, acceptance-gate, and commit
-workflow. `research` and an unattended `task` invoke the Harness once and then complete;
-they do not run that three-stage workflow. `prototype` and `grilling` imply
+Only `implementation` currently has the full implement and acceptance-gate workflow.
+`research` and an unattended `task` invoke the Harness once and then complete; they do
+not run that two-step workflow. The Engine makes sure the work of every kind is
+committed (see [Commit prompt](#commit-prompt)). `prototype` and `grilling` imply
 `hitl: yes`, so the Engine does not claim them.
 
 ## Running the Engine
@@ -372,11 +378,12 @@ becomes Eligible again.
 
 ## Escalation
 
-When a Strategy fails, or the check command still fails after its fix attempts, the
-Engine escalates the ticket and halts the run:
+When a Strategy fails, the check command still fails after its fix attempts, or the
+Ticket Worktree still has uncommitted work after the commit prompt, the Engine
+escalates the ticket and halts the run:
 
-1. It records an **Escalation** in the Ledger with the reason (`strategy failure` or
-   `check failure`), the attempt count, and
+1. It records an **Escalation** in the Ledger with the reason (`strategy failure`,
+   `check failure`, or `commit failure`), the attempt count, and
    the path of the retained Ticket Worktree.
 2. It releases the Claim.
 3. It reports the escalation to the Source.
@@ -549,6 +556,36 @@ check: {
 
 The gate step of the [Implementation Strategy](#implementation-strategy) still runs as
 before; the check runs after it.
+
+### Commit prompt
+
+Rippls makes sure the work of a ticket is committed, whichever skill did it. After the
+check command and its fix attempts, the Engine asks whether the Ticket Worktree is
+clean: no uncommitted change, and no untracked file that Git does not ignore.
+
+- **Clean.** A skill that already committed needs nothing more, and nothing runs.
+- **Dirty.** The Engine sends the commit prompt to the Harness, in the same Ticket
+  Worktree, then asks again.
+- **Still dirty.** The ticket escalates with the reason `commit failure` (see
+  [Escalation](#escalation)) and nothing is merged. No fix attempt follows, so a
+  failing pre-commit hook is never hidden.
+
+```ts
+commit: {
+  prompt: '/commit {{project}} ticket-{{id}}', // unset, a prose prompt that names no skill
+  model: { fast: true, tier: 'low' }, // the default
+},
+```
+
+- **Prompt.** A template that can refer to the ticket with `{{id}}` (its identity),
+  `{{title}}`, `{{body}}`, and `{{project}}`. `{{project}}` is empty for a ticket
+  without a Project. Any other placeholder is a config error. Unset, the prompt asks in
+  plain prose to commit all work in the worktree with a conventional commit message
+  that names the ticket.
+- **Model.** The model demand of the commit run, with `tier` (`low`, `mid`, or
+  `high`), `fast`, and `generation` (`current` or `previous`). A demand that is set
+  replaces the default one whole. When the Harness has no matching model, it uses its
+  default model.
 
 ### Runtime defaults and tracing
 
@@ -841,13 +878,15 @@ integrate a completed project branch yourself.
 
 ## Implementation Strategy
 
-An `implementation` ticket runs three steps in the same Ticket Worktree, each through
+An `implementation` ticket runs two steps in the same Ticket Worktree, each through
 a separate Harness invocation:
 
 1. **Implement** executes the ticket body with `/implement-bare`.
 2. **Gate** runs `/acceptance-gate`, beginning with the repository's typecheck, lint,
   and tests. It has a ten-minute limit and retries once.
-3. **Commit** runs `/commit` with a fast, low-tier model.
+
+The Strategy sends no commit command of its own. After the check command, the Engine
+sends the [commit prompt](#commit-prompt) when the work is not committed yet.
 
 Each invocation creates a new **Agent**, including a gate retry. The **Runner** remains
 the same throughout Ticket Processing and can process further Tickets afterward.

@@ -272,6 +272,7 @@ const gitWorktrees = (root: string, worktree: Worktree) =>
           prepareProject: () => Effect.die('prepareProject should not be called'),
           prepareTicket: () => Effect.succeed(worktree),
           runCommand: () => Effect.die('runCommand should not be called'),
+          isClean: () => Effect.succeed(true),
           mergeAndClose: () =>
             exitOf(['merge', '--no-ff', '--no-edit', worktree.branch]).pipe(
               Effect.orDie,

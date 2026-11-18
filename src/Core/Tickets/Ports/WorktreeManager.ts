@@ -33,5 +33,8 @@ export class WorktreeManager extends Context.Service<
       readonly command: string;
       readonly timeLimit: Duration.Input;
     }) => Effect.Effect<CommandRun, WorktreeCommandError>;
+    // Whether the worktree is clean: no uncommitted change, and no untracked file
+    // that Git does not ignore.
+    readonly isClean: (worktree: Worktree) => Effect.Effect<boolean, WorktreeCommandError>;
   }
 >()('WorktreeManager') {}

@@ -6,7 +6,10 @@ import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Projec
 import {
   checkCommandOf,
   checkConfig,
+  commitConfig,
   defaultCheckConfig,
+  defaultCommitConfig,
+  defaultCommitPrompt,
   defaultEngineConfig,
   defaultFixPrompt,
   defaultIdleTimeout,
@@ -527,4 +530,47 @@ test('checkCommandOf takes the override of the ticket Project, and the default c
   expect(checkCommandOf(check, undefined)).toBe('pnpm check');
   expect(checkCommandOf({ ...check, command: undefined }, api)).toBeUndefined();
   expect(checkCommandOf(defaultCheckConfig, undefined)).toBeUndefined();
+});
+
+const loadCommit = (entries: Record<string, unknown>) => commitConfig.parse(engineConfigProvider(entries));
+
+test('commitConfig sends a prose commit prompt that names the ticket, on a fast low-tier model, unless set', () => {
+  expect(Effect.runSync(loadCommit({}))).toEqual(defaultCommitConfig);
+  expect(Effect.runSync(loadCommit({ commit: {} }))).toEqual(defaultCommitConfig);
+  expect(Effect.runSync(loadCommit({ commit: { prompt: '' } }))).toEqual(defaultCommitConfig);
+  expect(defaultCommitConfig).toEqual({ prompt: defaultCommitPrompt, model: { fast: true, tier: 'low' } });
+  expect(defaultCommitPrompt).toContain('{{id}}');
+  expect(defaultCommitPrompt).not.toMatch(/\//);
+});
+
+test('commitConfig reads the commit prompt and its model demand', () => {
+  expect(
+    Effect.runSync(
+      loadCommit({
+        commit: {
+          prompt: '/commit {{project}} ticket-{{id}}: {{title}}',
+          model: { tier: 'mid', fast: false, generation: 'previous' },
+        },
+      })
+    )
+  ).toEqual({
+    prompt: '/commit {{project}} ticket-{{id}}: {{title}}',
+    model: { tier: 'mid', fast: false, generation: 'previous' },
+  });
+});
+
+test('commitConfig takes a model demand that is set in place of the default one', () => {
+  expect(Effect.runSync(loadCommit({ commit: { model: { tier: 'high' } } }))).toEqual({
+    prompt: defaultCommitPrompt,
+    model: { tier: 'high' },
+  });
+});
+
+test('commitConfig rejects an unknown placeholder in the prompt and an unknown model tier', () => {
+  expect(Effect.runSync(loadCommit({ commit: { prompt: 'Commit {{ticket}}' } }).pipe(Effect.flip)).cause.message).toContain(
+    'at ["commit"]["prompt"]'
+  );
+  expect(Effect.runSync(loadCommit({ commit: { model: { tier: 'top' } } }).pipe(Effect.flip)).cause.message).toContain(
+    'at ["commit"]["model"]["tier"]'
+  );
 });

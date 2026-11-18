@@ -1,6 +1,6 @@
 import { createWorktree, run as runSandcastle } from '@ai-hero/sandcastle';
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { Clock, Console, type Duration, Effect, FileSystem, Layer, Path, Schema } from 'effect';
+import { Clock, Console, type Duration, Effect, FileSystem, Layer, Path, type PlatformError, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { beforeEach, expect, test, vi } from 'vitest';
 
@@ -417,4 +417,70 @@ test('runCommand takes the exit of the shell as the verdict when the command lea
 
   expect(elapsed).toBeLessThan(3000);
   expect(outcome).toEqual({ _tag: 'Exited', exitCode: 0, output: 'passed\n' });
+});
+
+// Prepares the Ticket Worktree of `folder:17` in a new repository whose `.gitignore`
+// ignores `*.log`, changes it with `change`, and tells whether it is clean.
+const cleanAfter = (
+  change: (worktree: string) => Effect.Effect<void, PlatformError.PlatformError, NodeServices.NodeServices>
+) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* initRepo;
+    yield* fs.writeFileString(path.join(root, '.gitignore'), '*.log\n');
+    yield* git(root, ['add', '.gitignore']);
+    yield* git(root, ['commit', '-m', 'ignore logs']);
+    return yield* Effect.gen(function* () {
+      const manager = yield* WorktreeManager;
+      const worktree = yield* manager.prepareTicket({ id: ticketId });
+      yield* change(worktree.path);
+      return yield* manager.isClean(worktree);
+    }).pipe(Effect.provide(WorktreeManagerLive(root)));
+  });
+
+const writeIn = (worktree: string, file: string, content: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.writeFileString(path.join(worktree, file), content);
+  });
+
+test('isClean tells a fresh Ticket Worktree, and one whose work is committed, clean', async () => {
+  expect(await run(cleanAfter(() => Effect.void))).toBe(true);
+  expect(
+    await run(
+      cleanAfter((worktree) =>
+        writeIn(worktree, 'feat.txt', 'work').pipe(
+          Effect.andThen(git(worktree, ['add', 'feat.txt'])),
+          Effect.andThen(git(worktree, ['commit', '-m', 'feat'])),
+          Effect.asVoid
+        )
+      )
+    )
+  ).toBe(true);
+});
+
+test('isClean tells a Ticket Worktree with a modified file dirty', async () => {
+  expect(await run(cleanAfter((worktree) => writeIn(worktree, 'base.txt', 'changed')))).toBe(false);
+});
+
+test('isClean tells a Ticket Worktree with an untracked file dirty, even in a new folder', async () => {
+  expect(await run(cleanAfter((worktree) => writeIn(worktree, 'new.txt', 'new')))).toBe(false);
+  expect(
+    await run(
+      cleanAfter((worktree) =>
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          yield* fs.makeDirectory(`${worktree}/src`);
+          yield* writeIn(worktree, 'src/new.txt', 'new');
+          yield* git(worktree, ['config', 'status.showUntrackedFiles', 'no']);
+        })
+      )
+    )
+  ).toBe(false);
+});
+
+test('isClean tells a Ticket Worktree with only an ignored file clean', async () => {
+  expect(await run(cleanAfter((worktree) => writeIn(worktree, 'debug.log', 'noise')))).toBe(true);
 });

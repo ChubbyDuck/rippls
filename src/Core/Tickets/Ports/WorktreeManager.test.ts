@@ -20,6 +20,7 @@ test('a use case obtains a project worktree from WorktreeManager', () => {
       }),
     prepareTicket: () => Effect.die('prepareTicket should not be called'),
     runCommand: () => Effect.die('runCommand should not be called'),
+    isClean: () => Effect.die('isClean should not be called'),
     mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
   });
 
@@ -45,6 +46,7 @@ test('a use case obtains a ticket worktree from WorktreeManager', () => {
         return worktree;
       }),
     runCommand: () => Effect.die('runCommand should not be called'),
+    isClean: () => Effect.die('isClean should not be called'),
     mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
   });
 
@@ -66,6 +68,7 @@ test('a use case closes a ticket worktree through WorktreeManager', () => {
     prepareProject: () => Effect.die('prepareProject should not be called'),
     prepareTicket: () => Effect.die('prepareTicket should not be called'),
     runCommand: () => Effect.die('runCommand should not be called'),
+    isClean: () => Effect.die('isClean should not be called'),
     mergeAndClose: (value) =>
       Effect.sync(() => {
         closed.push(value.path);

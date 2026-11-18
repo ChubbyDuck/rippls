@@ -1,6 +1,6 @@
 import { Console, Effect, Result } from 'effect';
 
-import { defaultCheckConfig } from '~/Core/Shared/Domain/EngineConfig';
+import { defaultCheckConfig, defaultCommitConfig } from '~/Core/Shared/Domain/EngineConfig';
 import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
@@ -10,6 +10,7 @@ import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
 import { checkTicketWorktree } from './checkTicketWorktree';
+import { commitTicketWorktree } from './commitTicketWorktree';
 import { harnessInWorktree } from './harnessInWorktree';
 import type { ProcessTicketCommand } from './command';
 import { prepareTicketWorktree } from './prepareTicketWorktree';
@@ -66,7 +67,12 @@ const landDone = (ticket: Ticket, worktree: Worktree) =>
     yield* ledger.release(ticket.id);
   });
 
-export const processTicket = ({ ticket, runnerId, check = defaultCheckConfig }: ProcessTicketCommand) =>
+export const processTicket = ({
+  ticket,
+  runnerId,
+  check = defaultCheckConfig,
+  commit = defaultCommitConfig,
+}: ProcessTicketCommand) =>
   Effect.gen(function* () {
     const harnessSelector = yield* HarnessSelector;
     const harness = yield* harnessSelector.select;
@@ -110,6 +116,20 @@ export const processTicket = ({ ticket, runnerId, check = defaultCheckConfig }: 
     );
     if (!passed) {
       return yield* escalate(ticket, worktree, 'check failure');
+    }
+    // The commit is a post-condition: a worktree still dirty after the commit
+    // prompt, one whose state cannot be read, or a commit prompt the Harness fails
+    // on fails Ticket Processing as a failed check does, with no fix attempt.
+    const committed = yield* commitTicketWorktree(ticket, worktree, worktreeHarness, commit).pipe(
+      Effect.catchTags({
+        WorktreeCommandError: () =>
+          Console.error(`${ticket.label} could not read whether its worktree is clean`).pipe(Effect.as(false)),
+        HarnessRuntimeError: () =>
+          Console.error(`${ticket.label} could not send the commit prompt to the Harness`).pipe(Effect.as(false)),
+      })
+    );
+    if (!committed) {
+      return yield* escalate(ticket, worktree, 'commit failure');
     }
     yield* landDone(ticket, worktree);
   }).pipe(

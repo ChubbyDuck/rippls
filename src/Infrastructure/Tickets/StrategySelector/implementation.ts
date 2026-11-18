@@ -1,6 +1,5 @@
 import { Effect } from 'effect';
 
-import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
 import type { Strategy } from '~/Core/Tickets/Ports/Strategy';
 
@@ -24,11 +23,9 @@ const gatePromptOf = (body: string): string =>
   `When you finish, print exactly "${GATE_PASS}" if every gate passed. ` +
   `Otherwise print exactly "${GATE_FAIL}".`;
 
-const commitPromptOf = (ticket: Ticket): string =>
-  ticket.project === undefined ? `/commit ticket-${ticket.id}` : `/commit ${ticket.project} ticket-${ticket.id}`;
-
-// Drives one implementation ticket: implement, gate (with a limit and one
-// retry), then commit. The port never fails, so every outcome is a Result value.
+// Drives one implementation ticket: implement, then gate (with a limit and one
+// retry). The Engine makes sure the work is committed afterwards. The port never
+// fails, so every outcome is a Result value.
 export const implementationStrategy: Strategy = {
   name: 'implementation',
   run: (ticket, harness) =>
@@ -49,10 +46,6 @@ export const implementationStrategy: Strategy = {
           return yield* new StrategyRuntimeError();
         }
       }).pipe(Effect.retry({ times: GATE_RETRIES }), Effect.withSpan('strategy.implementation.gate'));
-
-      yield* harness
-        .run(commitPromptOf(ticket), { label: `ticket-${ticket.id}-commit`, model: { fast: true, tier: 'low' } })
-        .pipe(Effect.withSpan('strategy.implementation.commit'));
     }).pipe(
       Effect.mapError(() => new StrategyRuntimeError()),
       Effect.result
