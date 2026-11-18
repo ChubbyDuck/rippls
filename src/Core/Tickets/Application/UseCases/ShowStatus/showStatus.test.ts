@@ -245,6 +245,33 @@ describe('ticketStatuses, unreadable tickets and blockers', () => {
     ]);
   });
 
+  it('shows the unresolved blockers of a ticket that is not blocked, each blocker once', async () => {
+    const layer = setup([ticket(1), ticket(2, { hitl: 'yes', blockedBy: [id(1), id(9), id(9)] })]);
+
+    expect(await printed(layer)).toEqual([
+      'folder:1  Ticket 1  eligible',
+      'folder:2  Ticket 2  not ready  (Blockers: unresolved folder:9)',
+    ]);
+  });
+
+  it('does not count a blocker that the Source finds by its identity as done as outstanding', async () => {
+    // Like the Linear Source, this Source leaves done tickets out of a read of many,
+    // and finds them by identity.
+    const done = ticket(1, { doneInSource: true });
+    const open = ticket(2, { blockedBy: [id(1), id(9)] });
+    const source = Effect.runSync(TicketSource.pipe(Effect.provide(fakeSource([done, open]))));
+    const layer = Layer.merge(
+      Layer.succeed(TicketSource, { ...source, getManyBy: () => Effect.succeed([open]) }),
+      makeLedgerMemory().layer
+    );
+
+    const lines = await Effect.runPromise(ticketStatuses({}).pipe(Effect.provide(layer)));
+
+    expect(lines.flatMap((line) => (line.status === 'blocked' ? [line.blockers] : []))).toEqual([
+      { open: [], unresolved: [id(9)] },
+    ]);
+  });
+
   it('counts a blocker of another Project that the Source finds by its identity as open', async () => {
     const layer = setup([ticket(1, { project: web, hitl: 'yes' }), ticket(2, { blockedBy: [id(1)] })]);
 

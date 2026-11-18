@@ -6,7 +6,9 @@ import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/P
 import type { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
-const nameOf = ({ id, name }: UnreadableTicket) => (id === undefined ? name : `${id} (${name})`);
+const labelOf = ({ id, name }: UnreadableTicket) => (id === undefined ? name : `${id} (${name})`);
+
+const hasNoNumber = ({ reason }: UnreadableTicket) => reason === 'no numeric prefix';
 
 const withoutNumberLine = (count: number) =>
   count === 1
@@ -24,11 +26,11 @@ export const reportUnreadable = (project?: Project) =>
     const source = yield* TicketSource;
     const unreadable = yield* source.getUnreadable;
     const blockers = yield* readTicketScope(project).pipe(Effect.flatMap(outstandingBlockers));
-    const withoutNumber = unreadable.filter(({ reason }) => reason === 'no numeric prefix');
+    const withoutNumber = unreadable.filter(hasNoNumber);
     const lines = [
       ...unreadable
-        .filter(({ reason }) => reason !== 'no numeric prefix')
-        .map((ticket) => `${nameOf(ticket)} is unreadable and is not taken: ${ticket.explanation}`),
+        .filter((ticket) => !hasNoNumber(ticket))
+        .map((ticket) => `${labelOf(ticket)} is unreadable and is not taken: ${ticket.explanation}`),
       ...[...blockers].flatMap(([ticket, { unresolved }]) =>
         unresolved.map((blocker) => `${ticket} has a blocker that cannot be resolved, so it stays blocked: ${blocker}`)
       ),

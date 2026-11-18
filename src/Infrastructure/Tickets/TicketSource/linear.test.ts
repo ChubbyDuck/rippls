@@ -436,3 +436,11 @@ test('getUnreadable reports each offered Issue with an invalid hint, named by it
     expect.stringContaining('["kind"]'),
   ]);
 });
+
+test('a read by identity finds a completed Issue as done', async () => {
+  const api = fakeLinear([issue({ id: 'completed', stateType: 'completed' })]);
+
+  const byIdentity = await Effect.runPromise(getOneIn(api, TicketQuery.byId(toLinearId('completed')).build()));
+
+  expect([byIdentity.id, byIdentity.doneInSource]).toEqual([toLinearId('completed'), true]);
+});

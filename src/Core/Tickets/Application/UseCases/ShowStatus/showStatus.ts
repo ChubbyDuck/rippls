@@ -13,7 +13,8 @@ import type { ShowStatusCommand } from './command';
 
 /**
  * One ticket in scope with its Ticket Status, and the Claim of a claimed ticket,
- * the Escalation of an escalated one, or the outstanding blockers of a blocked one.
+ * the Escalation of an escalated one, the outstanding blockers of a blocked one,
+ * and the unresolved blockers of any other.
  */
 export type TicketStatusLine = {
   readonly ticket: Ticket;
@@ -31,6 +32,18 @@ export type UnreadableStatusLine = {
 
 export type StatusLine = TicketStatusLine | UnreadableStatusLine;
 
+// A blocked ticket shows its open and its unresolved blockers; any other ticket
+// shows only the unresolved ones, so that none goes unreported.
+const blockersShown = (
+  status: TicketStatusLine['status'],
+  blockers: OutstandingBlockers | undefined
+): OutstandingBlockers | undefined => {
+  if (blockers === undefined || status === 'blocked') {
+    return blockers;
+  }
+  return blockers.unresolved.length === 0 ? undefined : { open: [], unresolved: blockers.unresolved };
+};
+
 /**
  * The Ticket Status of every ticket in scope, in the Source's processing order,
  * then every ticket the Source cannot read.
@@ -46,7 +59,7 @@ export const ticketStatuses = ({ project }: ShowStatusCommand) =>
       const status = deriveTicketStatus(ticket, facts);
       const claim = status === 'claimed' ? claims.get(ticket.id) : undefined;
       const escalation = status === 'escalated' ? escalations.get(ticket.id) : undefined;
-      const blockers = status === 'blocked' ? outstanding.get(ticket.id) : undefined;
+      const blockers = blockersShown(status, outstanding.get(ticket.id));
       return {
         ticket,
         status,
@@ -74,18 +87,17 @@ const describeBlockers = ({ open, unresolved }: OutstandingBlockers) =>
     ...(unresolved.length === 0 ? [] : [`unresolved ${unresolved.join(', ')}`]),
   ].join('; ');
 
-const describe = (line: StatusLine): string | undefined => {
+// The details of a line, each printed in parentheses.
+const describe = (line: StatusLine): readonly string[] => {
   if (line.status === 'unreadable') {
-    return line.unreadable.explanation;
+    return [line.unreadable.explanation];
   }
   const { claim, escalation, blockers } = line;
-  if (claim !== undefined) {
-    return describeClaim(claim);
-  }
-  if (escalation !== undefined) {
-    return describeEscalation(escalation);
-  }
-  return blockers === undefined ? undefined : `Blockers: ${describeBlockers(blockers)}`;
+  return [
+    ...(claim === undefined ? [] : [describeClaim(claim)]),
+    ...(escalation === undefined ? [] : [describeEscalation(escalation)]),
+    ...(blockers === undefined ? [] : [`Blockers: ${describeBlockers(blockers)}`]),
+  ];
 };
 
 // The identity and the name of a line: the identity and Title of a ticket, or the
@@ -104,9 +116,8 @@ const formatStatusLines = (lines: readonly StatusLine[]): readonly string[] => {
   const idWidth = widest(lines.map(identityOf));
   const titleWidth = widest(lines.map(nameOf));
   return lines.map((line) => {
-    const detail = describe(line);
     const columns = [identityOf(line).padEnd(idWidth), nameOf(line).padEnd(titleWidth), line.status];
-    return [...columns, ...(detail === undefined ? [] : [`(${detail})`])].join('  ').trimEnd();
+    return [...columns, ...describe(line).map((detail) => `(${detail})`)].join('  ').trimEnd();
   });
 };
 

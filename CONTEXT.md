@@ -54,12 +54,13 @@ A readiness word a Ticket may state: `ready-for-agent` means HITL no, and
 _Avoid_: Status, label, triage state
 
 **Ticket Status**:
-A Ticket's position in its lifecycle, derived from the Ticket, the Ledger, and done.
-Its values are unreadable, done, escalated, claimed, not ready, blocked, and eligible.
-When several apply, the first in that order is the Ticket Status. Unreadable means its
-Source cannot read it: a file whose name has no numeric prefix, front matter that cannot
-be parsed, or an invalid hint; no other value applies to it. Claimed means a Claim other
-than a Stale Claim; not ready means HITL yes; eligible means Eligible. A `status` value
+A Ticket's position in its lifecycle, derived from the Ticket, the Ledger, and done,
+or unreadable for a ticket that its Source cannot read: a file whose name has no
+numeric prefix, front matter that cannot be parsed, or an invalid hint. An unreadable
+ticket is no Ticket, so no other value applies to it. The values are unreadable, done,
+escalated, claimed, not ready, blocked, and eligible. When several apply, the first in
+that order is the Ticket Status. Claimed means a Claim other than a Stale Claim; not
+ready means HITL yes; eligible means Eligible. A `status` value
 in a ticket file is not the Ticket Status; it is read only as a Marker.
 _Avoid_: State, phase
 

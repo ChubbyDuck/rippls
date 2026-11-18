@@ -27,9 +27,10 @@ import {
 } from '~/Infrastructure/Tickets/LinearApi/codec';
 
 // A read by identity also finds a started Issue, so the Engine can complete the
-// Issue it claimed. A started Issue is already claimed on Linear, so the read of
-// every ticket in scope does not offer it for processing.
-const READABLE_STATE_TYPES: ReadonlySet<string> = new Set(['unstarted', 'started']);
+// Issue it claimed, and a completed one, which reads as done, so a blocker that is
+// done on Linear resolves. A started Issue is already claimed on Linear, so the read
+// of every ticket in scope does not offer it for processing.
+const READABLE_STATE_TYPES: ReadonlySet<string> = new Set(['unstarted', 'started', 'completed']);
 const OFFERED_STATE_TYPES: ReadonlySet<string> = new Set(['unstarted']);
 
 const isNoOp = (write: LinearWrite, issue: LinearIssue): boolean => {

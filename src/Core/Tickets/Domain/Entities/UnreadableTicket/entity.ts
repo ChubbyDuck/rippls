@@ -12,7 +12,8 @@ export type UnreadableReason = typeof UnreadableReason.Type;
 
 /**
  * A ticket that its Source cannot read, so it is never taken. Its name tells a
- * human where it is: a path below the tickets folder, or the Title of an Issue.
+ * human where it is: a path below the tickets folder, or the identifier of an
+ * Issue, such as `ENG-12`.
  * It has an identity when the Source can tell one, as a file with a numeric prefix
  * can. The detail says what failed, for the front matter or a hint.
  */
