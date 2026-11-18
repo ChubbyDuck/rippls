@@ -13,7 +13,7 @@ import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
-import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
 import { RepositoryRootNotFound } from '~/Core/Tickets/Domain/Exceptions/RepositoryRootNotFound';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
@@ -65,14 +65,14 @@ const id = (value: number) => formatTicketId('folder', String(value));
 // event is recorded, and every ticket reported done. A done report changes
 // nothing in the store, as for a Project ticket whose move has not reached the
 // Repository Root: the Ledger alone makes the ticket done.
-type Reported = { readonly ticket: TicketId; readonly event: Exclude<TicketEvent, 'done'> };
+type Reported = { readonly ticket: TicketId; readonly event: ReportedEvent };
 
 const fakeSource = (
   seed: readonly Ticket[] = [],
   options: {
     readonly report?: (
       ticket: TicketId,
-      event: Exclude<TicketEvent, 'done'>
+      event: ReportedEvent
     ) => Effect.Effect<void, TicketEventNotReported>;
     readonly reportDone?: (ticket: TicketId, worktree: Worktree) => Effect.Effect<AfterMerge, TicketEventNotReported>;
   } = {}

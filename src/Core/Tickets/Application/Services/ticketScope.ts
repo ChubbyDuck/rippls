@@ -53,8 +53,8 @@ const doneFor = (tickets: readonly Ticket[], project?: Project) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
     const inSource = yield* doneInSourceFor(tickets, project);
-    const asked = new Set(tickets.flatMap((ticket) => [ticket.id, ...ticket.blockedBy]));
-    const inLedger = yield* ledger.done([...asked]);
+    const ticketsAndBlockers = new Set(tickets.flatMap((ticket) => [ticket.id, ...ticket.blockedBy]));
+    const inLedger = yield* ledger.done([...ticketsAndBlockers]);
     return new Set([...inSource, ...inLedger]);
   });
 

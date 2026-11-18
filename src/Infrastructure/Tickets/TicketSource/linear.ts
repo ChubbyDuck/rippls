@@ -2,7 +2,7 @@ import { Config, Console, Effect, Layer, Option } from 'effect';
 
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -150,7 +150,7 @@ export const TicketSourceLinearLive = Layer.effect(
 
     const report = (
       ticket: TicketId,
-      event: Exclude<TicketEvent, 'done'>
+      event: ReportedEvent
     ): Effect.Effect<void, TicketEventNotReported> =>
       Effect.gen(function* () {
         const metadata = yield* api.metadata(teamId);

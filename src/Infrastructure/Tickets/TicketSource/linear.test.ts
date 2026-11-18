@@ -1,7 +1,7 @@
 import { ConfigProvider, Console, Effect, Layer } from 'effect';
 import { expect, test } from 'vitest';
 
-import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import {
@@ -168,7 +168,7 @@ const reportDoneIn = (api: ReturnType<typeof fakeLinear>) =>
     Effect.provide(withRepo(api))
   );
 
-const reportIn = (api: ReturnType<typeof fakeLinear>, event: Exclude<TicketEvent, 'done'>) =>
+const reportIn = (api: ReturnType<typeof fakeLinear>, event: ReportedEvent) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.report(toLinearId(uuid), event)),
     Effect.provide(withRepo(api))

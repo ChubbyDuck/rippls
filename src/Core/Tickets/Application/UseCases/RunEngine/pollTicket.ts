@@ -25,7 +25,7 @@ const replaceStale = (ticket: Ticket, stale: Claim) =>
 // Each candidate is read again by identity, so the ticket taken carries its full
 // content and is still Eligible when it is taken. A stale Claim on it is replaced
 // first. The Claim is then created in the Ledger, where only one caller can
-// succeed. Another Engine may have escalated or completed the ticket and released
+// succeed. Another Engine may have escalated the ticket or made it done and released
 // its Claim since the Ledger was read; an Engine records the Escalation or done
 // before that release, so both are read again once the Claim is held, and an
 // escalated or done ticket is released and skipped. The Claim is then reported to the Source. When the Source cannot

@@ -4,7 +4,7 @@ import { expect, test } from 'vitest';
 
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { generateTickets } from '~/Core/Tickets/Application/UseCases/Generate/generate';
 import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/folder';
@@ -415,7 +415,7 @@ test('getOneBy by identity fills the body of the returned ticket only', async ()
   expect(Option.getOrThrow(ticket).body).toBe('Returned body.\n');
 });
 
-const reportIn = (dir: string, event: Exclude<TicketEvent, 'done'>) =>
+const reportIn = (dir: string, event: ReportedEvent) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.report(formatTicketId('folder', '1'), event)),
     Effect.provide(withDir(dir))

@@ -6,7 +6,7 @@ import { TicketsDir } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { Ticket, TicketFromInput } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -209,13 +209,15 @@ export const TicketSourceFolderLive = Layer.effect(
         );
 
       // The folder Source keeps no trace of a Claim or an escalation: the Ledger holds them.
-      const report = (_ticket: TicketId, _event: Exclude<TicketEvent, 'done'>): Effect.Effect<void> => Effect.void;
+      const report = (_ticket: TicketId, _event: ReportedEvent): Effect.Effect<void> => Effect.void;
 
       const notReported = (ticket: TicketId) => () => new TicketEventNotReported({ ticketId: ticket, event: 'done' });
 
+      const gitExit = (args: readonly string[], cwd: string) => spawner.exitCode(ChildProcess.make('git', args, { cwd }));
+
       // Runs Git and fails when it exits with a code other than zero.
       const git = (args: readonly string[], cwd: string) =>
-        spawner.exitCode(ChildProcess.make('git', args, { cwd })).pipe(
+        gitExit(args, cwd).pipe(
           Effect.filterOrFail(
             (code) => code === 0,
             (code) => `git ${args.join(' ')} exited with ${code}`
@@ -224,9 +226,7 @@ export const TicketSourceFolderLive = Layer.effect(
 
       // Whether Git tracks the file in the worktree.
       const isTracked = (worktree: string, file: string) =>
-        spawner
-          .exitCode(ChildProcess.make('git', ['ls-files', '--error-unmatch', '--', file], { cwd: worktree }))
-          .pipe(Effect.map((code) => code === 0));
+        gitExit(['ls-files', '--error-unmatch', '--', file], worktree).pipe(Effect.map((code) => code === 0));
 
       // The name of the ticket's file in the tickets folder or in `done/`.
       const fileOf = (ticket: TicketId) =>
@@ -279,7 +279,7 @@ export const TicketSourceFolderLive = Layer.effect(
           }
           const { name } = file.value;
           const inRepository = path.relative(root, dir);
-          if (inRepository.startsWith('..') || path.isAbsolute(inRepository)) {
+          if (inRepository === '..' || inRepository.startsWith(`..${path.sep}`) || path.isAbsolute(inRepository)) {
             return Option.some(name);
           }
           const from = path.join(inRepository, name);

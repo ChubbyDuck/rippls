@@ -38,7 +38,7 @@ const escalate = (ticket: Ticket, worktree: Worktree, reason: string) =>
 // and the Claim is released. A failed merge halts the Engine with no done in the
 // Ledger. A failure after the merge is only logged: the work has landed and the
 // Ledger records done.
-const complete = (ticket: Ticket, worktree: Worktree) =>
+const landDone = (ticket: Ticket, worktree: Worktree) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
     const source = yield* TicketSource;
@@ -57,7 +57,7 @@ const complete = (ticket: Ticket, worktree: Worktree) =>
       )
     );
     yield* afterMerge.pipe(
-      Effect.catch((error) => Console.error(`Failed to finish the done of ticket ${ticket.id} on the Source after the merge`, error))
+      Effect.catch((error) => Console.error(`${ticket.label} could not be moved to done on the Source after the merge`, error))
     );
     yield* ledger.recordDone(ticket.id);
     yield* Console.log(`${ticket.label} is done`);
@@ -93,7 +93,7 @@ export const processTicket = ({ ticket, runnerId }: ProcessTicketCommand) =>
       .run(ticket, harnessInWorktree(harness, worktree.path))
       .pipe(Effect.withSpan('strategy.run', { attributes: { harness: harness.name, strategy: strategy.name } }));
     yield* Result.match(outcome, {
-      onSuccess: () => complete(ticket, worktree),
+      onSuccess: () => landDone(ticket, worktree),
       onFailure: () => escalate(ticket, worktree, 'strategy failure'),
     });
   }).pipe(

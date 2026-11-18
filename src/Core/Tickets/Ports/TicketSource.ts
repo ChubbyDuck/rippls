@@ -2,7 +2,7 @@ import { Context, type Effect } from 'effect';
 
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import type { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import type { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -27,7 +27,7 @@ export class TicketSource extends Context.Service<
     /** Tells the Source what happened to a ticket. Done is told with `reportDone`. */
     readonly report: (
       ticket: TicketId,
-      event: Exclude<TicketEvent, 'done'>
+      event: ReportedEvent
     ) => Effect.Effect<void, TicketEventNotReported>;
     /**
      * Tells the Source that the ticket is done, before the merge of its Ticket

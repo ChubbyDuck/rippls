@@ -9,7 +9,7 @@ import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { ReportedEvent, TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
 import { StrategyNotFound } from '~/Core/Tickets/Domain/Exceptions/StrategyNotFound';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
@@ -171,7 +171,7 @@ test('processTicket runs a ticket that omits project', () => {
 
 const failingServices = (
   doneReported: TicketId[],
-  report: (ticket: TicketId, event: Exclude<TicketEvent, 'done'>) => Effect.Effect<void, TicketEventNotReported> = () => Effect.void
+  report: (ticket: TicketId, event: ReportedEvent) => Effect.Effect<void, TicketEventNotReported> = () => Effect.void
 ) =>
   Layer.mergeAll(
     Layer.succeed(HarnessSelector, {

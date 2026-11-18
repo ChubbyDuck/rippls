@@ -9,7 +9,7 @@ export const doneInSourceIds = (tickets: readonly Ticket[]): ReadonlySet<TicketI
   new Set(tickets.filter(isDoneInSource).map((ticket) => ticket.id));
 
 /**
- * A Ticket whose work is complete: its Source sees it as done, or it is among the
+ * A Ticket whose work has landed: its Source sees it as done, or it is among the
  * done tickets, which hold the tickets the Source sees as done and the ones the
  * Ledger records as done. Neither fact reverts. A done Ticket is never Eligible.
  */
