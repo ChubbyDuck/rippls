@@ -383,6 +383,7 @@ test('a conflicting merge fails with WorktreeCloseError, logs what Git wrote, an
     messages
   );
 
+  // One failure line for each of the two merges.
   const failures = messages.filter((message) => message.startsWith('Worktree ticket-folder-17 failed to merge'));
   expect(failures).toHaveLength(2);
   expect(failures[0]).toContain(`Worktree ticket-folder-17 failed to merge into ${result.root}`);

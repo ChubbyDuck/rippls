@@ -1053,6 +1053,20 @@ test('runEngine never runs what the Source leaves for after the merge when the m
   ]);
 });
 
+// Git in a directory, with its output. A non-zero exit does not fail.
+const gitIn = (cwd: string, args: readonly string[]) =>
+  ChildProcessSpawner.ChildProcessSpawner.pipe(
+    Effect.flatMap((spawner) => spawner.string(ChildProcess.make('git', args, { cwd })))
+  );
+
+const commitIn = (root: string, file: string, text: string, message: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    yield* fs.writeFileString(path.join(root, file), text);
+    yield* gitIn(root, ['commit', '-am', message]);
+  });
+
 // A run of one ticket in a new repository, with the Worktree Manager, whose
 // Agent commits the work in the Ticket Worktree and then does `meanwhile` in the
 // Repository Root, so the merge fails.
@@ -1063,10 +1077,6 @@ const runWithFailedMerge = (
 ) => {
   const ledger = makeLedgerMemory();
   const messages: string[] = [];
-  const git = (cwd: string, args: readonly string[]) =>
-    ChildProcessSpawner.ChildProcessSpawner.pipe(
-      Effect.flatMap((spawner) => spawner.string(ChildProcess.make('git', args, { cwd })))
-    );
   return Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -1075,22 +1085,22 @@ const runWithFailedMerge = (
       const ticketsDir = path.join(root, '.agents', 'tickets');
       const ticketFile = path.join(ticketsDir, '01-conflict.md');
       const content = standardTemplate('01', 'Conflict', 'None (can start immediately)');
-      yield* git(root, ['init', '-b', 'main']);
-      yield* git(root, ['config', 'user.email', 'test@test.com']);
-      yield* git(root, ['config', 'user.name', 'Test']);
+      yield* gitIn(root, ['init', '-b', 'main']);
+      yield* gitIn(root, ['config', 'user.email', 'test@test.com']);
+      yield* gitIn(root, ['config', 'user.name', 'Test']);
       yield* fs.makeDirectory(ticketsDir, { recursive: true });
       yield* fs.writeFileString(ticketFile, content);
       yield* fs.writeFileString(path.join(root, '.gitignore'), '.sandcastle/\n.agents/\n');
       yield* fs.writeFileString(path.join(root, 'base.txt'), 'from main\n');
-      yield* git(root, ['add', '-A']);
-      yield* git(root, ['commit', '-m', 'init']);
-      const failingHarness: Harness = {
-        name: 'failing-merge',
+      yield* gitIn(root, ['add', '-A']);
+      yield* gitIn(root, ['commit', '-m', 'init']);
+      const harnessThenMeanwhile: Harness = {
+        name: 'then-meanwhile',
         model: 'test-model',
         run: (_prompt, options) =>
           Effect.gen(function* () {
             yield* fs.writeFileString(path.join(options.cwd!, 'base.txt'), 'the work\n');
-            yield* git(options.cwd!, ['commit', '-am', 'feat: the work']);
+            yield* gitIn(options.cwd!, ['commit', '-am', 'feat: the work']);
             yield* meanwhile(root);
             return { completionSignal: undefined };
           }).pipe(Effect.provide(NodeServices.layer), Effect.orDie),
@@ -1102,7 +1112,7 @@ const runWithFailedMerge = (
         WorktreeManagerLive(root),
         gitRootOf(root),
         ledger.layer,
-        Layer.succeed(HarnessSelector, { select: Effect.succeed(failingHarness) }),
+        Layer.succeed(HarnessSelector, { select: Effect.succeed(harnessThenMeanwhile) }),
         StrategySelectorNoop,
         Layer.succeed(Console.Console, capturingConsole(messages))
       );
@@ -1117,20 +1127,11 @@ const runWithFailedMerge = (
         inDone: yield* fs.exists(path.join(ticketsDir, 'done')),
         mergeInProgress: yield* fs.exists(path.join(root, '.git', 'MERGE_HEAD')),
         rootContent: yield* fs.readFileString(path.join(root, 'base.txt')),
-        rootHead: (yield* git(root, ['log', '-1', '--format=%s'])).trim(),
+        rootHead: (yield* gitIn(root, ['log', '-1', '--format=%s'])).trim(),
       };
     }).pipe(Effect.provide(NodeServices.layer))
   );
 };
-
-const commitIn = (root: string, file: string, text: string, message: string) =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-    yield* fs.writeFileString(path.join(root, file), text);
-    yield* spawner.string(ChildProcess.make('git', ['commit', '-am', message], { cwd: root }));
-  });
 
 test('runEngine leaves the ticket file in place, records no done in the Ledger, and logs what Git wrote when the merge of the Worktree Manager conflicts', async () => {
   // Another change to the file the work changed lands in the Repository Root.
@@ -1153,13 +1154,11 @@ test('runEngine halts with the same reason, and logs that a merge is in progress
   // A person merges a branch that conflicts with main, and leaves the merge in progress.
   const result = await runWithFailedMerge((root) =>
     Effect.gen(function* () {
-      const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-      const git = (args: readonly string[]) => spawner.exitCode(ChildProcess.make('git', args, { cwd: root }));
-      yield* git(['checkout', '-b', 'side']);
+      yield* gitIn(root, ['checkout', '-b', 'side']);
       yield* commitIn(root, 'base.txt', 'from side\n', 'feat: side');
-      yield* git(['checkout', 'main']);
+      yield* gitIn(root, ['checkout', 'main']);
       yield* commitIn(root, 'base.txt', 'other work\n', 'feat: other work');
-      yield* git(['merge', 'side']);
+      yield* gitIn(root, ['merge', 'side']);
     })
   );
 
@@ -1168,6 +1167,7 @@ test('runEngine halts with the same reason, and logs that a merge is in progress
     `Worktree ticket-folder-1 is not merging: a merge is in progress at ${result.root}`
   );
   expect(result.inPlace).toBe(result.content);
+  expect(result.inDone).toBe(false);
   expect(result.ledger.done.size).toBe(0);
   expect(result.mergeInProgress).toBe(true);
 });
