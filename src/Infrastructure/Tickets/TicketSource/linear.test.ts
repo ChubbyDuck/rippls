@@ -5,6 +5,7 @@ import { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import { pollTicket } from '~/Core/Tickets/Application/UseCases/RunEngine/pollTicket';
 import { showStatus, ticketStatuses } from '~/Core/Tickets/Application/UseCases/ShowStatus/showStatus';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
+import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -23,6 +24,7 @@ import { toLinearId } from '~/Infrastructure/Tickets/LinearApi/codec';
 import { TicketSourceLinearLive } from './linear';
 
 const uuid = 'a1b2c3d4-e5f6-7890-abcd-ef1234567890';
+const toProject = Schema.decodeSync(Project);
 const other = 'd4e5f6a7-b8c9-0123-def0-234567890123';
 
 const metadata: LinearMetadata = {
@@ -450,7 +452,7 @@ test('getManyBy narrows by Project and keeps the creation order', async () => {
     issue({ id: 'earlier', createdAt: '2026-02-01T00:00:00.000Z' }),
   ]);
 
-  const tickets = await Effect.runPromise(getManyIn(api, { project: 'chubby-engine' as never }));
+  const tickets = await Effect.runPromise(getManyIn(api, { project: toProject('chubby-engine') }));
 
   expect(tickets.map((ticket) => ticket.id)).toEqual([toLinearId('earlier'), toLinearId('later')]);
 });
