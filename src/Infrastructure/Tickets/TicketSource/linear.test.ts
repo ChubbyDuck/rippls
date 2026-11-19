@@ -86,11 +86,17 @@ type Mutation =
   | { readonly op: 'createRelation'; readonly issueId: string; readonly relatedIssueId: string }
   | { readonly op: 'deleteRelation'; readonly relationId: string };
 
-// A fake Linear API. `labels` replaces the labels of the team, and with
-// `failStates` every change of a workflow state fails.
+// A fake Linear API. `labels` replaces the labels of the team, with `failStates`
+// every change of a workflow state fails, and with `failMetadata` every read of
+// the team metadata fails.
 const fakeLinear = (
   seed: readonly LinearIssue[],
-  options: { readonly steal?: boolean; readonly labels?: readonly LinearLabel[]; readonly failStates?: boolean } = {}
+  options: {
+    readonly steal?: boolean;
+    readonly labels?: readonly LinearLabel[];
+    readonly failStates?: boolean;
+    readonly failMetadata?: boolean;
+  } = {}
 ) => {
   const issues = new Map(seed.map((item) => [item.id, item]));
   const calls: Mutation[] = [];
@@ -98,7 +104,7 @@ const fakeLinear = (
   const labelById = new Map(team.labels.map((label) => [label.id, label]));
 
   const layer = Layer.succeed(LinearApi, {
-    metadata: () => Effect.succeed(team),
+    metadata: () => (options.failMetadata === true ? Effect.fail(new LinearRequestError()) : Effect.succeed(team)),
     issues: () => Effect.succeed([...issues.values()]),
     issue: (id) => {
       const found = issues.get(id);
@@ -516,6 +522,25 @@ test.each([
   const unreadable = await Effect.runPromise(getUnreadableIn(api));
 
   expect(unreadable).toEqual([]);
+});
+
+test('getUnreadable still reports the offered Issues when the API-key user cannot be read', async () => {
+  const api = fakeLinear(
+    [
+      issue({ id: 'unstarted', labels: [{ id: 'label-chore', name: 'kind:chore' }] }),
+      issue({
+        id: 'held',
+        stateType: 'started',
+        assigneeId: 'viewer-1',
+        labels: [{ id: 'label-chore', name: 'kind:chore' }],
+      }),
+    ],
+    { failMetadata: true }
+  );
+
+  const unreadable = await Effect.runPromise(getUnreadableIn(api));
+
+  expect(unreadable.map(({ id }) => id)).toEqual([toLinearId('unstarted')]);
 });
 
 test('a read by identity finds a completed Issue as done', async () => {

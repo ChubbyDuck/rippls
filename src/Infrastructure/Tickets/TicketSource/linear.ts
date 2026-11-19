@@ -35,6 +35,11 @@ import {
 const OFFERED_STATE_TYPES: ReadonlySet<string> = new Set(['unstarted']);
 const SCOPE_STATE_TYPES: ReadonlySet<string> = new Set([...OFFERED_STATE_TYPES, 'started']);
 
+// Rippls holds an Issue on Linear when the Issue is in a started state and assigned
+// to the API-key user: that is what a report of claimed leaves.
+const isHeld = (issue: LinearIssue, metadata: LinearMetadata): boolean =>
+  issue.state.type === 'started' && issue.assigneeId === metadata.viewer.id;
+
 const isNoOp = (write: LinearWrite, issue: LinearIssue): boolean => {
   switch (write.op) {
     case 'setAssignee':
@@ -93,21 +98,21 @@ export const TicketSourceLinearLive = Layer.effect(
     const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
       pull(query).pipe(Effect.catchCause(() => Effect.succeed<readonly Ticket[]>([])));
 
+    // Whether Rippls holds an Issue. When the API-key user cannot be read, no Issue
+    // is known to be held, and the offered Issues are still reported.
+    const heldIssues: Effect.Effect<(issue: LinearIssue) => boolean> = api.metadata(teamId).pipe(
+      Effect.map((metadata) => (issue: LinearIssue) => isHeld(issue, metadata)),
+      Effect.catchCause(() => Effect.succeed(() => false))
+    );
+
     // The Issues that cannot be read as tickets, by creation time, oldest first:
-    // those offered for processing, and those in a started state that are assigned
-    // to the API-key user, which Rippls claimed. A started Issue of anyone else, or
-    // of no one, is a person's work in progress, not a ticket of Rippls.
-    const getUnreadable: Effect.Effect<readonly UnreadableTicket[]> = Effect.all([
-      api.issues(teamId),
-      api.metadata(teamId),
-    ]).pipe(
-      Effect.map(([issues, metadata]) =>
+    // those offered for processing, and those that Rippls holds. A started Issue of
+    // anyone else, or of no one, is a person's work in progress, not a ticket of
+    // Rippls.
+    const getUnreadable: Effect.Effect<readonly UnreadableTicket[]> = Effect.all([api.issues(teamId), heldIssues]).pipe(
+      Effect.map(([issues, held]) =>
         issues
-          .filter(
-            (issue) =>
-              OFFERED_STATE_TYPES.has(issue.state.type) ||
-              (issue.state.type === 'started' && issue.assigneeId === metadata.viewer.id)
-          )
+          .filter((issue) => OFFERED_STATE_TYPES.has(issue.state.type) || held(issue))
           .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
           .flatMap((issue) => {
             const read = readIssue(issue, defaultKind);
@@ -164,7 +169,7 @@ export const TicketSourceLinearLive = Layer.effect(
     const confirmClaim = (issueId: string, metadata: LinearMetadata) =>
       api.issue(issueId).pipe(
         Effect.filterOrFail(
-          (confirmed) => confirmed.assigneeId === metadata.viewer.id && confirmed.state.type === 'started',
+          (confirmed) => isHeld(confirmed, metadata),
           () => 'The Issue is not assigned to the API-key user in a started state'
         )
       );
