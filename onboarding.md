@@ -53,7 +53,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 | Port (in `Core/**/Ports`) | Adapter(s) | Wraps |
 | --- | --- | --- |
 | `TicketSource` | [folder.ts](src/Infrastructure/Tickets/TicketSource/folder.ts), [linear.ts](src/Infrastructure/Tickets/TicketSource/linear.ts) | Markdown front matter / the Linear issues of a team (through `LinearApi`) |
-| `LinearApi` | [live.ts](src/Infrastructure/Tickets/LinearApi/live.ts) | The Linear SDK: team metadata, issues, and the state of an issue. Only the Linear `TicketSource` uses it |
+| `LinearApi` | [live.ts](src/Infrastructure/Tickets/LinearApi/live.ts) | The Linear SDK: team metadata, issues, and the state, assignee, labels, and relations of an issue. Only the Linear `TicketSource` uses it |
 | `StrategySelector` | [configured.ts](src/Infrastructure/Tickets/StrategySelector/configured.ts) | Kind → Strategy of configured steps (`strategies` in config, defaults in [EngineConfig.ts](src/Core/Shared/Domain/EngineConfig.ts)) |
 | `Strategy` | [configured.ts](src/Infrastructure/Tickets/StrategySelector/configured.ts) (`configuredStrategy`) | What `StrategySelector` returns: its steps run in order through a Harness, with the outcome as a `Result` |
 | `HarnessSelector` | [configured.ts](src/Infrastructure/Shared/HarnessSelector/configured.ts) | The rotation, weighted by priority, and the schedule of Harnesses from config |
