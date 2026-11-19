@@ -172,8 +172,9 @@ Ledger records it as done (see [Completion and `done/`](#completion-and-done)).
 A ticket stores no Ticket Status: a `status` value in a file is read only as a marker
 of readiness. Rippls never writes it; polling applies the conditions above.
 
-Folder tickets are ordered by the numeric filename prefix, lowest first. Linear tickets
-are ordered by creation time, oldest first. `--project` narrows the poll to one project.
+Folder tickets are ordered by folder, then by the numeric filename prefix, lowest first
+(see [Feature folders](#feature-folders)). Linear tickets are ordered by creation time,
+oldest first. `--project` narrows the poll to one project.
 
 ## Ticket kinds and HITL
 
@@ -679,8 +680,10 @@ installed. The default Strategies are plain prose:
 - `task`: one step that carries out the task.
 
 A Strategy you configure for a kind replaces the default for that kind whole; the other
-defaults stay. A kind with no Strategy, such as `prototype` unless you configure one,
-stops the run with an error when a ticket of it is taken.
+defaults stay. A name under `strategies` that is not a Ticket Kind, such as
+`implementaton`, is a config error that names it and the valid kinds, so a typo never
+leaves the default Strategy in place. A kind with no Strategy, such as `prototype` unless
+you configure one, stops the run with an error when a ticket of it is taken.
 
 This example drives `implementation` with skills:
 
@@ -708,9 +711,11 @@ strategies: {
   tells the Agent that the ticket text is in the prompt.
 - **Prompt per Harness.** `prompts` gives a prompt for one Harness by its name (`Codex`,
   `Cursor`, `Claude`, or `OpenCode`). When the selected Harness has one, it is sent in
-  place of `prompt`. A slash command is the syntax of one Harness, and how the others
-  resolve one in a headless run varies, so keep `prompt` in plain prose that every
-  Harness in the rotation can follow, and put a slash command in `prompts`.
+  place of `prompt`. Any other name, such as `Claud`, is a config error that names it
+  and the valid names, so a typo never falls back to `prompt`. A slash command is the
+  syntax of one Harness, and how the others resolve one in a headless run varies, so keep
+  `prompt` in plain prose that every Harness in the rotation can follow, and put a slash
+  command in `prompts`.
 - **Model.** The model demand of the step, as for the commit prompt. Unset, the Harness
   uses its default model. When the Harness has no matching model, Rippls logs the
   fallback and uses its default model.
@@ -740,6 +745,15 @@ otlpTraceUrl: 'http://127.0.0.1:4318/v1/traces',
 
 Omit `otlpTraceUrl` when no OTLP HTTP trace collector is running. Full Harness logs are
 written under `.sandcastle/logs/`, separately from the concise Engine output.
+
+### Environment of the Agent
+
+An Agent runs with its Ticket Worktree as its working directory, and
+`.sandcastle/.env` is normally ignored by Git, so a Ticket Worktree has none. Rippls reads the
+`.sandcastle/.env` of the **Repository Root** and passes its keys to every Agent, as
+Sandcastle reads the file for a run in the Repository Root: a key with a value there
+wins over the same key in the shell, and a key with an empty value is left to the
+shell. A missing file is not an error.
 
 ## Folder Source
 
@@ -1018,9 +1032,10 @@ Project determines where successful ticket work accumulates:
 then creates Ticket Worktrees from that branch. Successful ticket branches merge
 into the project branch.
 
-Worktrees live under `.sandcastle/worktrees/` and are ignored by Git. Project Worktrees
-remain for later tickets and are not merged into the Repository Root automatically.
-Ticket Worktrees are closed after success and retained after an escalation. A retried
+Worktrees live under `.sandcastle/worktrees/`. Rippls adds no ignore rule, so add
+`.sandcastle/` to your `.gitignore`: the worktrees, the logs, and `.sandcastle/.env` then
+do not show as untracked files. Project Worktrees remain for later tickets and are not
+merged into the Repository Root automatically. Ticket Worktrees are closed after success and retained after an escalation. A retried
 ticket continues in its retained Ticket Worktree, with its commits and uncommitted
 changes.
 
@@ -1105,7 +1120,8 @@ npx rippls --completions fish
 
 Investigate a Harness failure:
 
-1. Read the Engine error and `.sandcastle/logs/ticket-<source>-<id>-*.log`.
+1. Read the Engine error and `.sandcastle/logs/ticket-<identity>-*.log`, such as
+   `ticket-folder:4-step-1.log`.
 2. Inspect the retained Ticket Worktree under `.sandcastle/worktrees/`.
 3. Run `npx rippls status` to see the reason of the Escalation and the retained
    worktree, or read its record in `.git/rippls/ledger/escalations/`.

@@ -46,17 +46,21 @@ rippls ──► RunEngine ─────────────────�
 
 The Ledger in `<git-common-dir>/rippls/ledger/` holds every Claim, the Escalations in `escalations/`, the cleared ones in `cleared/`, and done in `done/`. Its `replacing/` folder holds, per ticket, the new Claim of the one caller that is replacing its Stale Claim. `rippls status` reads it with the Source and changes nothing; `rippls retry <ticket>` reports `retried` and moves the Escalation into `cleared/`, and the next Ticket Processing of the ticket continues in its retained Ticket Worktree.
 
-## Layout: hexagonal, five ports
+## Layout: hexagonal, nine ports
 
 The code lives in three places: `src/Core` (domain, use cases and port interfaces, with no infrastructure imports), `src/Infrastructure` (adapters) and `src/config` (config file loading).
 
 | Port (in `Core/**/Ports`) | Adapter(s) | Wraps |
 | --- | --- | --- |
-| `TicketSource` | [folder.ts](src/Infrastructure/Tickets/TicketSource/folder.ts), [linear.ts](src/Infrastructure/Tickets/TicketSource/linear.ts) | Markdown front matter / Linear GraphQL |
+| `TicketSource` | [folder.ts](src/Infrastructure/Tickets/TicketSource/folder.ts), [linear.ts](src/Infrastructure/Tickets/TicketSource/linear.ts) | Markdown front matter / the Linear issues of a team (through `LinearApi`) |
+| `LinearApi` | [live.ts](src/Infrastructure/Tickets/LinearApi/live.ts) | The Linear SDK: team metadata, issues, and the state of an issue. Only the Linear `TicketSource` uses it |
 | `StrategySelector` | [configured.ts](src/Infrastructure/Tickets/StrategySelector/configured.ts) | Kind → Strategy of configured steps (`strategies` in config, defaults in [EngineConfig.ts](src/Core/Shared/Domain/EngineConfig.ts)) |
-| `HarnessSelector` | [configured.ts](src/Infrastructure/Shared/HarnessSelector/configured.ts), [registered.ts](src/Infrastructure/Shared/HarnessSelector/registered.ts) | Sandcastle agent providers |
+| `Strategy` | [configured.ts](src/Infrastructure/Tickets/StrategySelector/configured.ts) (`configuredStrategy`) | What `StrategySelector` returns: its steps run in order through a Harness, with the outcome as a `Result` |
+| `HarnessSelector` | [configured.ts](src/Infrastructure/Shared/HarnessSelector/configured.ts) | The rotation, weighted by priority, and the schedule of Harnesses from config |
+| `Harness` | [registered.ts](src/Infrastructure/Shared/HarnessSelector/registered.ts) | Sandcastle agent providers, the model catalog, and the keys of the Repository Root's `.sandcastle/.env` |
 | `WorktreeManager` | [sandcastle.ts](src/Infrastructure/Tickets/WorktreeManager/sandcastle.ts) | Sandcastle `createWorktree` + `git merge --no-ff`, the check command through a shell, and `git status --porcelain` for a clean worktree |
 | `Ledger` | [folder.ts](src/Infrastructure/Tickets/Ledger/folder.ts) | One Claim record per ticket in `<git-common-dir>/rippls/ledger/`, Escalations in its `escalations/` folder, cleared ones in `cleared/`, done in `done/`, and the replace of a Stale Claim in `replacing/` ([ADR 0004](docs/adr/0004-read-only-tickets-and-the-ledger.md)) |
+| `FixtureWriter` | [folder.ts](src/Infrastructure/Tickets/FixtureWriter/folder.ts) | The fixture ticket files of `pnpm generate`. Only the generator uses it |
 
 `Engine` and `Runner` are plain entities with identities and deliberately have no ports; the orchestration lives in the use cases ([ADR 0001](docs/adr/0001-separate-engine-and-runner-from-orchestration.md)).
 
