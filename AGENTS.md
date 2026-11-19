@@ -1,6 +1,6 @@
 # Rippls
 
-An opinionated ticket workflow engine. Work in this app is interactive and sequential. The human names one problem, in specific terms, and waits for that change. Do that change. Stop.
+An opinionated ticket workflow engine. 
 
 ## Ubiquitous language
 
@@ -17,6 +17,20 @@ If a suggestion would help, or the request is ambiguous, ask one short question 
 ## Small steps
 
 One concern per turn: one type, one invariant, one rename, one move. Do not "finish the design" ahead of the conversation. When the asked change is done, say what changed and wait.
+
+## Unattended runs
+
+In a session of the ticket loop, no one answers a question, and the ticket is the request. Decide as the ticket and its spec point, and record the decision in the commit message. A review finding that keeps behaviour unchanged (dead code, a duplicate, a name) inside the files the ticket touches is part of the ticket: fix it.
+
+## Completion gate
+
+A change is done when all three pass. Rippls has no end-to-end suite.
+
+```bash
+pnpm typecheck
+pnpm lint
+pnpm test
+```
 
 ## Generators vs pipes
 
