@@ -112,12 +112,18 @@ export const claimWrites = (issueId: string, metadata: LinearMetadata): readonly
   ];
 };
 
-/** A release on Linear: unassign the Issue and move it to the first `unstarted` state. */
+/**
+ * A release on Linear: move the Issue to the first `unstarted` state and unassign
+ * it. The state is written first: a release is repeated only while the Issue is
+ * still started and assigned to the API-key user, so a release that stops after
+ * its first write must leave an Issue that is offered again, not a started one
+ * with no assignee.
+ */
 export const releaseWrites = (issueId: string, metadata: LinearMetadata): readonly LinearWrite[] => {
   const stateId = firstStateId(metadata, 'unstarted');
   return [
-    { op: 'setAssignee', issueId, assigneeId: null },
     ...(stateId === undefined ? [] : [{ op: 'setState' as const, issueId, stateId }]),
+    { op: 'setAssignee', issueId, assigneeId: null },
   ];
 };
 
@@ -127,9 +133,11 @@ export const releaseWrites = (issueId: string, metadata: LinearMetadata): readon
  * `hitl` labels stay as they are.
  */
 export const escalateWrites = (issueId: string, metadata: LinearMetadata): readonly LinearWrite[] => {
+  const stateId = firstStateId(metadata, 'unstarted');
   const labelId = needsHumanLabelId(metadata);
   return [
-    ...releaseWrites(issueId, metadata),
+    { op: 'setAssignee', issueId, assigneeId: null },
+    ...(stateId === undefined ? [] : [{ op: 'setState' as const, issueId, stateId }]),
     ...(labelId === undefined
       ? []
       : [{ op: 'setLabels' as const, issueId, addedLabelIds: [labelId], removedLabelIds: [] }]),

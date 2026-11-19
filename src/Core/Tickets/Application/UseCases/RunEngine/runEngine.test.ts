@@ -733,25 +733,34 @@ test('runEngine resolves a blocker of another Project against every ticket of th
   expect(ran.map((ticket) => ticket.id)).toEqual([id(1)]);
 });
 
-test('runEngine releases a Claim the Source cannot confirm and takes another ticket', async () => {
+test('runEngine keeps the Claim that the Source cannot confirm until it exits, takes another ticket, and reports released on exit', async () => {
   const ledger = makeLedgerMemory();
   const seen: Array<Claim | undefined> = [];
+  const unconfirmed: Array<Claim | undefined> = [];
   const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
     report: (ticket, event) =>
       ticket === id(1) && event === 'claimed'
         ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event }))
         : Effect.void,
   });
+  // While a Runner processes ticket 2, the Ledger still holds the Claim on ticket 1.
+  const recordUnconfirmed = Effect.sync(() => {
+    unconfirmed.push(ledger.claims.get(id(1)));
+  });
   const layer = Layer.mergeAll(
     source.layer,
     HarnessSelectorNoop,
-    claimRecordingImplementation(ledger, seen)
+    claimRecordingImplementation(ledger, seen, recordUnconfirmed)
   );
 
   expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
   expect(seen.map((claim) => claim?.ticket)).toEqual([id(2)]);
+  expect(unconfirmed.map((claim) => claim?.engine)).toEqual([engineId]);
   expect(ledger.claims.has(id(1))).toBe(false);
-  expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
+  expect(source.reports).toEqual([
+    { ticket: id(2), event: 'claimed' },
+    { ticket: id(1), event: 'released' },
+  ]);
 });
 
 const failingStrategy = Layer.succeed(StrategySelector, {
@@ -959,12 +968,11 @@ test('runEngine keeps the Claim on a ticket completed since the read when it cou
       event === 'released' ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event })) : Effect.void,
   });
   // Another Engine records ticket 1 as done after the poll read the Ledger, as this
-  // Engine claims it.
+  // Engine replaces its Stale Claim.
   const real = Effect.runSync(Ledger.pipe(Effect.provide(ledger.layer)));
   const lateDone = Layer.succeed(Ledger, {
     ...real,
-    claim: (ticket, engine) =>
-      real.claim(ticket, engine).pipe(Effect.tap(() => (ticket === id(1) ? real.recordDone(id(1)) : Effect.void))),
+    replaceStale: (stale, engine) => real.replaceStale(stale, engine).pipe(Effect.tap(() => real.recordDone(id(1)))),
   });
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
 
@@ -1341,6 +1349,46 @@ test('runEngine claims a single unblocked ticket once', async () => {
   expect(store.get(id(2))?.doneInSource).toBe(false);
 });
 
+test('runEngine replaces a Stale Claim with the one replace operation of the Ledger, and holds the new Claim', async () => {
+  const ledger = makeLedgerMemory();
+  const seen: Array<Claim | undefined> = [];
+  const source = fakeSource([sampleTicket(1)]);
+  const stale = new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' });
+  ledger.claims.set(id(1), stale);
+  // Every operation of the Ledger that makes, removes, or replaces a Claim.
+  const real = Effect.runSync(Ledger.pipe(Effect.provide(ledger.layer)));
+  const operations: unknown[][] = [];
+  const recorded = <A, E>(operation: unknown[], effect: Effect.Effect<A, E>) =>
+    Effect.sync(() => operations.push(operation)).pipe(Effect.andThen(effect));
+  const recordingOperations = Layer.succeed(Ledger, {
+    ...real,
+    claim: (ticket, engine) => recorded(['claim', ticket], real.claim(ticket, engine)),
+    release: (ticket) => recorded(['release', ticket], real.release(ticket)),
+    replaceStale: (claim, engine) => recorded(['replaceStale', claim, engine], real.replaceStale(claim, engine)),
+  });
+  // The operations made before a Runner processes the ticket.
+  const beforeProcessing: unknown[][] = [];
+  const recordOperations = Effect.sync(() => {
+    beforeProcessing.push(...operations);
+  });
+  const layer = Layer.mergeAll(
+    source.layer,
+    HarnessSelectorNoop,
+    claimRecordingImplementation(ledger, seen, recordOperations)
+  );
+
+  expect(
+    await Effect.runPromise(
+      executeEngine({ project, limit: 1 }).pipe(
+        Random.withSeed('test'),
+        Effect.provide(Layer.mergeAll(EngineStartupTest, recordingOperations, layer))
+      )
+    )
+  ).toBeUndefined();
+  expect(beforeProcessing).toEqual([['replaceStale', stale, engineId]]);
+  expect(seen.map((claim) => [claim?.ticket, claim?.engine, claim?.runner])).toEqual([[id(1), engineId, claiming]]);
+});
+
 test('runEngine replaces a stale Claim: it reports released before the new claimed, and takes the ticket', async () => {
   const ran: Ticket[] = [];
   const ledger = makeLedgerMemory();
@@ -1357,23 +1405,23 @@ test('runEngine replaces a stale Claim: it reports released before the new claim
   ]);
 });
 
-test('runEngine reports released only when it wins the removal of a Stale Claim that another Engine also replaces', async () => {
+test('runEngine reports released only when it wins the replacement of a Stale Claim that another Engine also replaces', async () => {
   const ledger = makeLedgerMemory();
   // The other Engine's process no longer runs on this host.
   ledger.claims.set(id(1), new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
-  const removals: boolean[] = [];
-  const recordingRemovals = Layer.effect(
+  const replacements: boolean[] = [];
+  const recordingReplacements = Layer.effect(
     Ledger,
     Ledger.pipe(
       Effect.map((inner) => ({
         ...inner,
-        releaseStale: (claim: Claim) =>
-          inner.releaseStale(claim).pipe(Effect.tap((won) => Effect.sync(() => removals.push(won)))),
+        replaceStale: (claim: Claim, engine: EngineId) =>
+          inner.replaceStale(claim, engine).pipe(Effect.tap((won) => Effect.sync(() => replacements.push(won)))),
       }))
     )
   ).pipe(Layer.provide(ledger.layer));
   const source = fakeSource([sampleTicket(1)]);
-  // Both Engines read the ticket by identity, with the Stale Claim, before either removes it.
+  // Both Engines read the ticket by identity, with the Stale Claim, before either replaces it.
   let identityReads = 0;
   const bothRead = Deferred.makeUnsafe<void>();
   const racingSource = Layer.effect(
@@ -1400,7 +1448,7 @@ test('runEngine reports released only when it wins the removal of a Stale Claim 
     executeEngine({ project }).pipe(
       Random.withSeed(seed),
       Effect.provide(
-        Layer.mergeAll(EngineStartupTest, recordingRemovals, racingSource, HarnessSelectorNoop, hangingImplementation)
+        Layer.mergeAll(EngineStartupTest, recordingReplacements, racingSource, HarnessSelectorNoop, hangingImplementation)
       )
     );
 
@@ -1408,9 +1456,9 @@ test('runEngine reports released only when it wins the removal of a Stale Claim 
     Effect.gen(function* () {
       const first = yield* engineOf('first').pipe(Effect.forkChild({ startImmediately: true }));
       const second = yield* engineOf('second').pipe(Effect.forkChild({ startImmediately: true }));
-      yield* until(() => removals.length === 2 && source.reports.length === 2);
+      yield* until(() => replacements.length === 2 && source.reports.length === 2);
 
-      expect(removals.toSorted((left, right) => Number(left) - Number(right))).toEqual([false, true]);
+      expect(replacements.toSorted((left, right) => Number(left) - Number(right))).toEqual([false, true]);
       expect(source.reports).toEqual([
         { ticket: id(1), event: 'released' },
         { ticket: id(1), event: 'claimed' },

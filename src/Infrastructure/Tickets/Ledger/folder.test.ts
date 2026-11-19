@@ -1,5 +1,5 @@
 import * as NodeServices from '@effect/platform-node/NodeServices';
-import { Effect, FileSystem, Layer, Path, type PlatformError, Result, Schema } from 'effect';
+import { Deferred, Effect, FileSystem, Layer, Path, PlatformError, Result, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import { expect, test } from 'vitest';
 
@@ -9,6 +9,7 @@ import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { LedgerError } from '~/Core/Tickets/Domain/Exceptions/LedgerError';
 import { TicketAlreadyClaimed } from '~/Core/Tickets/Domain/Exceptions/TicketAlreadyClaimed';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 
@@ -17,6 +18,7 @@ import { ledgerFolder, LedgerFolderLive } from './folder';
 const holder = { process: 4242, host: 'test-host' };
 const first = Schema.decodeSync(EngineId)('amber-oak-0001');
 const second = Schema.decodeSync(EngineId)('brisk-fox-0002');
+const third = Schema.decodeSync(EngineId)('calm-elk-0003');
 const runner = Schema.decodeSync(RunnerId)('amber-oak-0001:0');
 const ticket = (value: number) => formatTicketId('folder', String(value));
 
@@ -323,57 +325,164 @@ test('a Claim from another host is not stale, even when no such process runs her
   expect(await staleness('other-host', deadProcess)).toBe(false);
 });
 
-test('releasing a stale Claim removes it, and leaves a Claim made since then in place', async () => {
-  const { won, afterStale, wonAgain, afterReplaced } = await run(
+// A Git common directory whose Ledger holds a Stale Claim on ticket 1, made by a
+// stopped Engine, with that Claim as a Ledger of the test holder reads it.
+const withStaleClaim = Effect.gen(function* () {
+  const dir = yield* gitCommonDir;
+  const dead = { process: yield* deadProcess, host: holder.host };
+  yield* Ledger.pipe(
+    Effect.flatMap((ledger) => ledger.claim(ticket(1), second)),
+    Effect.provide(ledgerFolder(dir, dead))
+  );
+  const stale = yield* inLedger(
+    dir,
+    Ledger.pipe(
+      Effect.flatMap((ledger) => ledger.read([ticket(1)])),
+      Effect.map((claims) => claims.get(ticket(1))!)
+    )
+  );
+  return { dir, dead, stale };
+});
+
+const replaceStaleIn = (dir: string, stale: Claim, engine: EngineId, by = holder) =>
+  Ledger.pipe(
+    Effect.flatMap((ledger) => ledger.replaceStale(stale, engine)),
+    Effect.provide(ledgerFolder(dir, by))
+  );
+
+const claimOn = (dir: string) =>
+  inLedger(
+    dir,
+    Ledger.pipe(
+      Effect.flatMap((ledger) => ledger.read([ticket(1)])),
+      Effect.map((claims) => claims.get(ticket(1)))
+    )
+  );
+
+test('replacing a Stale Claim makes it a Claim of the Engine, and a Claim made since the Stale Claim was read is not replaced', async () => {
+  const { won, afterReplace, wonLate, afterLate } = await run(
     Effect.gen(function* () {
-      const dir = yield* gitCommonDir;
-      const dead = { process: yield* deadProcess, host: holder.host };
-      yield* Ledger.pipe(
-        Effect.flatMap((ledger) => ledger.claim(ticket(1), second)),
-        Effect.provide(ledgerFolder(dir, dead))
-      );
-      return yield* inLedger(
-        dir,
-        Effect.gen(function* () {
-          const ledger = yield* Ledger;
-          const stale = (yield* ledger.read([ticket(1)])).get(ticket(1))!;
-          const won = yield* ledger.releaseStale(stale);
-          const afterStale = yield* ledger.read([ticket(1)]);
-          yield* ledger.claim(ticket(1), first);
-          const wonAgain = yield* ledger.releaseStale(stale);
-          const afterReplaced = yield* ledger.read([ticket(1)]);
-          return { won, afterStale, wonAgain, afterReplaced };
-        })
-      );
+      const { dir, stale } = yield* withStaleClaim;
+      const won = yield* replaceStaleIn(dir, stale, first);
+      const afterReplace = yield* claimOn(dir);
+      const wonLate = yield* replaceStaleIn(dir, stale, third);
+      const afterLate = yield* claimOn(dir);
+      return { won, afterReplace, wonLate, afterLate };
     })
   );
 
-  expect([won, wonAgain]).toEqual([true, false]);
-  expect(afterStale.size).toBe(0);
-  expect(afterReplaced.get(ticket(1))?.engine).toBe(first);
+  const replaced = new Claim({ ticket: ticket(1), engine: first, process: holder.process, host: holder.host });
+  expect([won, wonLate]).toEqual([true, false]);
+  expect(afterReplace).toEqual(replaced);
+  expect(afterLate).toEqual(replaced);
 });
 
-test('of two callers that release one stale Claim, only one removes it', async () => {
-  const outcomes = await run(
+test('replacing a Stale Claim that the Ledger no longer holds makes no Claim', async () => {
+  const { won, after } = await run(
     Effect.gen(function* () {
-      const dir = yield* gitCommonDir;
-      const dead = { process: yield* deadProcess, host: holder.host };
-      yield* Ledger.pipe(
-        Effect.flatMap((ledger) => ledger.claim(ticket(1), second)),
-        Effect.provide(ledgerFolder(dir, dead))
-      );
-      return yield* inLedger(
-        dir,
-        Effect.gen(function* () {
-          const ledger = yield* Ledger;
-          const stale = (yield* ledger.read([ticket(1)])).get(ticket(1))!;
-          return yield* Effect.all([ledger.releaseStale(stale), ledger.releaseStale(stale)], { concurrency: 2 });
-        })
-      );
+      const { dir, stale } = yield* withStaleClaim;
+      yield* inLedger(dir, Ledger.pipe(Effect.flatMap((ledger) => ledger.release(ticket(1)))));
+      const won = yield* replaceStaleIn(dir, stale, first);
+      return { won, after: yield* claimOn(dir) };
+    })
+  );
+
+  expect(won).toBe(false);
+  expect(after).toBeUndefined();
+});
+
+test('of two callers that replace one Stale Claim, exactly one wins and holds the new Claim', async () => {
+  const { outcomes, held } = await run(
+    Effect.gen(function* () {
+      const { dir, stale } = yield* withStaleClaim;
+      const outcomes = yield* Effect.all([replaceStaleIn(dir, stale, first), replaceStaleIn(dir, stale, third)], {
+        concurrency: 2,
+      });
+      return { outcomes, held: yield* claimOn(dir) };
     })
   );
 
   expect(outcomes.toSorted((left, right) => Number(left) - Number(right))).toEqual([false, true]);
+  expect(held?.engine).toBe(outcomes[0] ? first : third);
+});
+
+// A file system whose write of a record in its place, a rename, does what `rename` says.
+const withRename = (rename: Effect.Effect<void, PlatformError.PlatformError>) =>
+  Layer.effect(
+    FileSystem.FileSystem,
+    FileSystem.FileSystem.pipe(Effect.map((fs) => ({ ...fs, rename: () => rename })))
+  );
+
+const writeFailure = PlatformError.systemError({ _tag: 'Unknown', module: 'FileSystem', method: 'rename' });
+
+test('a replace whose write of the new Claim fails leaves the Stale Claim, which a later replace turns into a Claim', async () => {
+  const { failed, left, leftIsStale, wonLater, afterLater } = await run(
+    Effect.gen(function* () {
+      const { dir, stale } = yield* withStaleClaim;
+      const failed = yield* Ledger.pipe(
+        Effect.flatMap((ledger) => ledger.replaceStale(stale, first)),
+        Effect.provide(ledgerFolder(dir, holder).pipe(Layer.provide(withRename(Effect.fail(writeFailure))))),
+        Effect.result
+      );
+      const left = yield* claimOn(dir);
+      const leftIsStale = yield* inLedger(dir, Ledger.pipe(Effect.flatMap((ledger) => ledger.isStale(left!))));
+      const wonLater = yield* replaceStaleIn(dir, stale, third);
+      return { failed, left, leftIsStale, wonLater, afterLater: yield* claimOn(dir) };
+    })
+  );
+
+  expect(Result.isFailure(failed) && failed.failure).toBeInstanceOf(LedgerError);
+  expect(left?.engine).toBe(second);
+  expect(leftIsStale).toBe(true);
+  expect(wonLater).toBe(true);
+  expect(afterLater?.engine).toBe(third);
+});
+
+// A replace by a process on this host that stops before its write of the new Claim,
+// and never fails or finishes, as a process that was killed there.
+const replaceStoppedBeforeWrite = (dir: string, stale: Claim, by: { process: number; host: string }) =>
+  Effect.gen(function* () {
+    const reached = yield* Deferred.make<void>();
+    yield* Ledger.pipe(
+      Effect.flatMap((ledger) => ledger.replaceStale(stale, first)),
+      Effect.provide(
+        ledgerFolder(dir, by).pipe(
+          Layer.provide(withRename(Deferred.succeed(reached, undefined).pipe(Effect.andThen(Effect.never))))
+        )
+      ),
+      Effect.forkScoped
+    );
+    yield* Deferred.await(reached);
+  });
+
+test('a replace that a stopped process left before its write keeps the Stale Claim, and a later replace wins', async () => {
+  const { left, wonLater, afterLater } = await run(
+    Effect.gen(function* () {
+      const { dir, dead, stale } = yield* withStaleClaim;
+      yield* replaceStoppedBeforeWrite(dir, stale, dead);
+      const left = yield* claimOn(dir);
+      const wonLater = yield* replaceStaleIn(dir, stale, third);
+      return { left, wonLater, afterLater: yield* claimOn(dir) };
+    }).pipe(Effect.scoped)
+  );
+
+  expect(left?.engine).toBe(second);
+  expect(wonLater).toBe(true);
+  expect(afterLater?.engine).toBe(third);
+});
+
+test('a replace that a running process has not finished keeps the Stale Claim, and another caller does not win', async () => {
+  const { wonMeanwhile, held } = await run(
+    Effect.gen(function* () {
+      const { dir, stale } = yield* withStaleClaim;
+      yield* replaceStoppedBeforeWrite(dir, stale, { process: process.pid, host: holder.host });
+      const wonMeanwhile = yield* replaceStaleIn(dir, stale, third);
+      return { wonMeanwhile, held: yield* claimOn(dir) };
+    }).pipe(Effect.scoped)
+  );
+
+  expect(wonMeanwhile).toBe(false);
+  expect(held?.engine).toBe(second);
 });
 
 const git = (dir: string, args: string[]) =>

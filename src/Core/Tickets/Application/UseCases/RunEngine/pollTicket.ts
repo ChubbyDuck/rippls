@@ -10,26 +10,24 @@ import { type EligibilityFacts, isEligible } from '~/Core/Tickets/Domain/Service
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
-// A Stale Claim is replaced in the Ledger: its record is removed, and only the
-// Engine that wins that removal makes the new Claim. Nothing interrupts the two
-// steps, so a stopped poll never leaves the ticket with neither record. Whether this
-// Engine won is returned.
+// A Stale Claim is replaced in the Ledger in one operation, which turns it into the
+// Claim of this Engine, so the ticket never has no record. Of several Engines that
+// replace one Stale Claim, only one wins. Whether this Engine won is returned.
 const replaceStale = (ticket: Ticket, stale: Claim, engine: EngineId) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
     yield* Console.log(`${ticket.label} has a Stale Claim of ${stale.engine}, replacing it`);
-    if (!(yield* ledger.releaseStale(stale))) {
+    const won = yield* ledger.replaceStale(stale, engine);
+    if (!won) {
       yield* Console.log(`${ticket.label} had its Stale Claim replaced by another Engine, taking another ticket`);
-      return false;
     }
-    yield* ledger.claim(ticket.id, engine);
-    return true;
-  }).pipe(Effect.uninterruptible);
+    return won;
+  });
 
-// The release of a Stale Claim is reported to the Source by the Engine that won the
-// removal of its record and holds the new Claim, so a late release never undoes a
-// Claim of another Engine. Whether the report succeeded is returned: a failure does
-// not stop the claim.
+// The release of a Stale Claim is reported to the Source by the Engine that won its
+// replacement and holds the new Claim, so a late release never undoes a Claim of
+// another Engine. Whether the report succeeded is returned: a failure does not stop
+// the claim.
 const reportStaleReleased = (ticket: Ticket) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.report(ticket.id, 'released')),
@@ -39,21 +37,31 @@ const reportStaleReleased = (ticket: Ticket) =>
     )
   );
 
-// The Engine gives up the Claim it has just made on a ticket it does not take, and
-// takes another ticket. The record is removed, unless the release of the Stale Claim
-// it replaced was not reported: the Source may then still show the ticket claimed,
-// so the Claim stays until the Engine exits, which reports the release again, and
-// the Source is never left claimed with no record in the Ledger.
-const giveUpClaim = (ticket: Ticket, staleReleaseReported: boolean, why: string) =>
+// The Engine gives up the Claim it has just made on a ticket that another Engine
+// escalated or made done, and takes another ticket. The record is removed, unless the
+// release of the Stale Claim it replaced was not reported: the Source may then still
+// show the ticket claimed, so the Claim stays until the Engine exits, which reports
+// the release again, and the Source is never left claimed with no record in the
+// Ledger.
+const giveUpClaim = (ticket: Ticket, staleReleaseReported: boolean) =>
   Effect.gen(function* () {
+    const why = `${ticket.label} was escalated or done by another Engine`;
     if (!staleReleaseReported) {
-      yield* Console.log(`${ticket.label} ${why}, so its Claim stays until the Engine exits, taking another ticket`);
+      yield* Console.log(`${why}, so its Claim stays until the Engine exits, taking another ticket`);
       return;
     }
-    yield* Console.log(`${ticket.label} ${why}, taking another ticket`);
+    yield* Console.log(`${why}, taking another ticket`);
     const ledger = yield* Ledger;
     yield* ledger.release(ticket.id);
   });
+
+// A claimed report that fails may have written to the Source, so the Engine keeps
+// its Claim in the Ledger and takes another ticket. On exit it reports released,
+// which undoes what the report wrote.
+const keepUnconfirmedClaim = (ticket: Ticket) =>
+  Console.log(
+    `${ticket.label} could not be claimed on the Source, so its Claim stays until the Engine exits, taking another ticket`
+  );
 
 // Each candidate is read again by identity, so the ticket taken carries its full
 // content and is still Eligible when it is taken. A Stale Claim on it is replaced
@@ -63,7 +71,8 @@ const giveUpClaim = (ticket: Ticket, staleReleaseReported: boolean, why: string)
 // Claim since the Ledger was read; an Engine records the Escalation or done before
 // that release, so both are read again once the Claim is held, and the Claim on an
 // escalated or done ticket is given up. The Claim is then reported to the Source;
-// when the Source cannot confirm it, the Claim is given up too.
+// when the Source cannot confirm it, the ticket is not taken, and the Claim stays
+// until the Engine exits.
 const claimIfStillEligible =
   (engine: EngineId, facts: EligibilityFacts, stale: ReadonlyMap<TicketId, Claim>) => (candidate: Ticket) =>
   Effect.gen(function* () {
@@ -87,12 +96,10 @@ const claimIfStillEligible =
     const escalated = yield* ledger.escalations([ticket.id]);
     const done = yield* ledger.done([ticket.id]);
     if (escalated.has(ticket.id) || done.has(ticket.id)) {
-      yield* giveUpClaim(ticket, staleReleaseReported, 'was escalated or done by another Engine');
+      yield* giveUpClaim(ticket, staleReleaseReported);
       return Result.fail(candidate);
     }
-    yield* source
-      .report(ticket.id, 'claimed')
-      .pipe(Effect.tapError(() => giveUpClaim(ticket, staleReleaseReported, 'could not be claimed on the Source')));
+    yield* source.report(ticket.id, 'claimed').pipe(Effect.tapError(() => keepUnconfirmedClaim(ticket)));
     yield* Console.log(`${ticket.label} is claimed`);
     return Result.succeed(ticket);
   }).pipe(

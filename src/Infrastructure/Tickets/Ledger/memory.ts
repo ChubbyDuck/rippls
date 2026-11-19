@@ -53,13 +53,13 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
         claims.delete(ticket);
       }),
     isStale: isStaleFor(holder, (process) => Effect.sync(() => running.has(process))),
-    releaseStale: (stale) =>
+    replaceStale: (stale, engine) =>
       Effect.sync(() => {
         const held = claims.get(stale.ticket);
         if (held?.isSameClaim(stale) !== true) {
           return false;
         }
-        claims.delete(stale.ticket);
+        claims.set(stale.ticket, new Claim({ ticket: stale.ticket, engine, process: holder.process, host: holder.host }));
         return true;
       }),
     ticketsClaimedBy: (engine) =>

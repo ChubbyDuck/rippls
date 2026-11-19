@@ -174,10 +174,10 @@ test('claimWrites assign the Issue to the API-key user and move it to the first 
   ]);
 });
 
-test('releaseWrites unassign the Issue and move it to the first unstarted state', () => {
+test('releaseWrites move the Issue to the first unstarted state, then unassign it', () => {
   expect(releaseWrites(uuid, metadata)).toEqual([
-    { op: 'setAssignee', issueId: uuid, assigneeId: null },
     { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
+    { op: 'setAssignee', issueId: uuid, assigneeId: null },
   ]);
 });
 

@@ -1,11 +1,15 @@
-import { ConfigProvider, Console, Effect, Layer, Option, Schema } from 'effect';
+import { ConfigProvider, Console, Effect, Fiber, FileSystem, Layer, Option, Path, Result, Schema } from 'effect';
 import { expect, test } from 'vitest';
 
 import { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
+import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
+import { HarnessSelector } from '~/Core/Shared/Ports/HarnessSelector';
 import { pollTicket } from '~/Core/Tickets/Application/UseCases/RunEngine/pollTicket';
+import { runEngine } from '~/Core/Tickets/Application/UseCases/RunEngine/runEngine';
 import { showStatus, ticketStatuses } from '~/Core/Tickets/Application/UseCases/ShowStatus/showStatus';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
+import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -17,7 +21,9 @@ import {
   LinearRequestError,
   type LinearMetadata,
 } from '~/Core/Tickets/Ports/LinearApi';
+import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
+import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 import { toLinearId } from '~/Infrastructure/Tickets/LinearApi/codec';
 
@@ -87,8 +93,9 @@ type Mutation =
   | { readonly op: 'deleteRelation'; readonly relationId: string };
 
 // A fake Linear API. `labels` replaces the labels of the team, with `failStates`
-// every change of a workflow state fails, and with `failMetadata` every read of
-// the team metadata fails.
+// every change of a workflow state fails, with `failMetadata` every read of the
+// team metadata fails, and with `failReadBack` the first read of an Issue after
+// each move to a started state fails.
 const fakeLinear = (
   seed: readonly LinearIssue[],
   options: {
@@ -96,20 +103,27 @@ const fakeLinear = (
     readonly labels?: readonly LinearLabel[];
     readonly failStates?: boolean;
     readonly failMetadata?: boolean;
+    readonly failReadBack?: boolean;
   } = {}
 ) => {
   const issues = new Map(seed.map((item) => [item.id, item]));
   const calls: Mutation[] = [];
+  let readBackFails = false;
   const team = { ...metadata, labels: options.labels ?? metadata.labels };
   const labelById = new Map(team.labels.map((label) => [label.id, label]));
 
   const layer = Layer.succeed(LinearApi, {
     metadata: () => (options.failMetadata === true ? Effect.fail(new LinearRequestError()) : Effect.succeed(team)),
     issues: () => Effect.succeed([...issues.values()]),
-    issue: (id) => {
-      const found = issues.get(id);
-      return found === undefined ? Effect.fail(new LinearIssueNotFound()) : Effect.succeed(found);
-    },
+    issue: (id) =>
+      Effect.suspend((): Effect.Effect<LinearIssue, LinearIssueNotFound | LinearRequestError> => {
+        if (readBackFails) {
+          readBackFails = false;
+          return Effect.fail(new LinearRequestError());
+        }
+        const found = issues.get(id);
+        return found === undefined ? Effect.fail(new LinearIssueNotFound()) : Effect.succeed(found);
+      }),
     setState: (issueId, stateId) =>
       options.failStates === true
         ? Effect.fail(new LinearRequestError())
@@ -121,6 +135,7 @@ const fakeLinear = (
               return;
             }
             issues.set(issueId, { ...current, state });
+            readBackFails = options.failReadBack === true && state.type === 'started';
           }),
     setAssignee: (issueId, assigneeId) =>
       Effect.sync(() => {
@@ -249,17 +264,41 @@ test.each(['backlog', 'triage', 'canceled', 'completed'])(
   }
 );
 
-test('report of released unassigns the Issue and moves it to the first unstarted state', async () => {
+test('report of released moves a started Issue of the API-key user to the first unstarted state and unassigns it', async () => {
   const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })]);
 
   await Effect.runPromise(reportIn(api, 'released'));
 
   expect(api.calls).toEqual([
-    { op: 'setAssignee', issueId: uuid, assigneeId: null },
     { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
+    { op: 'setAssignee', issueId: uuid, assigneeId: null },
   ]);
   expect(api.issues.get(uuid)?.assigneeId).toBeNull();
   expect(api.issues.get(uuid)?.state.type).toBe('unstarted');
+});
+
+test.each([
+  ['assigned to another user', 'other-user'],
+  ['assigned to no one', null],
+])('report of released leaves a started Issue %s with its assignee and state', async (_, assigneeId) => {
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId })]);
+
+  await Effect.runPromise(reportIn(api, 'released'));
+
+  expect(api.calls).toEqual([]);
+  expect(api.issues.get(uuid)?.assigneeId).toBe(assigneeId);
+  expect(api.issues.get(uuid)?.state.type).toBe('started');
+});
+
+test('report of released that fails on its first write leaves the Issue as Rippls holds it, so it can run again', async () => {
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'viewer-1' })], { failStates: true });
+
+  const error = await Effect.runPromise(reportIn(api, 'released').pipe(Effect.flip));
+
+  expect(error).toEqual(new TicketEventNotReported({ ticketId: toLinearId(uuid), event: 'released' }));
+  expect(api.calls).toEqual([]);
+  expect(api.issues.get(uuid)?.assigneeId).toBe('viewer-1');
+  expect(api.issues.get(uuid)?.state.type).toBe('started');
 });
 
 test.each(['unstarted', 'backlog', 'triage', 'canceled', 'completed'])(
@@ -658,8 +697,8 @@ test('a started Issue whose Claim on this host is stale is Eligible, and taking 
 
   expect(Option.map(taken, (ticket) => ticket.id)).toEqual(Option.some(toLinearId(uuid)));
   expect(api.calls).toEqual([
-    { op: 'setAssignee', issueId: uuid, assigneeId: null },
     { op: 'setState', issueId: uuid, stateId: 'state-unstarted' },
+    { op: 'setAssignee', issueId: uuid, assigneeId: null },
     { op: 'setAssignee', issueId: uuid, assigneeId: 'viewer-1' },
     { op: 'setState', issueId: uuid, stateId: 'state-started' },
   ]);
@@ -675,6 +714,108 @@ test('a started Issue whose stale release fails keeps the new Claim, is not take
   expect(Option.isNone(taken)).toBe(true);
   expect(api.issues.get(uuid)?.state.type).toBe('started');
   expect(ledger.claims.get(toLinearId(uuid))?.engine).toBe(engine);
+});
+
+// An Engine on the Linear Source that runs until the claimed report of a ticket has
+// failed, and then exits. `ran` receives the tickets a Runner processes, and
+// `beforeExit` runs while the Engine is still up.
+const runEngineUntilClaimFails = (
+  api: ReturnType<typeof fakeLinear>,
+  ledger: ReturnType<typeof makeLedgerMemory>,
+  ran: TicketId[],
+  beforeExit: () => void
+) => {
+  const messages: string[] = [];
+  const capturing: Console.Console = Object.assign(Object.create(console), {
+    log: (...args: ReadonlyArray<unknown>) => {
+      messages.push(args.map(String).join(' '));
+    },
+  });
+  const layer = Layer.mergeAll(
+    withRepo(api),
+    ledger.layer,
+    Path.layer,
+    FileSystem.layerNoop({ exists: () => Effect.succeed(true), access: () => Effect.void }),
+    Layer.succeed(RepositoryRoot, '/repo'),
+    Layer.succeed(WorktreeManager, {
+      prepareProject: (project) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${project}`, branch: project }),
+      prepareTicket: () => Effect.succeed({ path: '/repo/.sandcastle/worktrees/ticket', branch: 'ticket' }),
+      runCommand: () => Effect.die('runCommand should not be called'),
+      isClean: () => Effect.succeed(true),
+      mergeAndClose: () => Effect.void,
+    }),
+    Layer.succeed(HarnessSelector, {
+      select: Effect.succeed({
+        name: 'default',
+        model: 'default-model',
+        run: () => Effect.succeed({ completionSignal: undefined }),
+      }),
+    }),
+    Layer.succeed(StrategySelector, {
+      select: (kind) =>
+        Effect.succeed({
+          name: kind,
+          run: (ticket) =>
+            Effect.sync(() => {
+              ran.push(ticket.id);
+              return Result.succeed(undefined);
+            }),
+        }),
+    })
+  );
+  return Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine({}).pipe(
+        Effect.provide(layer),
+        Effect.provideService(Console.Console, capturing),
+        Effect.forkChild({ startImmediately: true })
+      );
+      while (!messages.some((message) => message.includes('could not be claimed on the Source'))) {
+        yield* Effect.yieldNow;
+      }
+      beforeExit();
+      yield* Fiber.interrupt(fiber);
+    })
+  );
+};
+
+test('runEngine leaves a started Issue of a Stale Claim to the person who has taken it, and does not process the ticket', async () => {
+  const api = fakeLinear([issue({ stateType: 'started', assigneeId: 'person-1' })]);
+  const ledger = ledgerWithClaim(false);
+  const ran: TicketId[] = [];
+  let heldBeforeExit: Claim | undefined;
+
+  await runEngineUntilClaimFails(api, ledger, ran, () => {
+    heldBeforeExit = ledger.claims.get(toLinearId(uuid));
+  });
+
+  expect(ran).toEqual([]);
+  expect(api.calls).toEqual([]);
+  expect(api.issues.get(uuid)?.assigneeId).toBe('person-1');
+  expect(api.issues.get(uuid)?.state.type).toBe('started');
+  expect(heldBeforeExit?.engine).not.toBe(stoppedEngine);
+  expect(ledger.claims.has(toLinearId(uuid))).toBe(false);
+});
+
+test('an Issue whose claimed report fails on its read back is unassigned and unstarted again when the Engine exits', async () => {
+  const api = fakeLinear([issue({})], { failReadBack: true });
+  const ledger = makeLedgerMemory();
+  const ran: TicketId[] = [];
+  let beforeExit: { readonly issue?: LinearIssue; readonly claimed: boolean } | undefined;
+
+  await runEngineUntilClaimFails(api, ledger, ran, () => {
+    beforeExit = { issue: api.issues.get(uuid), claimed: ledger.claims.has(toLinearId(uuid)) };
+  });
+
+  expect(ran).toEqual([]);
+  expect([beforeExit?.issue?.state.type, beforeExit?.issue?.assigneeId, beforeExit?.claimed]).toEqual([
+    'started',
+    'viewer-1',
+    true,
+  ]);
+  expect(api.issues.get(uuid)?.assigneeId).toBeNull();
+  expect(api.issues.get(uuid)?.state.type).toBe('unstarted');
+  expect(ledger.claims.has(toLinearId(uuid))).toBe(false);
 });
 
 test.each(['backlog', 'triage', 'canceled'])('the poll never offers an Issue in a %s state', async (stateType) => {

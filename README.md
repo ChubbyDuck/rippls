@@ -345,6 +345,10 @@ ticket. The record names the Engine, its process ID, and its host, and the Runne
 the ticket is handed to one. The Engine claims a ticket when it takes it from the
 Ticket Stream, and releases the Claim when the ticket is done or when the Engine exits.
 
+The Engine reports each Claim to the Source. When the Source cannot confirm it, the
+report may still have changed the ticket there, so the Engine keeps the Claim, does not
+process the ticket, and takes another one. It reports the release when it exits.
+
 ### Stale Claims
 
 A Claim is **stale** when its process no longer runs on this host, for example after an
@@ -354,9 +358,9 @@ another host is never stale either: the Engine cannot see the processes of anoth
 A ticket whose only Claim is stale is Unclaimed, so a Claim left on this host never needs
 removing by hand. When the Engine looks for its next ticket and meets a Stale Claim, it replaces it:
 
-1. It removes the stale record and claims the ticket in the Ledger. Of several Engines
-   that meet the same Stale Claim, only one wins the removal; the others take another
-   ticket.
+1. It turns the stale record into its own Claim in the Ledger, in one step, so the
+   ticket has a record at every moment. Of several Engines that meet the same Stale
+   Claim, only one wins the replacement; the others take another ticket.
 2. It reports released to the Source.
 3. It reports claimed to the Source, as for any Claim.
 
@@ -364,12 +368,13 @@ removing by hand. When the Engine looks for its next ticket and meets a Stale Cl
   taken again.
 - **Linear Source:** the Engine stopped while the issue was in a `started` state, which
   reads as claimed on Linear. Rippls takes a started issue only when this host's Ledger
-  holds a Stale Claim on it. The released report unassigns the issue and returns it to an
-  `unstarted` state; the claimed report assigns it and moves it to a `started` state
-  again.
+  holds a Stale Claim on it. The released report returns the issue to an `unstarted`
+  state and unassigns it; the claimed report assigns it and moves it to a `started` state
+  again. If a person has taken the issue in the meantime, the released report leaves it
+  as it is, the claimed report fails, and the person keeps the issue.
 
 If the released report fails, the Engine still holds its new Claim and goes on to the
-claimed report. If that report fails too, as it does on Linear for an issue that is still
+claimed report. If that report fails, as it does on Linear for an issue that is still
 started, the ticket is not processed, and the Engine reports the release again when it
 exits.
 
@@ -972,8 +977,10 @@ host's Ledger holds a Stale Claim on it (see [Stale Claims](#stale-claims)).
 
 When the Engine claims an issue, the Linear Source assigns it to the API-key user, moves
 it to a `started` state, and reads it back to confirm. If someone else took the issue in
-between, the Engine releases its Claim and takes another ticket. A release unassigns the
-issue and returns it to an `unstarted` state. Done moves it to a `completed` state, after
+between, or the read fails, the Engine takes another ticket, keeps its Claim until it
+exits, and then reports the release. A release changes only an issue that is still in a
+`started` state and assigned to the API-key user: it returns the issue to an `unstarted`
+state and unassigns it. An issue that a person has taken keeps its assignee and state. Done moves it to a `completed` state, after
 the merge of its ticket branch succeeds.
 
 If a Strategy fails, Rippls records the Escalation in its Ledger, unassigns the issue,

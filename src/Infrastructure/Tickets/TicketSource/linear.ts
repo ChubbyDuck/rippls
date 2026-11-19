@@ -154,13 +154,14 @@ export const TicketSourceLinearLive = Layer.effect(
         )
       );
 
-    // Only an Issue in a started state holds a Claim on Linear. An Issue that a
-    // human moved to another state keeps that state and its assignee, so a release,
-    // such as that of a Stale Claim, never reopens a canceled or completed Issue.
-    const releaseIfStarted = (issueId: string, metadata: LinearMetadata) =>
+    // A release writes only to an Issue that Rippls still holds. An Issue that a
+    // person has taken, or moved to another state, keeps its assignee and its state,
+    // so a release, such as that of a Stale Claim, never takes an Issue from a
+    // person and never reopens a canceled or completed Issue.
+    const releaseIfHeld = (issueId: string, metadata: LinearMetadata) =>
       api.issue(issueId).pipe(
         Effect.flatMap((current) =>
-          current.state.type === 'started' ? applyNeeded(issueId, releaseWrites(issueId, metadata)) : Effect.void
+          isHeld(current, metadata) ? applyNeeded(issueId, releaseWrites(issueId, metadata)) : Effect.void
         )
       );
 
@@ -188,7 +189,7 @@ export const TicketSourceLinearLive = Layer.effect(
             yield* confirmClaim(issueId, metadata);
             return;
           case 'released':
-            yield* releaseIfStarted(issueId, metadata);
+            yield* releaseIfHeld(issueId, metadata);
             return;
           case 'escalated':
             // The Ledger holds the escalation, so a team without the label only

@@ -1,6 +1,6 @@
 # Rippls in one sitting
 
-**What it is:** a CLI (`rippls`) you run inside any Git repo. It pulls tickets from a folder of Markdown files or from Linear, hands each one to a coding-agent CLI (Claude Code, Codex, Cursor, OpenCode) in an isolated Git worktree, then merges the result or escalates to a human. It is about 5,700 lines of TypeScript on Effect 4 (RC), with 10,100 lines of tests. Tests (496), typecheck and lint all pass right now.
+**What it is:** a CLI (`rippls`) you run inside any Git repo. It pulls tickets from a folder of Markdown files or from Linear, hands each one to a coding-agent CLI (Claude Code, Codex, Cursor, OpenCode) in an isolated Git worktree, then merges the result or escalates to a human. It is about 6,100 lines of TypeScript on Effect 4 (RC), with 10,500 lines of tests. Tests (506), typecheck and lint all pass right now.
 
 ## The one flow to hold in your head
 
@@ -39,7 +39,7 @@ rippls ──► RunEngine ─────────────────�
    each record once its report succeeds (else it stays: a Stale Claim)
 ```
 
-The Ledger in `<git-common-dir>/rippls/ledger/` holds every Claim, the Escalations in `escalations/`, the cleared ones in `cleared/`, and done in `done/`. `rippls status` reads it with the Source and changes nothing; `rippls retry <ticket>` reports `retried` and moves the Escalation into `cleared/`, and the next Ticket Processing of the ticket continues in its retained Ticket Worktree.
+The Ledger in `<git-common-dir>/rippls/ledger/` holds every Claim, the Escalations in `escalations/`, the cleared ones in `cleared/`, and done in `done/`. Its `replacing/` folder holds the new Claim of a Stale Claim replacement until it is written over the stale record. `rippls status` reads it with the Source and changes nothing; `rippls retry <ticket>` reports `retried` and moves the Escalation into `cleared/`, and the next Ticket Processing of the ticket continues in its retained Ticket Worktree.
 
 ## Layout: hexagonal, five ports
 

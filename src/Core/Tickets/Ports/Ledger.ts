@@ -27,11 +27,13 @@ export class Ledger extends Context.Service<
      */
     readonly isStale: (claim: Claim) => Effect.Effect<boolean>;
     /**
-     * Removes the stale Claim while the Ledger still holds it, and tells whether this
-     * caller removed it. Of several callers that remove one Stale Claim, only one
-     * wins; a Claim made on the ticket since then stays in place.
+     * Turns the Stale Claim into a new Claim of the Engine, in one write of the
+     * ticket's record, and tells whether this caller did. Of several callers that
+     * replace one Stale Claim, only one wins; a Claim made on the ticket since the
+     * Stale Claim was read stays in place. The Ledger holds a Claim on the ticket
+     * at every point, a failed replace included.
      */
-    readonly releaseStale: (claim: Claim) => Effect.Effect<boolean, LedgerError>;
+    readonly replaceStale: (stale: Claim, engine: EngineId) => Effect.Effect<boolean, LedgerError>;
     /** The tickets on which the Engine holds a Claim. */
     readonly ticketsClaimedBy: (engine: EngineId) => Effect.Effect<readonly TicketId[], LedgerError>;
     /** The Claims held on the given tickets. A ticket with no Claim is absent. */
