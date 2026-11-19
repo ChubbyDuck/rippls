@@ -188,6 +188,12 @@ const reportIn = (api: ReturnType<typeof fakeLinear>, event: ReportedEvent) =>
     Effect.provide(withRepo(api))
   );
 
+const getUnreadableIn = (api: ReturnType<typeof fakeLinear>) =>
+  TicketSource.pipe(
+    Effect.flatMap((source) => source.getUnreadable),
+    Effect.provide(withRepo(api))
+  );
+
 const getOneIn = (api: ReturnType<typeof fakeLinear>, query: TicketQuery) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.getOneBy(query)),
@@ -465,15 +471,9 @@ test('getUnreadable reports each offered Issue with an invalid hint, named by it
       { id: 'label-task', name: 'kind:task' },
     ] }),
     issue({ id: 'unknown-kind', createdAt: '2026-02-01T00:00:00.000Z', labels: [{ id: 'label-chore', name: 'kind:chore' }] }),
-    issue({ id: 'started', stateType: 'started', labels: [{ id: 'label-chore', name: 'kind:chore' }] }),
   ]);
 
-  const unreadable = await Effect.runPromise(
-    TicketSource.pipe(
-      Effect.flatMap((source) => source.getUnreadable),
-      Effect.provide(withRepo(api))
-    )
-  );
+  const unreadable = await Effect.runPromise(getUnreadableIn(api));
 
   expect(unreadable.map(({ name, id, reason }) => [name, id, reason])).toEqual([
     ['ENG-24', toLinearId('unknown-kind'), 'invalid hint'],
@@ -483,6 +483,39 @@ test('getUnreadable reports each offered Issue with an invalid hint, named by it
     expect.stringContaining('["kind"]'),
     expect.stringContaining('["kind"]'),
   ]);
+});
+
+test('getUnreadable reports a started Issue with an invalid hint that is assigned to the API-key user', async () => {
+  const api = fakeLinear([
+    issue({ id: 'unstarted', createdAt: '2026-02-01T00:00:00.000Z', labels: [{ id: 'label-chore', name: 'kind:chore' }] }),
+    issue({
+      id: 'held',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      stateType: 'started',
+      assigneeId: 'viewer-1',
+      labels: [{ id: 'label-chore', name: 'kind:chore' }],
+    }),
+  ]);
+
+  const unreadable = await Effect.runPromise(getUnreadableIn(api));
+
+  expect(unreadable.map(({ name, id, reason }) => [name, id, reason])).toEqual([
+    ['ENG-24', toLinearId('held'), 'invalid hint'],
+    ['ENG-24', toLinearId('unstarted'), 'invalid hint'],
+  ]);
+});
+
+test.each([
+  ['another user', 'other-user'],
+  ['no one', null],
+])('getUnreadable leaves out a started Issue with an invalid hint that is assigned to %s', async (_, assigneeId) => {
+  const api = fakeLinear([
+    issue({ stateType: 'started', assigneeId, labels: [{ id: 'label-chore', name: 'kind:chore' }] }),
+  ]);
+
+  const unreadable = await Effect.runPromise(getUnreadableIn(api));
+
+  expect(unreadable).toEqual([]);
 });
 
 test('a read by identity finds a completed Issue as done', async () => {

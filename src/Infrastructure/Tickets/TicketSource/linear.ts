@@ -93,12 +93,21 @@ export const TicketSourceLinearLive = Layer.effect(
     const getManyBy = (query: TicketQuery): Effect.Effect<readonly Ticket[]> =>
       pull(query).pipe(Effect.catchCause(() => Effect.succeed<readonly Ticket[]>([])));
 
-    // The Issues among those offered for processing that cannot be read as tickets,
-    // by creation time, oldest first.
-    const getUnreadable: Effect.Effect<readonly UnreadableTicket[]> = api.issues(teamId).pipe(
-      Effect.map((issues) =>
+    // The Issues that cannot be read as tickets, by creation time, oldest first:
+    // those offered for processing, and those in a started state that are assigned
+    // to the API-key user, which Rippls claimed. A started Issue of anyone else, or
+    // of no one, is a person's work in progress, not a ticket of Rippls.
+    const getUnreadable: Effect.Effect<readonly UnreadableTicket[]> = Effect.all([
+      api.issues(teamId),
+      api.metadata(teamId),
+    ]).pipe(
+      Effect.map(([issues, metadata]) =>
         issues
-          .filter((issue) => OFFERED_STATE_TYPES.has(issue.state.type))
+          .filter(
+            (issue) =>
+              OFFERED_STATE_TYPES.has(issue.state.type) ||
+              (issue.state.type === 'started' && issue.assigneeId === metadata.viewer.id)
+          )
           .toSorted((left, right) => left.createdAt.localeCompare(right.createdAt))
           .flatMap((issue) => {
             const read = readIssue(issue, defaultKind);

@@ -949,7 +949,11 @@ is HITL `no` only through a `hitl:no` label or a `kind:*` label whose kind impli
 (see [Ticket kinds and HITL](#ticket-kinds-and-hitl)); otherwise it is HITL `yes`.
 An issue with an unknown kind or HITL, or with more than one `kind:*` or `hitl:*`
 label, is unreadable: Rippls does not take it, and reports it by its identifier, such as
-`ENG-12`, at Engine start and in `rippls status`.
+`ENG-12`, at Engine start and in `rippls status`. It reports such an issue in an
+`unstarted` state, and in a `started` state when the issue is assigned to the API-key
+user, because Rippls claimed it. An unreadable issue in a `started` state that is
+assigned to anyone else, or to no one, is a person's work in progress, and is not
+reported.
 
 Create a `needs-human` label in the team as well. Rippls adds it to an escalated issue,
 and reads an issue that has it as `hitl: yes`, whatever its `kind`. Without the label,
