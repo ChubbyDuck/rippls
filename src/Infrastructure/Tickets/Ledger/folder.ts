@@ -1,4 +1,4 @@
-import { Effect, Exit, FileSystem, Layer, Option, Path, type PlatformError, Schema } from 'effect';
+import { Effect, FileSystem, Layer, Option, Path, type PlatformError, Schema } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
@@ -30,8 +30,6 @@ const isAlreadyExists = isReason('AlreadyExists');
 
 const toLedgerError = (cause: unknown) => new LedgerError({ cause });
 
-const isSameClaimAs = (claim: Claim) => (other: Claim) => other.isSameClaim(claim);
-
 // Signal 0 tests that a process exists without signalling it. Only ESRCH says
 // that no such process runs; a process of another user answers EPERM.
 const processRuns = (pid: number): Effect.Effect<boolean> =>
@@ -47,8 +45,9 @@ const processRuns = (pid: number): Effect.Effect<boolean> =>
  * folder itself; an Escalation is a record in its `escalations` folder, so it
  * outlives the Claim that is released when the ticket is escalated. A cleared
  * Escalation moves to the `cleared` folder, which keeps its attempt count. A done
- * ticket has a record in the `done` folder. The `replacing` folder holds the new
- * Claim of a replace of a Stale Claim until it is written over the stale record.
+ * ticket has a record in the `done` folder. The `replacing` folder has a folder per
+ * ticket, which holds the new Claim of the one caller that is replacing its Stale
+ * Claim.
  */
 export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
   Layer.effect(
@@ -66,7 +65,9 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
       const escalationOf = (ticket: TicketId) => path.join(escalationsDir, fileName(ticket));
       const clearedOf = (ticket: TicketId) => path.join(clearedDir, fileName(ticket));
       const doneOf = (ticket: TicketId) => path.join(doneDir, fileName(ticket));
-      const replacingOf = (ticket: TicketId) => path.join(replacingDir, fileName(ticket));
+      const replacingOf = (ticket: TicketId) => path.join(replacingDir, encodeURIComponent(ticket));
+      const claimOf = (ticket: TicketId, engine: EngineId) =>
+        new Claim({ ticket, engine, process: holder.process, host: holder.host });
 
       // A record is written whole in a scratch folder next to the records, so a
       // reader never sees a partial record.
@@ -103,7 +104,7 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
 
       // A hard link fails when the record exists, so only one caller creates it.
       const claim = (ticket: TicketId, engine: EngineId) => {
-        const made = new Claim({ ticket, engine, process: holder.process, host: holder.host });
+        const made = claimOf(ticket, engine);
         const link = (scratch: string) =>
           fs
             .link(scratch, recordOf(ticket))
@@ -129,63 +130,94 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
 
       const isStale = isStaleFor(holder, processRuns);
 
-      // A link in the `replacing` folder is abandoned when the process that made it
-      // no longer runs: its replace stopped before the write. It is removed, and so
-      // is a link that cannot be read. Whether the name is free again is returned;
-      // the link of a process that runs is a replace in progress, and stays.
-      const removeAbandoned = (pending: string) =>
-        readRecord(pending).pipe(
-          Effect.flatMap(Option.match({ onNone: () => Effect.succeed(true), onSome: isStale })),
-          Effect.tap((abandoned) => (abandoned ? removeRecord(pending) : Effect.void))
+      // The new Claim of a replace, in a folder of its own that is ready to be moved
+      // to the ticket's name in the `replacing` folder. The file is named after its
+      // scratch folder, so no other caller ever has a file of that name.
+      const writeEntry = (content: string) =>
+        Effect.gen(function* () {
+          const scratch = yield* fs.makeTempDirectoryScoped({ directory: dir, prefix: '.scratch-' });
+          const folder = path.join(scratch, 'replacing');
+          const name = `${path.basename(scratch)}${RECORD_SUFFIX}`;
+          yield* fs.makeDirectory(folder);
+          yield* fs.writeFileString(path.join(folder, name), content);
+          yield* fs.makeDirectory(replacingDir, { recursive: true });
+          return { folder, name };
+        }).pipe(Effect.mapError(toLedgerError));
+
+      const entriesOf = (replacing: string) =>
+        fs.readDirectory(replacing).pipe(
+          Effect.catchIf(isNotFound, () => Effect.succeed<string[]>([])),
+          Effect.mapError(toLedgerError)
         );
+
+      // A caller enters the replace of a ticket by moving the folder with its new
+      // Claim to the ticket's name. The move succeeds only when no folder with a
+      // Claim is there, so only one caller is in at a time. Whether this caller is in
+      // is returned; a move that fails for another reason fails.
+      const enter = (folder: string, replacing: string) =>
+        fs.rename(folder, replacing).pipe(
+          Effect.as(true),
+          Effect.catch((error) =>
+            entriesOf(replacing).pipe(
+              Effect.flatMap((entries) => (entries.length > 0 ? Effect.succeed(false) : Effect.fail(toLedgerError(error))))
+            )
+          )
+        );
+
+      // The new Claim of a caller whose process no longer runs is stale: its replace
+      // stopped. It is removed by its own name, so the Claim of a caller that runs
+      // is never removed, and so is a file that cannot be read. Whether no caller
+      // that runs is left in the replace is returned.
+      const removeStopped = (replacing: string) =>
+        Effect.gen(function* () {
+          const stopped = yield* Effect.forEach(yield* entriesOf(replacing), (name) =>
+            Effect.gen(function* () {
+              const entry = path.join(replacing, name);
+              const left = yield* readRecord(entry);
+              if (Option.isSome(left) && !(yield* isStale(left.value))) {
+                return false;
+              }
+              yield* removeRecord(entry);
+              return true;
+            })
+          );
+          return stopped.every((removed) => removed);
+        });
 
       // A Stale Claim becomes the new Claim in one write: a rename of the new record
       // onto the stale one, so the ticket's record is always one of the two. A rename
-      // does not tell which record it replaced, so the right to make it is taken
-      // first, by linking the new record under the ticket's name in the `replacing`
-      // folder, which only one caller can do. The record is read again once the link
-      // is held, since another caller may have finished its replace before it. The
-      // rename then moves that link, so the right ends with the write. A replace
-      // that fails removes its link; one whose process stops leaves it, for a later
-      // caller to remove as abandoned.
+      // does not tell which record it replaced, so only one caller at a time may make
+      // it: the one that is in the replace of the ticket. Once in, it reads the record
+      // again, since another caller may have replaced the Stale Claim before it. It
+      // leaves the replace when it is done, whatever the outcome. A caller whose
+      // process stops stays in, and the next caller removes it.
       const replaceStale = (stale: Claim, engine: EngineId) =>
         Effect.gen(function* () {
           const record = recordOf(stale.ticket);
-          const pending = replacingOf(stale.ticket);
-          const made = new Claim({ ticket: stale.ticket, engine, process: holder.process, host: holder.host });
-          const holds = (claim: Claim) => readRecord(record).pipe(Effect.map(Option.exists(isSameClaimAs(claim))));
-          if (!(yield* holds(stale))) {
+          const replacing = replacingOf(stale.ticket);
+          const holdsStale = readRecord(record).pipe(Effect.map(Option.exists((held) => held.isSameClaim(stale))));
+          if (!(yield* holdsStale)) {
             return false;
           }
-          const scratch = yield* writeScratch(encodeClaim(made));
-          const link = fs.makeDirectory(replacingDir, { recursive: true }).pipe(
-            Effect.andThen(fs.link(scratch, pending)),
-            Effect.as(true),
-            Effect.catchIf(isAlreadyExists, () => Effect.succeed(false)),
-            Effect.mapError(toLedgerError)
-          );
-          const linkOnceFree = removeAbandoned(pending).pipe(
-            Effect.flatMap((free) => (free ? link : Effect.succeed(false)))
-          );
-          const takeLink = link.pipe(Effect.flatMap((linked) => (linked ? Effect.succeed(true) : linkOnceFree)));
-          // The caller won only when the record names its Claim in the end: its link
-          // may have been removed and taken by another caller, who read it as
-          // abandoned just before, and then the rename moved the link of that caller.
+          const made = encodeClaim(claimOf(stale.ticket, engine));
+          const scratch = yield* writeScratch(made);
+          const { folder, name } = yield* writeEntry(made);
           const write = Effect.gen(function* () {
-            if (!(yield* holds(stale))) {
-              yield* removeRecord(pending);
+            if (!(yield* holdsStale)) {
               return false;
             }
-            yield* fs.rename(pending, record).pipe(
-              Effect.catchIf(isNotFound, () => Effect.void),
-              Effect.mapError(toLedgerError)
-            );
-            return yield* holds(made);
+            yield* fs.rename(scratch, record).pipe(Effect.mapError(toLedgerError));
+            return true;
           });
           return yield* Effect.acquireUseRelease(
-            takeLink,
-            (taken) => (taken ? write : Effect.succeed(false)),
-            (taken, exit) => (taken && Exit.isFailure(exit) ? Effect.ignore(removeRecord(pending)) : Effect.void)
+            Effect.gen(function* () {
+              return (
+                (yield* enter(folder, replacing)) ||
+                ((yield* removeStopped(replacing)) && (yield* enter(folder, replacing)))
+              );
+            }),
+            (entered) => (entered ? write : Effect.succeed(false)),
+            (entered) => (entered ? Effect.ignore(removeRecord(path.join(replacing, name))) : Effect.void)
           );
         }).pipe(Effect.scoped);
 

@@ -793,6 +793,7 @@ test('runEngine leaves a started Issue of a Stale Claim to the person who has ta
   expect(api.calls).toEqual([]);
   expect(api.issues.get(uuid)?.assigneeId).toBe('person-1');
   expect(api.issues.get(uuid)?.state.type).toBe('started');
+  expect(heldBeforeExit).toBeDefined();
   expect(heldBeforeExit?.engine).not.toBe(stoppedEngine);
   expect(ledger.claims.has(toLinearId(uuid))).toBe(false);
 });

@@ -1,6 +1,6 @@
 # Rippls in one sitting
 
-**What it is:** a CLI (`rippls`) you run inside any Git repo. It pulls tickets from a folder of Markdown files or from Linear, hands each one to a coding-agent CLI (Claude Code, Codex, Cursor, OpenCode) in an isolated Git worktree, then merges the result or escalates to a human. It is about 6,100 lines of TypeScript on Effect 4 (RC), with 10,500 lines of tests. Tests (506), typecheck and lint all pass right now.
+**What it is:** a CLI (`rippls`) you run inside any Git repo. It pulls tickets from a folder of Markdown files or from Linear, hands each one to a coding-agent CLI (Claude Code, Codex, Cursor, OpenCode) in an isolated Git worktree, then merges the result or escalates to a human. It is about 5,800 lines of TypeScript on Effect 4 (RC), with 10,500 lines of tests. Tests (506), typecheck and lint all pass right now.
 
 ## The one flow to hold in your head
 
@@ -39,7 +39,7 @@ rippls ──► RunEngine ─────────────────�
    each record once its report succeeds (else it stays: a Stale Claim)
 ```
 
-The Ledger in `<git-common-dir>/rippls/ledger/` holds every Claim, the Escalations in `escalations/`, the cleared ones in `cleared/`, and done in `done/`. Its `replacing/` folder holds the new Claim of a Stale Claim replacement until it is written over the stale record. `rippls status` reads it with the Source and changes nothing; `rippls retry <ticket>` reports `retried` and moves the Escalation into `cleared/`, and the next Ticket Processing of the ticket continues in its retained Ticket Worktree.
+The Ledger in `<git-common-dir>/rippls/ledger/` holds every Claim, the Escalations in `escalations/`, the cleared ones in `cleared/`, and done in `done/`. Its `replacing/` folder holds, per ticket, the new Claim of the one caller that is replacing its Stale Claim. `rippls status` reads it with the Source and changes nothing; `rippls retry <ticket>` reports `retried` and moves the Escalation into `cleared/`, and the next Ticket Processing of the ticket continues in its retained Ticket Worktree.
 
 ## Layout: hexagonal, five ports
 
@@ -51,7 +51,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 | `StrategySelector` | [configured.ts](src/Infrastructure/Tickets/StrategySelector/configured.ts) | Kind → Strategy of configured steps (`strategies` in config, defaults in [EngineConfig.ts](src/Core/Shared/Domain/EngineConfig.ts)) |
 | `HarnessSelector` | [configured.ts](src/Infrastructure/Shared/HarnessSelector/configured.ts), [registered.ts](src/Infrastructure/Shared/HarnessSelector/registered.ts) | Sandcastle agent providers |
 | `WorktreeManager` | [sandcastle.ts](src/Infrastructure/Tickets/WorktreeManager/sandcastle.ts) | Sandcastle `createWorktree` + `git merge --no-ff`, the check command through a shell, and `git status --porcelain` for a clean worktree |
-| `Ledger` | [folder.ts](src/Infrastructure/Tickets/Ledger/folder.ts) | One Claim record per ticket in `<git-common-dir>/rippls/ledger/`, Escalations in its `escalations/` folder, cleared ones in `cleared/` ([ADR 0004](docs/adr/0004-read-only-tickets-and-the-ledger.md)) |
+| `Ledger` | [folder.ts](src/Infrastructure/Tickets/Ledger/folder.ts) | One Claim record per ticket in `<git-common-dir>/rippls/ledger/`, Escalations in its `escalations/` folder, cleared ones in `cleared/`, done in `done/`, and the replace of a Stale Claim in `replacing/` ([ADR 0004](docs/adr/0004-read-only-tickets-and-the-ledger.md)) |
 
 `Engine` and `Runner` are plain entities with identities and deliberately have no ports; the orchestration lives in the use cases ([ADR 0001](docs/adr/0001-separate-engine-and-runner-from-orchestration.md)).
 

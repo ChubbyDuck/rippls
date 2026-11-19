@@ -980,8 +980,8 @@ it to a `started` state, and reads it back to confirm. If someone else took the 
 between, or the read fails, the Engine takes another ticket, keeps its Claim until it
 exits, and then reports the release. A release changes only an issue that is still in a
 `started` state and assigned to the API-key user: it returns the issue to an `unstarted`
-state and unassigns it. An issue that a person has taken keeps its assignee and state. Done moves it to a `completed` state, after
-the merge of its ticket branch succeeds.
+state and unassigns it. An issue that a person has taken keeps its assignee and state.
+Done moves an issue to a `completed` state, after the merge of its ticket branch succeeds.
 
 If a Strategy fails, Rippls records the Escalation in its Ledger, unassigns the issue,
 returns it to an `unstarted` state, and adds the `needs-human` label. It does not change

@@ -1,5 +1,6 @@
 import { Effect, Layer } from 'effect';
 
+import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
@@ -22,6 +23,8 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
   const escalated = new Map<TicketId, Escalation>();
   const cleared = new Map<TicketId, Escalation>();
   const done = new Set<TicketId>();
+  const claimOf = (ticket: TicketId, engine: EngineId) =>
+    new Claim({ ticket, engine, process: holder.process, host: holder.host });
   const pick = <A>(records: ReadonlyMap<TicketId, A>, tickets: readonly TicketId[]): ReadonlyMap<TicketId, A> =>
     new Map(
       tickets.flatMap((ticket) => {
@@ -35,7 +38,7 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
         if (claims.has(ticket)) {
           return Effect.fail(new TicketAlreadyClaimed({ ticketId: ticket }));
         }
-        const made = new Claim({ ticket, engine, process: holder.process, host: holder.host });
+        const made = claimOf(ticket, engine);
         claims.set(ticket, made);
         return Effect.succeed(made);
       }),
@@ -59,7 +62,7 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
         if (held?.isSameClaim(stale) !== true) {
           return false;
         }
-        claims.set(stale.ticket, new Claim({ ticket: stale.ticket, engine, process: holder.process, host: holder.host }));
+        claims.set(stale.ticket, claimOf(stale.ticket, engine));
         return true;
       }),
     ticketsClaimedBy: (engine) =>

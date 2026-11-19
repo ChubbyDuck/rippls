@@ -56,9 +56,9 @@ const giveUpClaim = (ticket: Ticket, staleReleaseReported: boolean) =>
   });
 
 // A claimed report that fails may have written to the Source, so the Engine keeps
-// its Claim in the Ledger and takes another ticket. On exit it reports released,
-// which undoes what the report wrote.
-const keepUnconfirmedClaim = (ticket: Ticket) =>
+// its Claim in the Ledger and takes another ticket: nothing removes the record here.
+// On exit it reports released, which undoes what the report wrote.
+const logClaimKept = (ticket: Ticket) =>
   Console.log(
     `${ticket.label} could not be claimed on the Source, so its Claim stays until the Engine exits, taking another ticket`
   );
@@ -99,7 +99,7 @@ const claimIfStillEligible =
       yield* giveUpClaim(ticket, staleReleaseReported);
       return Result.fail(candidate);
     }
-    yield* source.report(ticket.id, 'claimed').pipe(Effect.tapError(() => keepUnconfirmedClaim(ticket)));
+    yield* source.report(ticket.id, 'claimed').pipe(Effect.tapError(() => logClaimKept(ticket)));
     yield* Console.log(`${ticket.label} is claimed`);
     return Result.succeed(ticket);
   }).pipe(
