@@ -5,7 +5,7 @@ import type { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entit
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { doneInSourceIds, type EligibilityFacts, isDoneInSource } from '~/Core/Tickets/Domain/Services/eligibility';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
@@ -30,8 +30,7 @@ export type TicketScope = {
   readonly resolved: ReadonlySet<TicketId>;
 };
 
-const scopeQuery = (project?: Project) =>
-  (project === undefined ? TicketQuery : TicketQuery.byProject(project)).build();
+const scopeQuery = (project?: Project): TicketQuery => (project === undefined ? {} : { project });
 
 const hasBlockerOutside = (tickets: readonly Ticket[]): boolean => {
   const readIds = new Set(tickets.map((ticket) => ticket.id));
@@ -46,7 +45,7 @@ const hasBlockerOutside = (tickets: readonly Ticket[]): boolean => {
 const readForBlockers = (tickets: readonly Ticket[], project?: Project) =>
   project === undefined || !hasBlockerOutside(tickets)
     ? Effect.succeed(tickets)
-    : TicketSource.pipe(Effect.flatMap((source) => source.getManyBy(TicketQuery.build())));
+    : TicketSource.pipe(Effect.flatMap((source) => source.getManyBy({})));
 
 // A Source may leave a blocker out of every read of tickets, as the Linear Source
 // leaves out a completed Issue, so each blocker that no read found and that is not
@@ -56,7 +55,7 @@ const readByIdentity = (blockers: readonly TicketId[]) =>
   Effect.gen(function* () {
     const source = yield* TicketSource;
     const found = yield* Effect.forEach(blockers, (blocker) =>
-      source.getOneBy(TicketQuery.byId(blocker).build()).pipe(Effect.option)
+      source.getOneBy({ id: blocker }).pipe(Effect.option)
     );
     return found.flatMap((ticket) => (Option.isSome(ticket) ? [ticket.value] : []));
   });

@@ -1,30 +1,16 @@
-import { Schema } from 'effect';
+import type { Ticket } from '../Entities/Ticket/entity';
+import type { Project } from '../Entities/Ticket/properties/Project';
+import type { TicketId } from '../Entities/Ticket/properties/TicketId';
 
-import { Project } from '../Entities/Ticket/properties/Project';
-import { TicketId } from '../Entities/Ticket/properties/TicketId';
-
-export const TicketQuerySchema = Schema.Struct({
-  id: Schema.optionalKey(TicketId),
-  project: Schema.optionalKey(Project),
-});
-
-export type TicketQuery = typeof TicketQuerySchema.Type;
-
-export interface TicketQueryChain {
-  byId(id: TicketId): TicketQueryChain;
-  byProject(project: Project): TicketQueryChain;
-  build(): TicketQuery;
-}
-
-type TicketQueryDraft = {
-  id?: TicketId;
-  project?: Project;
+/** What a read of a Source asks for: a ticket by its identity, the tickets of a Project, both, or every ticket. */
+export type TicketQuery = {
+  readonly id?: TicketId;
+  readonly project?: Project;
 };
 
-const chain = (draft: TicketQueryDraft): TicketQueryChain => ({
-  byId: (id) => chain({ ...draft, id }),
-  byProject: (project) => chain({ ...draft, project }),
-  build: () => Object.freeze(Schema.decodeSync(TicketQuerySchema)(draft)),
-});
-
-export const TicketQuery: TicketQueryChain = chain({});
+/** A Ticket matches a query when it has every one of the `id` and `project` the query states. */
+export const matchesQuery =
+  (query: TicketQuery) =>
+  (ticket: Ticket): boolean =>
+    (query.id === undefined || ticket.id === query.id) &&
+    (query.project === undefined || ticket.project === query.project);

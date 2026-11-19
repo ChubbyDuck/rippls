@@ -30,7 +30,7 @@ import { RepositoryRootNotFound } from '~/Core/Tickets/Domain/Exceptions/Reposit
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import { matchesQuery, type TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { renderPrompt } from '~/Core/Tickets/Domain/Services/promptTemplate';
 import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
 import { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCommandError';
@@ -105,12 +105,7 @@ const fakeSource = (
   const scopeReads: TicketQuery[] = [];
   const reports: Reported[] = [];
   const doneReported: TicketId[] = [];
-  const read = (query: TicketQuery) =>
-    Array.from(store.values()).filter(
-      (ticket) =>
-        (query.id === undefined || ticket.id === query.id) &&
-        (query.project === undefined || ticket.project === query.project)
-    );
+  const read = (query: TicketQuery) => Array.from(store.values()).filter(matchesQuery(query));
   const isScopeRead = (query: TicketQuery) => query.id === undefined;
   const layer = Layer.succeed(TicketSource, {
     getOneBy: (query) =>
@@ -382,7 +377,7 @@ test('runEngine reads every ticket in the provided project', async () => {
   expect(
     await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => source.scopeReads.length > 0)
   ).toBeUndefined();
-  expect(source.scopeReads[0]).toEqual(TicketQuery.byProject(project).build());
+  expect(source.scopeReads[0]).toEqual({ project });
 });
 
 test('runEngine does not scope the read when project is omitted', async () => {
@@ -390,7 +385,7 @@ test('runEngine does not scope the read when project is omitted', async () => {
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, StrategySelectorNoop);
 
   expect(await runUntil(runEngine().pipe(Effect.provide(layer)), () => source.scopeReads.length > 0)).toBeUndefined();
-  expect(source.scopeReads[0]).toEqual(TicketQuery.build());
+  expect(source.scopeReads[0]).toEqual({});
 });
 
 test('runEngine takes only Eligible tickets, in the order of the Source', async () => {

@@ -4,7 +4,6 @@ import { expect, test } from 'vitest';
 
 import { engineConfig, resolveTicketSource } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
-import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { LinearApi, type LinearIssue, LinearIssueNotFound } from '~/Core/Tickets/Ports/LinearApi';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
@@ -36,7 +35,7 @@ test('ticketSourceLive reads from the folder source', async () => {
       );
       const resolved = yield* folderSource(dir);
       const tickets = yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.getManyBy(TicketQuery.build())),
+        Effect.flatMap((source) => source.getManyBy({})),
         Effect.provide(ticketSourceLive(resolved).pipe(Layer.provide(Layer.succeed(RepositoryRoot, dir))))
       );
       return tickets.map((ticket) => ticket.title);
@@ -62,7 +61,7 @@ test('ticketSourceLive gives the folder source the default Ticket Kind and its H
       );
       const resolved = yield* resolveTicketSource(config.source, 'folder');
       const tickets = yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.getManyBy(TicketQuery.build())),
+        Effect.flatMap((source) => source.getManyBy({})),
         Effect.provide(
           ticketSourceLive(resolved, config.defaultKind).pipe(Layer.provide(Layer.succeed(RepositoryRoot, dir)))
         )
@@ -111,7 +110,7 @@ test('ticketSourceLive reads from the linear source', async () => {
     Effect.gen(function* () {
       const resolved = yield* linearSource('team-1');
       const tickets = yield* TicketSource.pipe(
-        Effect.flatMap((source) => source.getManyBy(TicketQuery.build())),
+        Effect.flatMap((source) => source.getManyBy({})),
         Effect.provide(ticketSourceLive(resolved).pipe(Layer.provide(api)))
       );
       return tickets.map((ticket) => ticket.title);

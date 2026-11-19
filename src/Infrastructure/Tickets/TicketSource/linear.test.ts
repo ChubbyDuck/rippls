@@ -7,7 +7,7 @@ import { showStatus, ticketStatuses } from '~/Core/Tickets/Application/UseCases/
 import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
-import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import {
   LinearApi,
   type LinearIssue,
@@ -265,8 +265,8 @@ test('a started Issue is read in scope and by identity as claimed on Linear, and
     issue({ id: 'unstarted', createdAt: '2026-02-01T00:00:00.000Z' }),
   ]);
 
-  const inScope = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
-  const byIdentity = await Effect.runPromise(getOneIn(api, TicketQuery.byId(toLinearId('started')).build()));
+  const inScope = await Effect.runPromise(getManyIn(api, {}));
+  const byIdentity = await Effect.runPromise(getOneIn(api, { id: toLinearId('started') }));
 
   expect(inScope.map((ticket) => [ticket.id, ticket.claimedInSource])).toEqual([
     [toLinearId('started'), true],
@@ -335,7 +335,7 @@ test('an Issue with the needs-human label is read as HITL yes, and keeps its kin
     }),
   ]);
 
-  const [read] = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+  const [read] = await Effect.runPromise(getManyIn(api, {}));
 
   expect(read?.kind).toBe('implementation');
   expect(read?.hitl).toBe('yes');
@@ -344,8 +344,8 @@ test('an Issue with the needs-human label is read as HITL yes, and keeps its kin
 test('an Issue with no labels is read with the default Ticket Kind and HITL yes', async () => {
   const api = fakeLinear([issue({ labels: [] })]);
 
-  const [read] = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
-  const [configured] = await Effect.runPromise(getManyIn(api, TicketQuery.build(), { defaultKind: 'research' }));
+  const [read] = await Effect.runPromise(getManyIn(api, {}));
+  const [configured] = await Effect.runPromise(getManyIn(api, {}, { defaultKind: 'research' }));
 
   expect(read?.kind).toBe('implementation');
   expect(read?.hitl).toBe('yes');
@@ -359,7 +359,7 @@ test('a stated kind label implies the HITL of its Ticket Kind', async () => {
     issue({ id: other, labels: [{ id: 'label-proto', name: 'kind:prototype' }], createdAt: '2026-01-02T00:00:00.000Z' }),
   ]);
 
-  const tickets = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+  const tickets = await Effect.runPromise(getManyIn(api, {}));
 
   expect(tickets.map((ticket) => [ticket.kind, ticket.hitl])).toEqual([
     ['implementation', 'no'],
@@ -401,7 +401,7 @@ test('report of retried removes needs-human and leaves the other labels, the ass
   ]);
 
   await Effect.runPromise(reportIn(api, 'retried'));
-  const [read] = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+  const [read] = await Effect.runPromise(getManyIn(api, {}));
 
   expect(api.calls).toEqual([
     { op: 'setLabels', issueId: uuid, addedLabelIds: [], removedLabelIds: ['label-needs-human'] },
@@ -434,7 +434,7 @@ test('getManyBy reads every unstarted and started issue in scope by creation tim
     issue({ id: 'completed', createdAt: '2025-12-01T00:00:00.000Z', stateType: 'completed' }),
   ]);
 
-  const tickets = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
+  const tickets = await Effect.runPromise(getManyIn(api, {}));
 
   expect(tickets.map((ticket) => ticket.id)).toEqual(
     ['claimed', 'blocked', 'attended', 'newest'].map((native) => toLinearId(native))
@@ -450,7 +450,7 @@ test('getManyBy narrows by Project and keeps the creation order', async () => {
     issue({ id: 'earlier', createdAt: '2026-02-01T00:00:00.000Z' }),
   ]);
 
-  const tickets = await Effect.runPromise(getManyIn(api, TicketQuery.byProject('chubby-engine' as never).build()));
+  const tickets = await Effect.runPromise(getManyIn(api, { project: 'chubby-engine' as never }));
 
   expect(tickets.map((ticket) => ticket.id)).toEqual([toLinearId('earlier'), toLinearId('later')]);
 });
@@ -486,7 +486,7 @@ test('getUnreadable reports each offered Issue with an invalid hint, named by it
 test('a read by identity finds a completed Issue as done', async () => {
   const api = fakeLinear([issue({ id: 'completed', stateType: 'completed' })]);
 
-  const byIdentity = await Effect.runPromise(getOneIn(api, TicketQuery.byId(toLinearId('completed')).build()));
+  const byIdentity = await Effect.runPromise(getOneIn(api, { id: toLinearId('completed') }));
 
   expect([byIdentity.id, byIdentity.doneInSource]).toEqual([toLinearId('completed'), true]);
 });
@@ -496,8 +496,8 @@ test.each(['backlog', 'triage', 'canceled'])(
   async (stateType) => {
     const api = fakeLinear([issue({ id: 'elsewhere', stateType })]);
 
-    const offered = await Effect.runPromise(getManyIn(api, TicketQuery.build()));
-    const byIdentity = await Effect.runPromise(getOneIn(api, TicketQuery.byId(toLinearId('elsewhere')).build()));
+    const offered = await Effect.runPromise(getManyIn(api, {}));
+    const byIdentity = await Effect.runPromise(getOneIn(api, { id: toLinearId('elsewhere') }));
 
     expect(offered).toEqual([]);
     expect([byIdentity.id, byIdentity.doneInSource]).toEqual([toLinearId('elsewhere'), false]);

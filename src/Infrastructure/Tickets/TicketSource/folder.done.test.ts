@@ -13,7 +13,6 @@ import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
-import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { StrategySelector } from '~/Core/Tickets/Ports/StrategySelector';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
@@ -304,7 +303,7 @@ const processIn = (root: string, tickets: string, worktree: Worktree) =>
     );
     const processed = yield* Effect.gen(function* () {
       const source = yield* TicketSource;
-      const ticket = yield* source.getOneBy(TicketQuery.byId(ticketId).build());
+      const ticket = yield* source.getOneBy({ id: ticketId });
       return yield* processTicket({ ticket, runnerId, repositoryRoot: root });
     }).pipe(
       Effect.provide(services),

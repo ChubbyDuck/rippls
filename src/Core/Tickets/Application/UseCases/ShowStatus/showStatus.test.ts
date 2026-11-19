@@ -10,7 +10,7 @@ import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Projec
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import { matchesQuery, type TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 
@@ -38,12 +38,7 @@ const ticket = (value: number, fields: Record<string, unknown> = {}) =>
 // A fake Source that keeps tickets in memory, in the order given. A read for the
 // tickets in scope returns every one of them, narrowed only by Project.
 const fakeSource = (tickets: readonly Ticket[], unreadable: readonly UnreadableTicket[] = []) => {
-  const read = (query: TicketQuery) =>
-    tickets.filter(
-      (candidate) =>
-        (query.id === undefined || candidate.id === query.id) &&
-        (query.project === undefined || candidate.project === query.project)
-    );
+  const read = (query: TicketQuery) => tickets.filter(matchesQuery(query));
   return Layer.succeed(TicketSource, {
     getOneBy: (query) =>
       Effect.suspend(() => {

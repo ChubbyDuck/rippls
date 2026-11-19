@@ -1,32 +1,47 @@
 import { Schema } from 'effect';
 import { describe, expect, it } from 'vitest';
 
+import { Ticket } from '../Entities/Ticket/entity';
 import { Project } from '../Entities/Ticket/properties/Project';
-import { TicketId } from '../Entities/Ticket/properties/TicketId';
+import { formatTicketId } from '../Entities/Ticket/properties/TicketId';
 
-import { TicketQuery } from './TicketQuery';
+import { matchesQuery } from './TicketQuery';
 
-const project = Schema.decodeSync(Project)('0003-sandboxed-local-ticket-loop.md');
-const id = Schema.decodeSync(TicketId)('folder:1');
+const id = (value: number) => formatTicketId('folder', String(value));
+const billing = Schema.decodeSync(Project)('billing');
+const web = Schema.decodeSync(Project)('web');
 
-describe('TicketQuery', () => {
-  it('builds a frozen object from the chosen chain', () => {
-    const query = TicketQuery.byProject(project).byId(id).build();
+const ticket = (value: number, project?: Project) =>
+  Ticket.create({ id: id(value), title: `Ticket ${value}`, project, body: '' });
 
-    expect(query).toEqual({ project, id });
-    expect(Object.isFrozen(query)).toBe(true);
+describe('matchesQuery', () => {
+  it('matches by id the ticket with that id, in any Project', () => {
+    const query = { id: id(1) };
+
+    expect(matchesQuery(query)(ticket(1, billing))).toBe(true);
+    expect(matchesQuery(query)(ticket(1))).toBe(true);
+    expect(matchesQuery(query)(ticket(2, billing))).toBe(false);
   });
 
-  it('omits clauses that were not chosen', () => {
-    expect(TicketQuery.byProject(project).build()).toEqual({ project });
-    expect(TicketQuery.build()).toEqual({});
+  it('matches by project every ticket of that Project', () => {
+    const query = { project: billing };
+
+    expect(matchesQuery(query)(ticket(1, billing))).toBe(true);
+    expect(matchesQuery(query)(ticket(2, billing))).toBe(true);
+    expect(matchesQuery(query)(ticket(1, web))).toBe(false);
+    expect(matchesQuery(query)(ticket(1))).toBe(false);
   });
 
-  it('does not mutate an earlier step when the chain continues', () => {
-    const inProject = TicketQuery.byProject(project);
+  it('matches by both only the ticket with that id in that Project', () => {
+    const query = { id: id(1), project: billing };
 
-    expect(inProject.build()).toEqual({ project });
-    expect(inProject.byId(id).build()).toEqual({ project, id });
-    expect(inProject.build()).toEqual({ project });
+    expect(matchesQuery(query)(ticket(1, billing))).toBe(true);
+    expect(matchesQuery(query)(ticket(1, web))).toBe(false);
+    expect(matchesQuery(query)(ticket(2, billing))).toBe(false);
+  });
+
+  it('matches by neither every ticket', () => {
+    expect(matchesQuery({})(ticket(1, billing))).toBe(true);
+    expect(matchesQuery({})(ticket(2))).toBe(true);
   });
 });

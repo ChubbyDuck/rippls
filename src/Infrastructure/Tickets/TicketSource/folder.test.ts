@@ -6,7 +6,7 @@ import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
-import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { doneInSourceIds, isUnblocked } from '~/Core/Tickets/Domain/Services/eligibility';
 import { generateTickets } from '~/Core/Tickets/Application/UseCases/Generate/generate';
 import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/folder';
@@ -53,14 +53,14 @@ const setup = (files: ReadonlyArray<readonly [string, string]>) =>
     return dir;
   });
 
-const getOneIn = (dir: string, query = TicketQuery.build()) =>
+const getOneIn = (dir: string, query: TicketQuery = {}) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.getOneBy(query)),
     Effect.option,
     Effect.provide(withDir(dir))
   );
 
-const getManyIn = (dir: string, query = TicketQuery.build(), fallbacks: Fallbacks = {}) =>
+const getManyIn = (dir: string, query: TicketQuery = {}, fallbacks: Fallbacks = {}) =>
   TicketSource.pipe(
     Effect.flatMap((source) => source.getManyBy(query)),
     Effect.provide(withDir(dir, fallbacks))
@@ -71,7 +71,7 @@ const readAll = (files: ReadonlyArray<readonly [string, string]>, fallbacks: Fal
   Effect.runPromise(
     Effect.gen(function* () {
       const dir = yield* setup(files);
-      const tickets = yield* getManyIn(dir, TicketQuery.build(), fallbacks);
+      const tickets = yield* getManyIn(dir, {}, fallbacks);
       return new Map(tickets.map((ticket) => [ticket.id, ticket]));
     }).pipe(Effect.provide(NodeFs))
   );
@@ -201,7 +201,7 @@ test('getManyBy returns every ticket in scope by numeric filename prefix, lowest
         ['3-claiming.md', frontMatter({ id: 3, title: 'claiming', status: 'claiming', blockedBy: [], ...common })],
         ['4-attended.md', frontMatter({ id: 4, title: 'attended', status: 'ready-for-agent', blockedBy: [], ...common, kind: 'prototype' })],
       ]);
-      return yield* getManyIn(dir, TicketQuery.build());
+      return yield* getManyIn(dir, {});
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -218,7 +218,7 @@ test('getManyBy narrows by Project and keeps the processing order', async () => 
         ['2.md', frontMatter({ id: 2, title: 'no project', blockedBy: [], ...common })],
         ['3.md', frontMatter({ id: 3, title: 'wanted blocked', project: 'wanted', blockedBy: [1], ...common })],
       ]);
-      return yield* getManyIn(dir, TicketQuery.byProject('wanted' as never).build());
+      return yield* getManyIn(dir, { project: 'wanted' as never });
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -243,7 +243,7 @@ test('done leaves its dependent byte for byte unchanged, and the dependent reads
         Effect.provide(withDir(dir))
       );
       const after = yield* fs.readFileString(path.join(dir, '2-dependent.md'));
-      const tickets = yield* getManyIn(dir, TicketQuery.build());
+      const tickets = yield* getManyIn(dir, {});
       return { after, tickets };
     }).pipe(Effect.provide(NodeFs))
   );
@@ -269,7 +269,7 @@ test('getManyBy reads a ticket in done/ as done whatever its front matter says',
         frontMatter({ id: 1, title: 'moved by hand', status: 'ready-for-agent', ...common })
       );
       yield* fs.writeFileString(path.join(dir, 'done', 'notes.md'), 'Not a ticket.\n');
-      return yield* getManyIn(dir, TicketQuery.build());
+      return yield* getManyIn(dir, {});
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -289,7 +289,7 @@ test('getManyBy narrows the done tickets by Project too', async () => {
       yield* fs.makeDirectory(path.join(dir, 'done'));
       yield* fs.writeFileString(path.join(dir, 'done', '1.md'), frontMatter({ id: 1, title: 'wanted', project: 'wanted', ...common }));
       yield* fs.writeFileString(path.join(dir, 'done', '2.md'), frontMatter({ id: 2, title: 'other', project: 'other', ...common }));
-      return yield* getManyIn(dir, TicketQuery.byProject('wanted' as never).build());
+      return yield* getManyIn(dir, { project: 'wanted' as never });
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -304,7 +304,7 @@ test('getOneBy returns the ticket with the lowest number', async () => {
         ['4.md', frontMatter({ id: 4, title: 'high', ...common })],
         ['3.md', frontMatter({ id: 3, title: 'low', ...common })],
       ]);
-      return yield* getOneIn(dir, TicketQuery.build());
+      return yield* getOneIn(dir, {});
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -319,7 +319,7 @@ test('getOneBy filters by project', async () => {
         ['1.md', frontMatter({ id: 1, title: 'other', project: 'other', ...common })],
         ['2.md', frontMatter({ id: 2, title: 'wanted', project: 'wanted', ...common })],
       ]);
-      return yield* getOneIn(dir, TicketQuery.byProject('wanted' as never).build());
+      return yield* getOneIn(dir, { project: 'wanted' as never });
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -334,7 +334,7 @@ test('getOneBy by project skips a ticket that omits project', async () => {
         ['1.md', frontMatter({ id: 1, title: 'no project', ...common })],
         ['2.md', frontMatter({ id: 2, title: 'wanted', project: 'wanted', ...common })],
       ]);
-      return yield* getOneIn(dir, TicketQuery.byProject('wanted' as never).build());
+      return yield* getOneIn(dir, { project: 'wanted' as never });
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -402,7 +402,7 @@ test('getManyBy scopes to the project and returns an empty array when none match
       const dir = yield* setup([
         ['1.md', frontMatter({ id: 1, title: 'other project', project: 'other', status: 'claimed', claimedBy: 'runner-1', ...common })],
       ]);
-      return yield* getManyIn(dir, TicketQuery.byProject('wanted' as never).build());
+      return yield* getManyIn(dir, { project: 'wanted' as never });
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -417,7 +417,7 @@ test('getOneBy by identity fills the body of the returned ticket only', async ()
         ['1.md', frontMatter({ id: 1, title: 'other', blockedBy: [], ...common }) + 'Skipped body.\n'],
         ['2.md', frontMatter({ id: 2, title: 'wanted', blockedBy: [], ...common }) + 'Returned body.\n'],
       ]);
-      return yield* getOneIn(dir, TicketQuery.byId(formatTicketId('folder', '2')).build());
+      return yield* getOneIn(dir, { id: formatTicketId('folder', '2') });
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -507,7 +507,7 @@ test('getManyBy reads the tickets that the generator wrote', async () => {
         Effect.provide(fixtureWriterFolderLive(dir))
       );
       const tickets = yield* getManyIn(dir);
-      const second = yield* getOneIn(dir, TicketQuery.byId(formatTicketId('folder', '2')).build());
+      const second = yield* getOneIn(dir, { id: formatTicketId('folder', '2') });
       return { tickets, second };
     }).pipe(Effect.provide(NodeFs))
   );
@@ -839,7 +839,7 @@ const readLocked = (files: ReadonlyArray<readonly [string, string]>, locks: Read
         Effect.andThen(
           TicketSource.pipe(
             Effect.flatMap((source) =>
-              Effect.all({ tickets: source.getManyBy(TicketQuery.build()), unreadable: source.getUnreadable })
+              Effect.all({ tickets: source.getManyBy({}), unreadable: source.getUnreadable })
             ),
             Effect.provide(withDir(dir))
           )
@@ -1065,7 +1065,7 @@ test('getOneBy finds a ticket of a feature folder by its identity', async () => 
         ['1.md', '# Root\n'],
         ['auth/1.md', '# Auth\n'],
       ]);
-      return yield* getOneIn(dir, TicketQuery.byId(featureId('auth', 1)).build());
+      return yield* getOneIn(dir, { id: featureId('auth', 1) });
     }).pipe(Effect.provide(NodeFs))
   );
 
@@ -1080,7 +1080,7 @@ test('getManyBy narrows by the Project derived from the feature folder', async (
         ['auth/1.md', '# Auth\n'],
         ['billing/1.md', '# Billing\n'],
       ]);
-      return yield* getManyIn(dir, TicketQuery.byProject('auth' as never).build());
+      return yield* getManyIn(dir, { project: 'auth' as never });
     }).pipe(Effect.provide(NodeFs))
   );
 

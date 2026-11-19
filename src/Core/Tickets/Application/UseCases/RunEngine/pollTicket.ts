@@ -6,7 +6,6 @@ import type { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { type EligibilityFacts, isEligible } from '~/Core/Tickets/Domain/Services/eligibility';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
@@ -70,7 +69,7 @@ const claimIfStillEligible =
   Effect.gen(function* () {
     const source = yield* TicketSource;
     const ledger = yield* Ledger;
-    const fresh = yield* source.getOneBy(TicketQuery.byId(candidate.id).build()).pipe(Effect.option);
+    const fresh = yield* source.getOneBy({ id: candidate.id }).pipe(Effect.option);
     if (Option.isNone(fresh) || !isEligible(fresh.value, facts)) {
       return Result.fail(candidate);
     }

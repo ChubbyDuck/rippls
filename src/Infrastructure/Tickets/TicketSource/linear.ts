@@ -8,7 +8,7 @@ import { parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Tic
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import { matchesQuery, type TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { LinearApi, type LinearIssue, type LinearMetadata } from '~/Core/Tickets/Ports/LinearApi';
 import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import type { Worktree } from '~/Core/Tickets/Ports/WorktreeManager';
@@ -49,18 +49,6 @@ const isNoOp = (write: LinearWrite, issue: LinearIssue): boolean => {
     }
   }
 };
-
-const matchesQuery =
-  (query: TicketQuery) =>
-  (ticket: Ticket): boolean => {
-    if (query.id !== undefined && ticket.id !== query.id) {
-      return false;
-    }
-    if (query.project !== undefined && ticket.project !== query.project) {
-      return false;
-    }
-    return true;
-  };
 
 const toTickets = (issues: readonly LinearIssue[], defaultKind: TicketKind, query: TicketQuery): readonly Ticket[] => {
   const dated = issues.flatMap((issue) =>

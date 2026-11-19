@@ -11,7 +11,6 @@ The `TicketId` was a positive integer, which fit the local folder source but not
 
 - The domain never branches on source. Only a routing (combined) source parses the id namespace to decide where a write goes.
 - The folder source keeps numeric filenames and numeric `blockedBy` on disk. It applies the `folder:` namespace in memory only, so there is no on-disk migration.
-- A query sort can no longer assume a numeric, orderable id, so the sort carries a direction only and each source orders by its own natural key.
 
 ## The folder part
 

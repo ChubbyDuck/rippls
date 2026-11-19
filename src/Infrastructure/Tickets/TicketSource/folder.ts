@@ -17,7 +17,7 @@ import { detailOf, UnreadableTicket } from '~/Core/Tickets/Domain/Entities/Unrea
 import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
-import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
+import { matchesQuery, type TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
 import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 import type { Worktree } from '~/Core/Tickets/Ports/WorktreeManager';
 
@@ -326,18 +326,6 @@ const fileToTicket = (text: string, file: TicketFile, fallbacks: TicketFallbacks
 
 /** The fixed message of the commit that moves a ticket into `done/` on its ticket branch. */
 export const doneMoveMessage = (ticket: TicketId): string => `chore: move ticket ${ticket} to done`;
-
-const matchesQuery =
-  (query: TicketQuery) =>
-  (ticket: Ticket): boolean => {
-    if (query.id !== undefined && ticket.id !== query.id) {
-      return false;
-    }
-    if (query.project !== undefined && ticket.project !== query.project) {
-      return false;
-    }
-    return true;
-  };
 
 // The processing order: the tickets that are not done, then those in a `done/`,
 // each by folder, then by number, lowest first.
