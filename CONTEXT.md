@@ -93,8 +93,10 @@ _Avoid_: Lock, take, checkout
 A Claim whose process no longer runs on this host. A Claim from another host is
 never stale. The Engine replaces a Stale Claim when it takes the ticket, which
 counts as a release for the Source. Only the Engine that wins the replacement of
-its record reports that release. An Engine that cannot report the release of its own
-Claim on exit leaves its record, which is then a Stale Claim.
+its record reports that release. An Engine that cannot report the end of its own
+Claim on exit leaves its record, which is then a Stale Claim. On an escalated or done
+Ticket, the Engine that replaces a Stale Claim reports that end state instead and does
+not take the Ticket.
 _Avoid_: Dead lock, orphan, abandoned Claim
 
 **Escalation**:

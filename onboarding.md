@@ -1,6 +1,6 @@
 # Rippls in one sitting
 
-**What it is:** a CLI (`rippls`) you run inside any Git repo. It pulls tickets from a folder of Markdown files or from Linear, hands each one to a coding-agent CLI (Claude Code, Codex, Cursor, OpenCode) in an isolated Git worktree, then merges the result or escalates to a human. It is about 5,800 lines of TypeScript on Effect 4 (RC), with 10,500 lines of tests. Tests (506), typecheck and lint all pass right now.
+**What it is:** a CLI (`rippls`) you run inside any Git repo. It pulls tickets from a folder of Markdown files or from Linear, hands each one to a coding-agent CLI (Claude Code, Codex, Cursor, OpenCode) in an isolated Git worktree, then merges the result or escalates to a human. It is about 5,900 lines of TypeScript on Effect 4 (RC), with 10,700 lines of tests. Tests (515), typecheck and lint all pass right now.
 
 ## The one flow to hold in your head
 
@@ -29,14 +29,19 @@ rippls ──► RunEngine ─────────────────�
      success           failure of a step, the check, the commit,          │
      report `done`     or the done report:                                │
      (folder: move     keep worktree, record Escalation in                │
-     into done/),      Ledger, release Claim, report                      │
-     merge + close,    `escalated`, HALT THE WHOLE ENGINE                 │
-     record done in                                                       │
-     Ledger, release                                                      │
-     Claim                                                                │
+     into done/),      Ledger, report `escalated`,                        │
+     merge + close,    release Claim once it succeeds,                    │
+     record done in    HALT THE WHOLE ENGINE                              │
+     Ledger, finish                                                       │
+     done on the                                                          │
+     Source, release                                                      │
+     Claim once that                                                      │
+     succeeds                                                             │
                                                                           │
-   on exit: report `released` for this Engine's Claims, and remove ◄─────┘
-   each record once its report succeeds (else it stays: a Stale Claim)
+   on exit: report the end state the Ledger shows (`done`, ◄─────────────┘
+   `escalated`, else `released`) for this Engine's Claims, and remove
+   each record once its report succeeds (else it stays: a Stale Claim,
+   which the next Engine finishes)
 ```
 
 The Ledger in `<git-common-dir>/rippls/ledger/` holds every Claim, the Escalations in `escalations/`, the cleared ones in `cleared/`, and done in `done/`. Its `replacing/` folder holds, per ticket, the new Claim of the one caller that is replacing its Stale Claim. `rippls status` reads it with the Source and changes nothing; `rippls retry <ticket>` reports `retried` and moves the Escalation into `cleared/`, and the next Ticket Processing of the ticket continues in its retained Ticket Worktree.
@@ -59,7 +64,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 
 1. [CONTEXT.md](CONTEXT.md) is the vocabulary; every name in the code comes from it.
 2. [src/index.ts](src/index.ts) defines the CLI flags and wires all the layers together.
-3. [runEngine.ts](src/Core/Tickets/Application/UseCases/RunEngine/runEngine.ts) holds the runner pool, the stream, the idle timeout and the release on exit.
+3. [runEngine.ts](src/Core/Tickets/Application/UseCases/RunEngine/runEngine.ts) holds the runner pool, the stream, the idle timeout and the end of each Claim on exit.
 4. [processTicket.ts](src/Core/Tickets/Application/UseCases/ProcessTicket/processTicket.ts) is the lifecycle in the diagram above.
 5. [entity.ts](src/Core/Tickets/Domain/Entities/Ticket/entity.ts) is the Ticket: an identity, a Title, and a body, with every other field read as a hint with a fallback. It has no transitions: the Claim, the Escalation, and done live in the Ledger, and done also in the Source.
 6. [configured.ts](src/Infrastructure/Tickets/StrategySelector/configured.ts) runs a Strategy: its configured steps in order, each with its own prompt, model demand, time limit, retries, and optional verdict.

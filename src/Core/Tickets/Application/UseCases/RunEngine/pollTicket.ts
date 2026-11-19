@@ -1,6 +1,7 @@
 import { Console, Effect, Option, Result } from 'effect';
 
 import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
+import { endSaga } from '~/Core/Tickets/Application/Services/endSaga';
 import { readTicketScope } from '~/Core/Tickets/Application/Services/ticketScope';
 import type { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
@@ -109,6 +110,35 @@ const claimIfStillEligible =
     })
   );
 
+// A Stale Claim on a ticket that is escalated or done is the record of a stopped
+// saga: its Engine could not report the end state. The Engine that wins the
+// replacement ends the saga with the report that the Ledger shows, and removes the
+// record once the Source accepts it. It never takes the ticket. When the report
+// fails, its Claim stays until the Engine exits, which reports again.
+const finishStoppedSagas = (
+  engine: EngineId,
+  tickets: readonly Ticket[],
+  stale: ReadonlyMap<TicketId, Claim>,
+  facts: EligibilityFacts
+) =>
+  Effect.forEach(
+    tickets.filter((ticket) => stale.has(ticket.id) && (facts.done.has(ticket.id) || facts.escalated.has(ticket.id))),
+    (ticket) =>
+      Effect.gen(function* () {
+        const staleClaim = stale.get(ticket.id);
+        if (staleClaim === undefined || !(yield* replaceStale(ticket, staleClaim, engine))) {
+          return;
+        }
+        yield* endSaga(ticket.id).pipe(
+          Effect.andThen(Console.log(`${ticket.label} has its stopped saga finished, not taking it`)),
+          Effect.catchTag('TicketEventNotReported', (error) =>
+            Console.error(`${ticket.label} could not have its stopped saga finished on the Source, so its Claim stays`, error)
+          )
+        );
+      }),
+    { discard: true }
+  );
+
 // The Source returns every ticket in scope in its processing order, done ones
 // included, the Ledger holds the Claims and Escalations, and the core rule picks
 // the Eligible tickets. A ticket whose only Claim is a Stale Claim is Unclaimed,
@@ -117,6 +147,7 @@ const claimIfStillEligible =
 const claimNextEligibleTicket = (engine: EngineId, project?: Project) =>
   Effect.gen(function* () {
     const { tickets, stale, facts } = yield* readTicketScope(project);
+    yield* finishStoppedSagas(engine, tickets, stale, facts);
     const eligible = tickets.filter((ticket) => isEligible(ticket, facts));
     return yield* Effect.findFirstFilter(eligible, claimIfStillEligible(engine, facts, stale));
   });

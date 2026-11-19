@@ -14,7 +14,7 @@ import { fallbackHitl, Hitl } from '~/Core/Tickets/Domain/Entities/Ticket/proper
 import { Marker } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Marker';
 import { formatTicketId, parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { detailOf, UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
-import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import { matchesQuery, type TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -456,7 +456,7 @@ export const TicketSourceFolderLive = Layer.effect(
       });
 
       // The folder Source keeps no trace of a Claim or an escalation: the Ledger holds them.
-      const report = (_ticket: TicketId, _event: ReportedEvent): Effect.Effect<void> => Effect.void;
+      const report = (_ticket: TicketId, _event: TicketEvent): Effect.Effect<void> => Effect.void;
 
       const notReported = (ticket: TicketId) => () => new TicketEventNotReported({ ticketId: ticket, event: 'done' });
 

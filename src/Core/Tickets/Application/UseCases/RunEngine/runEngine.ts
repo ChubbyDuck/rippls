@@ -5,8 +5,8 @@ import { defaultIdleTimeout, defaultPollInterval } from '~/Core/Shared/Domain/En
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { endSaga } from '~/Core/Tickets/Application/Services/endSaga';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
-import { TicketSource } from '~/Core/Tickets/Ports/TicketSource';
 
 import { processTicket } from '../ProcessTicket/processTicket';
 import type { RunEngineCommand } from './command';
@@ -16,22 +16,17 @@ import { makeIdleClock } from './idleClock';
 import { reportUnreadable } from './reportUnreadable';
 import { ticketStream } from './ticketStream';
 
-// On exit the Engine releases only the Claims it holds. It reports each release to
-// the Source, and removes the record of the Claim only once that report succeeds.
-// A record whose release was not reported stays: once the Engine has exited, it is
-// a Stale Claim, which a later run replaces. The Claims of other Engines stay in
-// place.
+// On exit the Engine ends the saga of the Claims it holds, and only of those. The
+// end state it reports follows the Ledger: done, escalated, or released. It removes
+// the record of a Claim only once that report succeeds. A record whose report
+// failed stays: once the Engine has exited, it is a Stale Claim, which a later run
+// finishes. The Claims of other Engines stay in place.
 const releaseOwnClaim = (ticket: TicketId) =>
-  Effect.gen(function* () {
-    const ledger = yield* Ledger;
-    const source = yield* TicketSource;
-    yield* source.report(ticket, 'released');
-    yield* ledger.release(ticket);
-  }).pipe(
+  endSaga(ticket).pipe(
     Effect.catchTags({
       TicketEventNotReported: (error) =>
-        Console.error(`Failed to report the release of ticket ${ticket} after the run, so its Claim stays in the Ledger`, error),
-      LedgerError: (error) => Console.error(`Failed to release the Claim on ticket ${ticket} after the run`, error),
+        Console.error(`Failed to report the end of ticket ${ticket} after the run, so its Claim stays in the Ledger`, error),
+      LedgerError: (error) => Console.error(`Failed to end the Claim on ticket ${ticket} after the run`, error),
     })
   );
 

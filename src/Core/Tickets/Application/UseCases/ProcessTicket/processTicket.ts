@@ -18,9 +18,10 @@ import type { ProcessTicketCommand } from './command';
 import { prepareTicketWorktree } from './prepareTicketWorktree';
 
 // A failed ticket keeps its content. The Ledger records the Escalation with the
-// retained Ticket Worktree, the Claim is released, and the Source hears escalated.
-// A report that fails is only logged, since the Ledger holds the Escalation. The
-// Engine then halts.
+// retained Ticket Worktree, the Source hears escalated, and only then is the Claim
+// released. A report that fails is logged, and the Claim stays: the exit that
+// follows the halt reports escalated again, and a later Engine that meets the
+// record finishes it. The Engine then halts.
 const escalate = (ticket: Ticket, worktree: Worktree, reason: string) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
@@ -29,20 +30,23 @@ const escalate = (ticket: Ticket, worktree: Worktree, reason: string) =>
     yield* Console.error(
       `${ticket.label} failed (${reason}) and is escalated after ${escalation.attempts} attempt(s); its Ticket Worktree is retained at ${worktree.path}`
     );
-    yield* ledger.release(ticket.id);
-    yield* source
-      .report(ticket.id, 'escalated')
-      .pipe(Effect.catch((error) => Console.error(`Failed to report the escalation of ticket ${ticket.id}`, error)));
+    yield* source.report(ticket.id, 'escalated').pipe(
+      Effect.andThen(ledger.release(ticket.id)),
+      Effect.catchTag('TicketEventNotReported', (error) =>
+        Console.error(`Failed to report the escalation of ticket ${ticket.id}, so its Claim stays in the Ledger`, error)
+      )
+    );
     return yield* new EngineHalted({ ticketId: ticket.id, reason });
   });
 
 // A ticket is done exactly when its work has landed. The Source hears done before
 // the merge, so what it changes in the Ticket Worktree lands with the work; a
-// report that fails is a failure of Ticket Processing. Once the merge succeeds,
-// the Source finishes what it could not do before it, the Ledger records done,
-// and the Claim is released. A failed merge halts the Engine with no done in the
-// Ledger. A failure after the merge is only logged: the work has landed and the
-// Ledger records done.
+// report that fails is a failure of Ticket Processing. A failed merge halts the
+// Engine with no done in the Ledger. Once the merge succeeds, the Ledger records
+// done, the Source finishes what it could not do before the merge, and only then
+// is the Claim released. A failure after the merge does not undo the work: it is
+// logged, and the Claim stays, so the exit that follows completes the ticket on the
+// Source again, and a later Engine that meets the record finishes it.
 const landDone = (ticket: Ticket, worktree: Worktree) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
@@ -61,12 +65,17 @@ const landDone = (ticket: Ticket, worktree: Worktree) =>
         Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'worktree close failure' }))
       )
     );
-    yield* afterMerge.pipe(
-      Effect.catch((error) => Console.error(`${ticket.label} could not be moved to done on the Source after the merge`, error))
-    );
     yield* ledger.recordDone(ticket.id);
     yield* Console.log(`${ticket.label} is done`);
-    yield* ledger.release(ticket.id);
+    yield* afterMerge.pipe(
+      Effect.andThen(ledger.release(ticket.id)),
+      Effect.catchTag('TicketEventNotReported', (error) =>
+        Console.error(
+          `${ticket.label} could not be completed on the Source after the merge, so its Claim stays in the Ledger`,
+          error
+        )
+      )
+    );
   });
 
 // A step after the Strategy that the Worktree Manager or the Harness cannot carry

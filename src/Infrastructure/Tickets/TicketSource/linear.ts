@@ -5,7 +5,7 @@ import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import type { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import { parseTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import { matchesQuery, type TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -165,6 +165,16 @@ export const TicketSourceLinearLive = Layer.effect(
         )
       );
 
+    // The completion writes only to an Issue that Rippls still holds, as a release
+    // does: an Issue already completed, or one that a person has taken, is left as
+    // it is, so the report can run again.
+    const completeIfHeld = (issueId: string, metadata: LinearMetadata) =>
+      api.issue(issueId).pipe(
+        Effect.flatMap((current) =>
+          isHeld(current, metadata) ? applyNeeded(issueId, doneWrites(issueId, metadata)) : Effect.void
+        )
+      );
+
     // A Claim on Linear is confirmed by reading the Issue back: another user or
     // workspace may have taken it in between, and then the report fails.
     const confirmClaim = (issueId: string, metadata: LinearMetadata) =>
@@ -177,7 +187,7 @@ export const TicketSourceLinearLive = Layer.effect(
 
     const report = (
       ticket: TicketId,
-      event: ReportedEvent
+      event: TicketEvent
     ): Effect.Effect<void, TicketEventNotReported> =>
       Effect.gen(function* () {
         const metadata = yield* api.metadata(teamId);
@@ -204,12 +214,16 @@ export const TicketSourceLinearLive = Layer.effect(
           case 'retried':
             yield* applyNeeded(issueId, retryWrites(issueId, metadata));
             return;
+          case 'done':
+            yield* completeIfHeld(issueId, metadata);
+            return;
         }
       }).pipe(Effect.mapError(() => new TicketEventNotReported({ ticketId: ticket, event })));
 
     // Done on Linear is a workflow state, so nothing of it lands with the work. The
     // report writes nothing, and the Issue moves to a completed state only after a
-    // merge that succeeds, so a failed merge leaves it as it is.
+    // merge that succeeds, so a failed merge leaves it as it is. When that move
+    // fails, the Engine reports done again, which completes the Issue.
     const reportDone = (ticket: TicketId, _worktree: Worktree): Effect.Effect<AfterMerge, TicketEventNotReported> =>
       Effect.succeed(
         api.metadata(teamId).pipe(

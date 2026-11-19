@@ -9,7 +9,7 @@ import { Claim } from '~/Core/Tickets/Domain/Entities/Claim/entity';
 import { Escalation } from '~/Core/Tickets/Domain/Entities/Escalation/entity';
 import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
-import type { ReportedEvent, TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
 import { StrategyNotFound } from '~/Core/Tickets/Domain/Exceptions/StrategyNotFound';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
@@ -174,7 +174,7 @@ test('processTicket runs a ticket that omits project', () => {
 
 const failingServices = (
   doneReported: TicketId[],
-  report: (ticket: TicketId, event: ReportedEvent) => Effect.Effect<void, TicketEventNotReported> = () => Effect.void
+  report: (ticket: TicketId, event: TicketEvent) => Effect.Effect<void, TicketEventNotReported> = () => Effect.void
 ) =>
   Layer.mergeAll(
     Layer.succeed(HarnessSelector, {
@@ -232,7 +232,7 @@ test('processTicket escalates the ticket in the Ledger with the failed step as t
   );
 });
 
-test('processTicket keeps the escalation, logs the failed report, and halts when the Source cannot report it', () => {
+test('processTicket keeps the escalation and the Claim, logs the failed report, and halts when the Source cannot report it', () => {
   const ledger = ledgerClaiming(ticket);
   const errors: string[] = [];
   const capturing: Console.Console = Object.assign(Object.create(console), {
@@ -253,8 +253,10 @@ test('processTicket keeps the escalation, logs the failed report, and halts when
 
   expect(halt).toBeInstanceOf(EngineHalted);
   expect(ledger.escalated.has(ticket.id)).toBe(true);
-  expect(ledger.claims.size).toBe(0);
-  expect(errors).toContain(`Failed to report the escalation of ticket ${ticket.id} TicketEventNotReported`);
+  expect(ledger.claims.has(ticket.id)).toBe(true);
+  expect(errors).toContain(
+    `Failed to report the escalation of ticket ${ticket.id}, so its Claim stays in the Ledger TicketEventNotReported`
+  );
 });
 
 test('processTicket propagates a missing strategy and does not mark the ticket done', () => {

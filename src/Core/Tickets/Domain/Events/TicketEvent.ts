@@ -4,6 +4,3 @@ import { Schema } from 'effect';
 export const TicketEvent = Schema.Literals(['claimed', 'released', 'escalated', 'retried', 'done']);
 
 export type TicketEvent = typeof TicketEvent.Type;
-
-/** An event told with `report`. Done is told with `reportDone`, since it carries the Ticket Worktree. */
-export type ReportedEvent = Exclude<TicketEvent, 'done'>;

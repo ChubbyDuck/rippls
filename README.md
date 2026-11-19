@@ -67,13 +67,14 @@ Worktrees.
   a Ticket Worktree with uncommitted work gets the commit prompt (see
   [Commit prompt](#commit-prompt)).
 9. Once the Ticket Worktree is clean, reports done to the Source, merges the ticket
-  branch, records done in the Ledger, and releases its Claim (see
-  [Completion and `done/`](#completion-and-done)).
+  branch, records done in the Ledger, completes the ticket on the Source, and then
+  releases its Claim (see [Completion and `done/`](#completion-and-done)).
 10. On Strategy failure, a check that still fails after its fix attempts, work that is
   still uncommitted after the commit prompt, or a done report the Source does not
   accept, retains the worktree, records an
-  **Escalation** in the Ledger, releases the Claim, and reports the escalation to the
-  Source. The ticket keeps its kind and `hitl`.
+  **Escalation** in the Ledger, reports the escalation to the Source, and then releases
+  the Claim. The ticket keeps its kind and `hitl`. When the report fails, the Claim stays
+  (see [Escalation](#escalation)).
 
 The **Limit** caps Tickets taken from the stream, rather than successful completions.
 The Engine finishes processing the Tickets it has taken, or stops after the configured
@@ -277,8 +278,9 @@ folder:3 has a blocker that cannot be resolved, so it stays blocked: folder:99
 unreadable files whatever their Project, since an unreadable file's Project cannot be
 read.
 
-Use `Ctrl-C` to stop a run. On exit an Engine releases only the Claims it holds and
-reports each release to the Source. The Claims of another Engine on the same
+Use `Ctrl-C` to stop a run. On exit an Engine ends only the Claims it holds, and reports
+to the Source the end state that the Ledger shows for each: done, escalated, or released.
+The Claims of another Engine on the same
 Repository Root stay in place, so two Engines can run side by side.
 
 ## Ticket status
@@ -343,11 +345,12 @@ included.
 A Claim is made by creating its record exclusively, so only one Engine can claim a
 ticket. The record names the Engine, its process ID, and its host, and the Runner once
 the ticket is handed to one. The Engine claims a ticket when it takes it from the
-Ticket Stream, and releases the Claim when the ticket is done or when the Engine exits.
+Ticket Stream, and removes the Claim when the ticket is done or escalated and the Source
+has heard it, or when the Engine exits.
 
 The Engine reports each Claim to the Source. When the Source cannot confirm it, the
 report may still have changed the ticket there, so the Engine keeps the Claim, does not
-process the ticket, and takes another one. It reports the release when it exits.
+process the ticket, and takes another one. It reports the end state when it exits.
 
 ### Stale Claims
 
@@ -373,14 +376,20 @@ removing by hand. When the Engine looks for its next ticket and meets a Stale Cl
   again. If a person has taken the issue in the meantime, the released report leaves it
   as it is, the claimed report fails, and the person keeps the issue.
 
+A Stale Claim on a ticket that the Ledger shows as escalated or done is not replaced to
+take the ticket. The Engine that wins the replacement reports the end state (escalated,
+or done, which completes the ticket on the Source as after the merge), removes the record
+once the Source accepts the report, and does not take the ticket. When the report fails,
+its Claim stays until the Engine exits, and the exit reports again.
+
 If the released report fails, the Engine still holds its new Claim and goes on to the
 claimed report. If that report fails, as it does on Linear for an issue that is still
 started, the ticket is not processed, and the Engine reports the release again when it
 exits.
 
 On exit, an Engine removes the record of each of its Claims only after the Source accepts
-its released report. When the report fails, the record stays, and it becomes a Stale
-Claim that a later run replaces. A Claim from another host stays until someone removes its
+the report of its end state: done, escalated, or released, as the Ledger shows. When the
+report fails, the record stays, and it becomes a Stale Claim that a later run finishes. A Claim from another host stays until someone removes its
 record from the Ledger folder.
 
 ## Completion and `done/`
@@ -391,7 +400,14 @@ a ticket to mark it done. When the Strategy succeeds, the Engine:
 1. reports done to the Source,
 2. merges the ticket branch and closes the Ticket Worktree,
 3. records done in the Ledger,
-4. releases the Claim.
+4. completes the ticket on the Source, which for a folder ticket outside Git or a Linear
+   issue is the step that cannot run before the merge,
+5. releases the Claim.
+
+The Claim stays until the Source has completed the ticket. When that step fails after the
+merge, the work has landed and the Ledger records done, so the failure is logged, the
+Claim stays until the Engine exits, and the exit completes the ticket again. A later
+Engine that meets the record as a Stale Claim does the same.
 
 A merge that fails halts the Engine, and the Ledger records no done. The log says why:
 what Git wrote, such as the conflicting files, or that a merge is already in progress in
@@ -441,8 +457,9 @@ not accept the done report, the Engine escalates the ticket and halts the run:
    - `strategy failure: step 2, Harness error`
    - `strategy failure: step 2, time limit reached`
    - `strategy failure: step 2, verdict other than pass`
-2. It releases the Claim.
-3. It reports the escalation to the Source.
+2. It reports the escalation to the Source.
+3. It releases the Claim once the Source has accepted the report. When the report fails,
+   the Claim stays, and the exit that follows the halt reports the escalation again.
 
 The ticket itself is not changed: it keeps its kind and `hitl`. An escalated ticket is
 not Eligible, in this run or a later one, until it is retried. Each Escalation is a

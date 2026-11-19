@@ -24,7 +24,7 @@ import { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
-import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
 import { RepositoryRootNotFound } from '~/Core/Tickets/Domain/Exceptions/RepositoryRootNotFound';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
@@ -88,14 +88,14 @@ const id = (value: number) => formatTicketId('folder', String(value));
 // event is recorded, and every ticket reported done. A done report changes
 // nothing in the store, as for a Project ticket whose move has not reached the
 // Repository Root: the Ledger alone makes the ticket done.
-type Reported = { readonly ticket: TicketId; readonly event: ReportedEvent };
+type Reported = { readonly ticket: TicketId; readonly event: TicketEvent };
 
 const fakeSource = (
   seed: readonly Ticket[] = [],
   options: {
     readonly report?: (
       ticket: TicketId,
-      event: ReportedEvent
+      event: TicketEvent
     ) => Effect.Effect<void, TicketEventNotReported>;
     readonly reportDone?: (ticket: TicketId, worktree: Worktree) => Effect.Effect<AfterMerge, TicketEventNotReported>;
     readonly unreadable?: readonly UnreadableTicket[];
@@ -985,11 +985,14 @@ test('runEngine keeps the Claim on a ticket completed since the read when it cou
     )
   ).toBeUndefined();
   expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
-  expect(ledger.claims.get(id(1))?.engine).toBe(engineId);
-  expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
+  // The Claim stayed until the exit, which reported the end state that the Ledger
+  // shows, done, in place of the release that had failed.
+  expect(ledger.claims.has(id(1))).toBe(false);
+  expect(source.reports).toContainEqual({ ticket: id(1), event: 'done' });
+  expect(source.reports).not.toContainEqual({ ticket: id(1), event: 'released' });
 });
 
-test('runEngine reports done to the Source, merges and closes, records done in the Ledger, then releases the Claim', async () => {
+test('runEngine reports done to the Source, merges and closes, records done in the Ledger, finishes the Source, then releases the Claim', async () => {
   const timeline: string[] = [];
   const ledger = timelineLedger(timeline);
   const source = fakeSource([sampleTicket(1)], {
@@ -1016,8 +1019,8 @@ test('runEngine reports done to the Source, merges and closes, records done in t
   expect(timeline).toEqual([
     `done reported ${id(1)}`,
     'merge and close',
-    `after the merge ${id(1)}`,
     `done in the Ledger ${id(1)}`,
+    `after the merge ${id(1)}`,
     `Claim released ${id(1)}`,
   ]);
 });
@@ -1509,6 +1512,165 @@ test('runEngine keeps its new Claim when the release of a Stale Claim fails, doe
   ]);
 });
 
+// A Stale Claim of a stopped Engine on a ticket that the Ledger shows as escalated
+// or done: its Engine could not report the end state.
+const staleClaimOn = (ledger: ReturnType<typeof makeLedgerMemory>, ticket: TicketId) =>
+  ledger.claims.set(ticket, new Claim({ ticket, engine: otherEngine, process: 2, host: 'memory' }));
+
+const escalationOf = (ticket: TicketId) =>
+  new Escalation({ ticket, reason: 'strategy failure', attempts: 1, worktree: `/repo/.sandcastle/worktrees/ticket-${ticket}` });
+
+test('runEngine removes the Claim of an escalated ticket only after the Source accepts the escalated report', () => {
+  const timeline: string[] = [];
+  const ledger = timelineLedger(timeline);
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    report: (ticket, event) =>
+      Effect.sync(() => {
+        timeline.push(`${event} reported ${ticket}`);
+      }),
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, failingStrategy);
+
+  expect(Effect.runSync(runEngine({ project }, ledger).pipe(Effect.provide(layer), Effect.flip))).toBeInstanceOf(
+    EngineHalted
+  );
+  expect(timeline).toEqual([`claimed reported ${id(1)}`, `escalated reported ${id(1)}`, `Claim released ${id(1)}`]);
+});
+
+test('runEngine keeps the Claim of an escalated ticket when the escalated report fails, and the exit reports escalated again, then removes the record', () => {
+  const timeline: string[] = [];
+  const ledger = timelineLedger(timeline);
+  let escalatedReports = 0;
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    report: (ticket, event) =>
+      event === 'escalated' && escalatedReports++ === 0
+        ? Effect.sync(() => {
+            timeline.push(`escalated failed ${ticket}`);
+          }).pipe(Effect.andThen(Effect.fail(new TicketEventNotReported({ ticketId: ticket, event }))))
+        : Effect.sync(() => {
+            timeline.push(`${event} reported ${ticket}`);
+          }),
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, failingStrategy);
+
+  expect(Effect.runSync(runEngine({ project }, ledger).pipe(Effect.provide(layer), Effect.flip))).toBeInstanceOf(
+    EngineHalted
+  );
+  expect(timeline).toEqual([
+    `claimed reported ${id(1)}`,
+    `escalated failed ${id(1)}`,
+    `escalated reported ${id(1)}`,
+    `Claim released ${id(1)}`,
+  ]);
+  expect(ledger.escalated.has(id(1))).toBe(true);
+});
+
+test('runEngine keeps the Claim of a done ticket when its completion on the Source fails after the merge, and the exit completes it again, then removes the record', async () => {
+  const timeline: string[] = [];
+  const ledger = timelineLedger(timeline);
+  const source = fakeSource([sampleTicket(1)], {
+    reportDone: (ticket) =>
+      Effect.succeed(
+        Effect.sync(() => {
+          timeline.push(`after the merge failed ${ticket}`);
+        }).pipe(Effect.andThen(Effect.fail(new TicketEventNotReported({ ticketId: ticket, event: 'done' }))))
+      ),
+    report: (ticket, event) =>
+      Effect.sync(() => {
+        timeline.push(`${event} reported ${ticket}`);
+      }),
+  });
+  const layer = Layer.mergeAll(
+    EngineStartupTest,
+    timelineWorktrees(timeline),
+    ledger.layer,
+    source.layer,
+    HarnessSelectorNoop,
+    StrategySelectorNoop
+  );
+
+  expect(
+    await Effect.runPromise(executeEngine({ project, limit: 1 }).pipe(Random.withSeed('test'), Effect.provide(layer)))
+  ).toBeUndefined();
+  expect(timeline).toEqual([
+    `claimed reported ${id(1)}`,
+    'merge and close',
+    `done in the Ledger ${id(1)}`,
+    `after the merge failed ${id(1)}`,
+    `done reported ${id(1)}`,
+    `Claim released ${id(1)}`,
+  ]);
+  expect(ledger.done.has(id(1))).toBe(true);
+});
+
+test('runEngine finishes the stopped saga of an escalated ticket on a Stale Claim: it reports escalated, removes the record, and does not take the ticket', async () => {
+  const ran: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  staleClaimOn(ledger, id(1));
+  ledger.escalated.set(id(1), escalationOf(id(1)));
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
+
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
+  expect(ledger.claims.has(id(1))).toBe(false);
+  expect(ledger.escalated.has(id(1))).toBe(true);
+  expect(source.reports).toEqual([
+    { ticket: id(1), event: 'escalated' },
+    { ticket: id(2), event: 'claimed' },
+  ]);
+});
+
+test('runEngine finishes the stopped saga of a done ticket on a Stale Claim: it completes it on the Source, removes the record, and does not take the ticket', async () => {
+  const ran: Ticket[] = [];
+  const ledger = makeLedgerMemory();
+  staleClaimOn(ledger, id(1));
+  ledger.done.add(id(1));
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
+
+  expect(ran.map((ticket) => ticket.id)).toEqual([id(2)]);
+  expect(ledger.claims.has(id(1))).toBe(false);
+  expect(source.reports).toEqual([
+    { ticket: id(1), event: 'done' },
+    { ticket: id(2), event: 'claimed' },
+  ]);
+});
+
+test('runEngine keeps its Claim on a stopped saga whose end report fails, and reports it again on exit', async () => {
+  const ledger = makeLedgerMemory();
+  staleClaimOn(ledger, id(1));
+  ledger.done.add(id(1));
+  let doneReports = 0;
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
+    report: (ticket, event) =>
+      event === 'done' && doneReports++ === 0
+        ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event }))
+        : Effect.void,
+  });
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation([]));
+  let heldBeforeExit: Claim | undefined;
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine({ project }, ledger).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true })
+      );
+      yield* until(() => source.doneReported.length === 1);
+      heldBeforeExit = ledger.claims.get(id(1));
+      yield* Fiber.interrupt(fiber);
+    })
+  );
+
+  expect(heldBeforeExit?.engine).toBe(engineId);
+  expect(ledger.claims.has(id(1))).toBe(false);
+  expect(source.reports).toContainEqual({ ticket: id(1), event: 'done' });
+});
+
 test('runEngine does not take a ticket whose Claim another running Engine holds', async () => {
   const ran: Ticket[] = [];
   const ledger = makeLedgerMemory();
@@ -1583,7 +1745,7 @@ test('runEngine keeps a Claim in the Ledger on exit when the Source fails to rep
   expect(ledger.claims.get(id(1))?.engine).toBe(engineId);
   expect(source.reports).toEqual([{ ticket: id(1), event: 'claimed' }]);
   expect(messages).toContainEqual(
-    expect.stringContaining(`Failed to report the release of ticket ${id(1)} after the run, so its Claim stays in the Ledger`)
+    expect.stringContaining(`Failed to report the end of ticket ${id(1)} after the run, so its Claim stays in the Ledger`)
   );
 });
 

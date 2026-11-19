@@ -3,7 +3,7 @@ import { Context, type Effect } from 'effect';
 import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import type { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
-import type { ReportedEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import type { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
 import type { TicketNotFound } from '~/Core/Tickets/Domain/Exceptions/TicketNotFound';
 import type { TicketQuery } from '~/Core/Tickets/Domain/Queries/TicketQuery';
@@ -30,10 +30,16 @@ export class TicketSource extends Context.Service<
      * an unreadable ticket's Project cannot be read with certainty.
      */
     readonly getUnreadable: Effect.Effect<readonly UnreadableTicket[]>;
-    /** Tells the Source what happened to a ticket. Done is told with `reportDone`. */
+    /**
+     * Tells the Source what happened to a ticket. A report can run again safely, and
+     * changes the ticket only while Rippls holds it. Done here means that the work of
+     * the ticket has landed: the Source completes the ticket if it has not yet. The
+     * Engine reports it again until it succeeds. Before the merge, done is told with
+     * `reportDone`.
+     */
     readonly report: (
       ticket: TicketId,
-      event: ReportedEvent
+      event: TicketEvent
     ) => Effect.Effect<void, TicketEventNotReported>;
     /**
      * Tells the Source that the ticket is done, before the merge of its Ticket
