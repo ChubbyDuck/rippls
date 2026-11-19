@@ -33,8 +33,9 @@ export class TicketSource extends Context.Service<
     /**
      * Tells the Source what happened to a ticket. A report can run again safely, and
      * changes the ticket only while Rippls holds it. Done here means that the work of
-     * the ticket has landed: the Source completes the ticket if it has not yet. The
-     * Engine reports it again until it succeeds. Before the merge, done is told with
+     * the ticket has landed: the Source completes the ticket if it has not yet, as Linear
+     * does; the folder Source has nothing to finish, since its move lands with the
+     * merge. The Engine reports it again on exit until it succeeds. Before the merge, done is told with
      * `reportDone`.
      */
     readonly report: (

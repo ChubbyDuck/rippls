@@ -122,17 +122,21 @@ const finishStoppedSagas = (
   facts: EligibilityFacts
 ) =>
   Effect.forEach(
-    tickets.filter((ticket) => stale.has(ticket.id) && (facts.done.has(ticket.id) || facts.escalated.has(ticket.id))),
-    (ticket) =>
+    tickets.flatMap((ticket) => {
+      const staleClaim = stale.get(ticket.id);
+      return staleClaim !== undefined && (facts.done.has(ticket.id) || facts.escalated.has(ticket.id))
+        ? [{ ticket, staleClaim }]
+        : [];
+    }),
+    ({ ticket, staleClaim }) =>
       Effect.gen(function* () {
-        const staleClaim = stale.get(ticket.id);
-        if (staleClaim === undefined || !(yield* replaceStale(ticket, staleClaim, engine))) {
+        if (!(yield* replaceStale(ticket, staleClaim, engine))) {
           return;
         }
         yield* endSaga(ticket.id).pipe(
-          Effect.andThen(Console.log(`${ticket.label} has its stopped saga finished, not taking it`)),
+          Effect.andThen(Console.log(`${ticket.label} has its Stale Claim ended on the Source, not taking it`)),
           Effect.catchTag('TicketEventNotReported', (error) =>
-            Console.error(`${ticket.label} could not have its stopped saga finished on the Source, so its Claim stays`, error)
+            Console.error(`${ticket.label} could not have its Stale Claim ended on the Source, so its Claim stays`, error)
           )
         );
       }),

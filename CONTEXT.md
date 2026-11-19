@@ -229,7 +229,8 @@ _Avoid_: Ticket, task
 A Ticket whose work has landed: its Source sees it as done, or the Ledger records it
 as done. Neither fact reverts. The Engine marks a Ticket done by reporting done to the
 Source, which moves it without changing its content, and by recording done in the
-Ledger once its work is merged.
+Ledger once its work is merged. The Claim of a done Ticket leaves the Ledger only
+once the Source has completed it.
 _Avoid_: Completed, resolved, closed
 
 **Unblocked**:

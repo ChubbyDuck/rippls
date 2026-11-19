@@ -21,7 +21,7 @@ import { ticketStream } from './ticketStream';
 // the record of a Claim only once that report succeeds. A record whose report
 // failed stays: once the Engine has exited, it is a Stale Claim, which a later run
 // finishes. The Claims of other Engines stay in place.
-const releaseOwnClaim = (ticket: TicketId) =>
+const endOwnClaim = (ticket: TicketId) =>
   endSaga(ticket).pipe(
     Effect.catchTags({
       TicketEventNotReported: (error) =>
@@ -30,10 +30,10 @@ const releaseOwnClaim = (ticket: TicketId) =>
     })
   );
 
-const releaseOwnClaims = (engine: EngineId) =>
+const endOwnClaims = (engine: EngineId) =>
   Ledger.pipe(
     Effect.flatMap((ledger) => ledger.ticketsClaimedBy(engine)),
-    Effect.flatMap((tickets) => Effect.forEach(tickets, releaseOwnClaim, { discard: true })),
+    Effect.flatMap((tickets) => Effect.forEach(tickets, endOwnClaim, { discard: true })),
     Effect.catchTag('LedgerError', (error) => Console.error('Failed to release the Claims of the Engine after the run', error))
   );
 
@@ -80,6 +80,6 @@ export const runEngine = Effect.fn('engine.run')(function* ({
     Stream.runDrain,
     Effect.raceFirst(clock.awaitTimeout),
     Effect.catchTag('EngineIdleTimeout', (error) => Console.log(error.message)),
-    Effect.ensuring(releaseOwnClaims(engine.id))
+    Effect.ensuring(endOwnClaims(engine.id))
   );
 });

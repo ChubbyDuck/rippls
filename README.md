@@ -389,8 +389,8 @@ exits.
 
 On exit, an Engine removes the record of each of its Claims only after the Source accepts
 the report of its end state: done, escalated, or released, as the Ledger shows. When the
-report fails, the record stays, and it becomes a Stale Claim that a later run finishes. A Claim from another host stays until someone removes its
-record from the Ledger folder.
+report fails, the record stays, and it becomes a Stale Claim that a later run finishes.
+A Claim from another host stays until someone removes its record from the Ledger folder.
 
 ## Completion and `done/`
 
@@ -407,7 +407,10 @@ a ticket to mark it done. When the Strategy succeeds, the Engine:
 The Claim stays until the Source has completed the ticket. When that step fails after the
 merge, the work has landed and the Ledger records done, so the failure is logged, the
 Claim stays until the Engine exits, and the exit completes the ticket again. A later
-Engine that meets the record as a Stale Claim does the same.
+Engine that meets the record as a Stale Claim does the same. Only the Linear Source has
+anything left to complete: a folder ticket moves into `done/` with the merge, and when
+the move of a ticket file that Git does not track fails after the merge, it is logged,
+not repeated on exit, and the Ledger alone keeps the ticket done.
 
 A merge that fails halts the Engine, and the Ledger records no done. The log says why:
 what Git wrote, such as the conflicting files, or that a merge is already in progress in
