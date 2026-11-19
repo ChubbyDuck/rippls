@@ -27,6 +27,24 @@ The Engine signals a Source only through operations that do not depend on the ti
 - The Ledger also records done, once the work of a ticket is merged. A ticket is done when its Source sees it as done or the Ledger records it as done; neither fact reverts. The Ledger covers a Project ticket whose move is on the Project branch and has not reached the Repository Root. The adapter keeps done in `<git-common-dir>/rippls/ledger/done/`. An Engine that has just claimed a ticket reads done again, as it reads the Escalation, and releases and skips a ticket that another Engine completed after the poll.
 - A Claim is stale when its process no longer runs on this host. A Claim whose process still runs is never stale, and a Claim from another host is never treated as stale, since the Engine cannot see the processes of another host. When the Engine looks for the next ticket and meets a stale Claim, it replaces it: it removes the stale record, claims the ticket in the Ledger, reports released to the Ticket Source, and then reports claimed in the normal way. The record is moved aside under a name of its own, which only one caller can do, and is removed only when it is that stale Claim; a Claim that another Engine made in the meantime is put back. Only the Engine that wins that removal goes on, so a late released never undoes the Claim of another Engine. When the released report fails, the Engine keeps its new Claim until it exits instead of removing it after a failed claimed report or an Escalation or done found since the poll.
 
+## The Claim is a saga
+
+A Claim spans two systems that share no transaction: the Ledger, and the Ticket Source (on Linear, the assignee and the workflow state). The Engine runs it as a saga. The Ledger is its log, the claimed report its forward step, the released report its compensation, and the replacement of a Stale Claim its recovery. Four rules hold it:
+
+1. **Log first, log last.** The Engine writes a ticket's record in the Ledger before its first write to the Source. The record leaves the Ledger only once the Source is confirmed in an end state: released, escalated, or done.
+2. **One write per step.** A record changes in one write of the Ledger, a change of its Engine included. It is never removed and created again.
+3. **Guarded, repeatable writes.** Every write to the Source can run again safely, and changes an Issue only while Rippls still holds it: on Linear, an Issue in a started state and assigned to the API-key user.
+4. **Recovery.** An Engine that meets the record of a stopped Engine finishes or undoes that saga.
+
+The log needs no step field: each step on the Source can be read back, so recovery reads the Source to learn where the saga stopped.
+
+Rippls accepts these limits of the saga:
+
+- Recovery runs only when an Engine runs again on the same host. Until then, the Issue stays started: unresolved, not lost.
+- A deleted Ledger loses its open sagas (see Consequences).
+- A saga is local to one host. A Claim from another host is never stale, so its saga waits for that host.
+- People see the steps in between: for a moment, Linear shows an Issue started and assigned to Rippls.
+
 ## Consequences
 
 - A `claimedBy` field and the claim statuses that earlier Engines wrote into folder tickets are read and ignored. Existing tickets need no migration.
