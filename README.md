@@ -388,8 +388,10 @@ a ticket to mark it done. When the Strategy succeeds, the Engine:
 3. records done in the Ledger,
 4. releases the Claim.
 
-A merge that fails halts the Engine, and the Ledger records no done. A done report that
-fails escalates the ticket, as a failed Strategy does.
+A merge that fails halts the Engine, and the Ledger records no done. The log says why:
+what Git wrote, such as the conflicting files, or that a merge is already in progress in
+the directory the work merges into. A done report that fails escalates the ticket, as a
+failed Strategy does.
 
 Done is the union of two facts: the Source sees the ticket as done (its file is in
 `done/`, or its Linear issue is completed), or the Ledger records it as done. Neither

@@ -60,6 +60,9 @@ const capturingConsole = (messages: string[]): Console.Console =>
     log: (...args: ReadonlyArray<unknown>) => {
       messages.push(args.map(String).join(' '));
     },
+    error: (...args: ReadonlyArray<unknown>) => {
+      messages.push(args.map(String).join(' '));
+    },
   });
 
 const run = <A, E>(effect: Effect.Effect<A, E, NodeServices.NodeServices>, messages?: string[]) =>
@@ -346,7 +349,8 @@ test('a Ticket Worktree on disk is reused by a new manager, and a Harness run, m
   expect(result.exists).toBe(false);
 });
 
-test('a conflicting merge fails with WorktreeCloseError and leaves the Repository Root with no merge in progress', async () => {
+test('a conflicting merge fails with WorktreeCloseError, logs what Git wrote, and leaves the Repository Root with no merge in progress', async () => {
+  const messages: string[] = [];
   const result = await run(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -372,11 +376,17 @@ test('a conflicting merge fails with WorktreeCloseError and leaves the Repositor
           status: yield* git(root, ['status', '--porcelain', '--untracked-files=no']),
           content: yield* fs.readFileString(path.join(root, 'base.txt')),
           ticketTreeKept: yield* fs.exists(ticketTree.path),
+          root,
         };
       }).pipe(Effect.provide(WorktreeManagerLive(root)));
-    })
+    }),
+    messages
   );
 
+  const failures = messages.filter((message) => message.startsWith('Worktree ticket-folder-17 failed to merge'));
+  expect(failures).toHaveLength(2);
+  expect(failures[0]).toContain(`Worktree ticket-folder-17 failed to merge into ${result.root}`);
+  expect(failures[0]).toContain('CONFLICT (content): Merge conflict in base.txt');
   expect(result.merged).toBeInstanceOf(WorktreeCloseError);
   expect(result.mergedAgain).toBeInstanceOf(WorktreeCloseError);
   expect(result.headMoved).toBe(false);
@@ -386,7 +396,8 @@ test('a conflicting merge fails with WorktreeCloseError and leaves the Repositor
   expect(result.ticketTreeKept).toBe(true);
 });
 
-test('a merge that a person left in progress in the Repository Root stays in progress, and merging fails', async () => {
+test('a merge that a person left in progress in the Repository Root stays in progress, and merging fails and logs it', async () => {
+  const messages: string[] = [];
   const result = await run(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -415,11 +426,15 @@ test('a merge that a person left in progress in the Repository Root stays in pro
           status: yield* git(root, ['status', '--porcelain', '--untracked-files=no']),
           content: yield* fs.readFileString(path.join(root, 'base.txt')),
           ticketTreeKept: yield* fs.exists(ticketTree.path),
+          root,
         };
       }).pipe(Effect.provide(WorktreeManagerLive(root)));
-    })
+    }),
+    messages
   );
 
+  expect(messages).toContain(`Worktree ticket-folder-17 is not merging: a merge is in progress at ${result.root}`);
+  expect(messages.some((message) => message.includes('failed to merge'))).toBe(false);
   expect(result.merged).toBeInstanceOf(WorktreeCloseError);
   expect(result.mergeInProgress).toBe(true);
   expect(result.status).toBe('M  base.txt');

@@ -172,15 +172,40 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
                   })
                 )
                 .pipe(Effect.mapError(() => new WorktreeCloseError()));
+            // The merge in the directory the work merges into, with its exit code
+            // and what it wrote to its output and its error output.
+            const mergeInParent = Effect.scoped(
+              Effect.gen(function* () {
+                const handle = yield* spawner.spawn(
+                  ChildProcess.make('git', ['merge', '--no-ff', '--no-edit', worktree.branch], {
+                    cwd: record.parentPath,
+                    stdin: 'ignore',
+                  })
+                );
+                const [output, exitCode] = yield* Effect.all(
+                  [Stream.mkString(Stream.decodeText(handle.all)), handle.exitCode],
+                  { concurrency: 'unbounded' }
+                );
+                return { exitCode, output };
+              })
+            ).pipe(Effect.mapError(() => new WorktreeCloseError()));
             yield* Console.log(`Worktree ${worktree.branch} is merging into ${record.parentPath}`);
             // A merge already in progress there is a person's: it is left as it
             // is, and no merge starts.
             if ((yield* exitInParent(['rev-parse', '--quiet', '--verify', 'MERGE_HEAD'])) === 0) {
+              yield* Console.error(
+                `Worktree ${worktree.branch} is not merging: a merge is in progress at ${record.parentPath}`
+              );
               return yield* new WorktreeCloseError();
             }
-            // A merge that exits non-zero, as on a conflict, is aborted, so the
-            // directory it merges into is left as it was.
-            if ((yield* exitInParent(['merge', '--no-ff', '--no-edit', worktree.branch])) !== 0) {
+            // A merge that exits non-zero, as on a conflict, is logged with what
+            // Git wrote, and aborted, so the directory it merges into is left as
+            // it was.
+            const merge = yield* mergeInParent;
+            if (merge.exitCode !== 0) {
+              yield* Console.error(
+                `Worktree ${worktree.branch} failed to merge into ${record.parentPath}:\n${merge.output.trim()}`
+              );
               yield* exitInParent(['merge', '--abort']).pipe(Effect.ignore);
               return yield* new WorktreeCloseError();
             }
