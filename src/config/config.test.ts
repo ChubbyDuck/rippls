@@ -2,7 +2,6 @@ import { DateTime, Effect } from 'effect';
 import { expect, test } from 'vitest';
 
 import {
-  defaultIdleTimeout,
   defaultPollInterval,
   engineConfig,
   engineConfigProvider,
@@ -21,7 +20,6 @@ test('folder example loads', () => {
       _tag: 'folder',
       ticketsDir: '.agents/tickets',
     },
-    idleTimeout: defaultIdleTimeout,
     pollInterval: defaultPollInterval,
     defaultKind: 'implementation',
   });
@@ -41,7 +39,6 @@ test('schedule example loads', () => {
         },
       },
     ],
-    idleTimeout: defaultIdleTimeout,
     pollInterval: defaultPollInterval,
     defaultKind: 'implementation',
   });
@@ -55,7 +52,6 @@ test('linear example loads', () => {
       _tag: 'linear',
       teamId: 'your-team-id',
     },
-    idleTimeout: defaultIdleTimeout,
     pollInterval: defaultPollInterval,
     defaultKind: 'implementation',
   });

@@ -761,7 +761,7 @@ const linearEngineLayer = (
     })
   );
 
-// An Engine on the Linear Source that runs until the claimed report of a ticket has
+// A Watch on the Linear Source that runs until the claimed report of a ticket has
 // failed, and then exits. `ran` receives the tickets a Runner processes, and
 // `beforeExit` runs while the Engine is still up.
 const runEngineUntilClaimFails = (
@@ -779,7 +779,7 @@ const runEngineUntilClaimFails = (
   const layer = linearEngineLayer(api, ledger, ran);
   return Effect.runPromise(
     Effect.gen(function* () {
-      const fiber = yield* runEngine({}).pipe(
+      const fiber = yield* runEngine({ watch: true }).pipe(
         Effect.provide(layer),
         Effect.provideService(Console.Console, capturing),
         Effect.forkChild({ startImmediately: true })

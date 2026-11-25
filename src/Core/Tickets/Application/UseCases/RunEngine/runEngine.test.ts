@@ -274,7 +274,7 @@ test('runEngine runs each ready ticket and keeps polling when none remain', asyn
   expect(ran).toEqual([first, second]);
 });
 
-test('runEngine runs tickets that appear after an empty poll', async () => {
+test('runEngine in a Watch runs tickets that appear after an empty poll', async () => {
   const first = sampleTicket(1);
   const second = sampleTicket(2);
   const ran: Ticket[] = [];
@@ -283,7 +283,7 @@ test('runEngine runs tickets that appear after an empty poll', async () => {
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      yield* runEngine({ project }).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* runEngine({ project, watch: true }).pipe(Effect.forkChild({ startImmediately: true }));
       expect(ran).toEqual([first]);
       source.add(second);
       yield* TestClock.adjust('10 seconds');
@@ -303,7 +303,7 @@ test('runEngine claims each ticket and reports the Claim before a Runner takes i
   );
 
   expect(
-    await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () => source.doneReported.length === 2)
+    await runUntil(runEngine({ project, watch: true }).pipe(Effect.provide(layer)), () => source.doneReported.length === 2)
   ).toBeUndefined();
   expect(source.doneReported).toEqual([id(1), id(2)]);
   expect(source.reports).toEqual([
@@ -343,7 +343,7 @@ test('runEngine claims a ticket in the Ledger before a Runner processes it, and 
   expect(ledger.claims.size).toBe(0);
 });
 
-test('runEngine narrates taking tickets and continuing after an empty poll', async () => {
+test('runEngine in a Watch narrates taking tickets and continuing after an empty poll', async () => {
   const messages: string[] = [];
   const layer = Layer.mergeAll(
     fakeSource([sampleTicket(1), sampleTicket(2)]).layer,
@@ -353,7 +353,7 @@ test('runEngine narrates taking tickets and continuing after an empty poll', asy
   );
 
   expect(
-    await runUntil(runEngine({ project }).pipe(Effect.provide(layer)), () =>
+    await runUntil(runEngine({ project, watch: true }).pipe(Effect.provide(layer)), () =>
       messages.includes('No tickets are found, continuing')
     )
   ).toBeUndefined();
@@ -502,7 +502,7 @@ test('runEngine takes a blocked ticket once its blocker is done in the Ledger, w
   expect(source.store.get(id(1))).toEqual(dependent);
 });
 
-test('runEngine does not take a ticket while its blocker is not done, and takes it once the blocker is done', async () => {
+test('runEngine in a Watch does not take a ticket while its blocker is not done, and takes it once the blocker is done', async () => {
   const ran: Ticket[] = [];
   const attendedBlocker = Ticket.create({
     id: id(2),
@@ -519,7 +519,7 @@ test('runEngine does not take a ticket while its blocker is not done, and takes 
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const fiber = yield* runEngine({ project }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
+      const fiber = yield* runEngine({ project, watch: true }).pipe(Effect.provide(layer), Effect.forkChild({ startImmediately: true }));
       yield* TestClock.adjust('0 millis');
       expect(ran).toEqual([]);
       expect(source.doneReported).toEqual([]);
@@ -1199,7 +1199,7 @@ test('runEngine does not take a Project ticket that the Ledger records as done w
   expect(source.reports).toEqual([{ ticket: id(2), event: 'claimed' }]);
 });
 
-test('runEngine keeps polling when the provided repository has no ticket', async () => {
+test('runEngine in a Watch keeps polling when the provided repository has no ticket', async () => {
   const source = fakeSource();
   const layer = Layer.mergeAll(
     source.layer,
@@ -1209,7 +1209,7 @@ test('runEngine keeps polling when the provided repository has no ticket', async
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      yield* runEngine({ project }).pipe(Effect.forkChild({ startImmediately: true }));
+      yield* runEngine({ project, watch: true }).pipe(Effect.forkChild({ startImmediately: true }));
       expect(source.scopeReads.length).toBe(startRead + 1);
       yield* TestClock.adjust('10 seconds');
       expect(source.scopeReads.length).toBe(startRead + 2);
@@ -1247,7 +1247,7 @@ test('runEngine starts one runner by default and names it in the Claim with an e
   expect(seen.map((claim) => [claim?.engine, claim?.runner])).toEqual([[engineId, claiming]]);
 });
 
-test('runEngine source.scopeReads.length at the given pollInterval when empty', async () => {
+test('runEngine in a Watch reads the Source at the given pollInterval when empty', async () => {
   const source = fakeSource();
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -1256,7 +1256,7 @@ test('runEngine source.scopeReads.length at the given pollInterval when empty', 
         HarnessSelectorNoop,
         StrategySelectorNoop
       );
-      yield* runEngine({ project, pollInterval: '2 seconds' }).pipe(
+      yield* runEngine({ project, watch: true, pollInterval: '2 seconds' }).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
@@ -1269,7 +1269,7 @@ test('runEngine source.scopeReads.length at the given pollInterval when empty', 
   );
 });
 
-test('runEngine source.scopeReads.length once every 10 seconds when empty regardless of runner concurrency', async () => {
+test('runEngine in a Watch reads the Source once every 10 seconds when empty regardless of runner concurrency', async () => {
   const source = fakeSource();
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -1278,7 +1278,7 @@ test('runEngine source.scopeReads.length once every 10 seconds when empty regard
         HarnessSelectorNoop,
         StrategySelectorNoop
       );
-      yield* runEngine({ project, concurrency: 3, workspace: 'worktree' }).pipe(
+      yield* runEngine({ project, watch: true, concurrency: 3, workspace: 'worktree' }).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
@@ -1491,7 +1491,7 @@ test('runEngine keeps its new Claim when the release of a Stale Claim fails, doe
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const fiber = yield* runEngine({ project }, ledger).pipe(
+      const fiber = yield* runEngine({ project, watch: true }, ledger).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
@@ -1654,7 +1654,7 @@ test('runEngine keeps its Claim on a stopped saga whose end report fails, and re
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const fiber = yield* runEngine({ project }, ledger).pipe(
+      const fiber = yield* runEngine({ project, watch: true }, ledger).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
@@ -1783,39 +1783,166 @@ test('the exit of one Engine leaves the Claim of another Engine on the same Ledg
   );
 });
 
-test('runEngine stops the run when Idle for the default idle timeout of five minutes, and names it', async () => {
-  const source = fakeSource();
-  let stopped = false;
+test('runEngine in a Drain ends at once when no ticket is Eligible, and says that the Engine is Idle', async () => {
   const messages: string[] = [];
+  const source = fakeSource([Ticket.create({ ...sampleFields(1), hitl: 'yes' })]);
+  const layer = Layer.mergeAll(
+    source.layer,
+    HarnessSelectorNoop,
+    StrategySelectorNoop,
+    Layer.succeed(Console.Console, capturingConsole(messages))
+  );
+
+  // The test clock never moves, so a run that waited for a poll would never end.
+  await Effect.runPromise(runEngine({ project }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer()))));
+
+  expect(messages).toContain('The Engine is Idle, so the Drain ends');
+  expect(messages).not.toContain('No tickets are found, continuing');
+  expect(source.reports).toEqual([]);
+});
+
+test('runEngine in a Drain ends once it has run both Eligible tickets', async () => {
+  const ran: Ticket[] = [];
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  await Effect.runPromise(runEngine({ project }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer()))));
+
+  expect(ran).toEqual([sampleTicket(1), sampleTicket(2)]);
+  expect(source.doneReported).toEqual([id(1), id(2)]);
+});
+
+test('runEngine in a Drain with Ticket Processing in progress polls again as soon as it ends, and ends once Idle', async () => {
+  const ran: TicketId[] = [];
+  const source = fakeSource([sampleTicket(1), blockedTicket(2, 1)]);
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const layer = Layer.mergeAll(
-        source.layer,
-        HarnessSelectorNoop,
-        StrategySelectorNoop,
-        Layer.succeed(Console.Console, capturingConsole(messages))
-      );
-      const fiber = yield* runEngine({ project }).pipe(
-        Effect.provide(layer),
-        Effect.ensuring(
-          Effect.sync(() => {
-            stopped = true;
-          })
-        ),
+      const release = yield* Deferred.make<void>();
+      // Ticket 1 stays in Ticket Processing until the test releases it.
+      const held = Layer.succeed(StrategySelector, {
+        select: (kind) =>
+          Effect.succeed({
+            name: kind,
+            run: (ticket) =>
+              (ticket.id === id(1) ? Deferred.await(release) : Effect.void).pipe(
+                Effect.andThen(
+                  Effect.sync(() => {
+                    ran.push(ticket.id);
+                  })
+                ),
+                Effect.as(Result.succeed(undefined))
+              ),
+          }),
+      });
+      const fiber = yield* runEngine({ project, concurrency: 2, workspace: 'worktree' }).pipe(
+        Effect.provide(Layer.mergeAll(source.layer, HarnessSelectorNoop, held)),
         Effect.forkChild({ startImmediately: true })
       );
-
-      yield* TestClock.adjust('5 minutes');
+      // The second Runner finds nothing while ticket 1 is in progress, so the Drain
+      // does not end. The test clock never moves: the end of that Ticket
+      // Processing, not the poll interval, wakes the poll that takes ticket 2.
+      yield* until(() => source.scopeReads.length === startRead + 2);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* Deferred.succeed(release, undefined);
       yield* Fiber.join(fiber);
-      expect(stopped).toBe(true);
-      expect(source.scopeReads.length).toBeGreaterThan(0);
-      expect(messages).toContain('The Engine was Idle for 5m. Engine is shutting down.');
+    }).pipe(Effect.provide(TestClock.layer()))
+  );
+
+  expect(ran).toEqual([id(1), id(2)]);
+});
+test('runEngine in a Drain that ends with held tickets prints each one with its Ticket Status and reason', async () => {
+  const messages: string[] = [];
+  const ledger = makeLedgerMemory();
+  ledger.escalated.set(id(3), escalationOf(id(3)));
+  ledger.claims.set(id(4), heldByOther(id(4)));
+  const source = fakeSource(
+    [
+      sampleTicket(1),
+      Ticket.create({ ...sampleFields(2), hitl: 'yes' }),
+      sampleTicket(3),
+      sampleTicket(4),
+      blockedTicket(5, 2),
+    ],
+    { unreadable: [new UnreadableTicket({ name: 'README.md', reason: 'no numeric prefix' })] }
+  );
+  const layer = Layer.mergeAll(
+    source.layer,
+    HarnessSelectorNoop,
+    StrategySelectorNoop,
+    Layer.succeed(Console.Console, capturingConsole(messages))
+  );
+
+  await Effect.runPromise(runEngine({ project }, ledger).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer()))));
+
+  expect(source.doneReported).toEqual([id(1)]);
+  expect(messages.slice(messages.indexOf('The Engine is Idle, so the Drain ends'))).toEqual([
+    'The Engine is Idle, so the Drain ends',
+    '5 tickets are held back:',
+    'folder:2  Random ticket   not ready  (HITL: yes)',
+    'folder:3  Random ticket   escalated  (Escalation: strategy failure, 1 attempt, Ticket Worktree /repo/.sandcastle/worktrees/ticket-folder:3)',
+    `folder:4  Random ticket   claimed  (Claim: Engine ${otherEngine}, no Runner yet, process 1, host memory)`,
+    'folder:5  Blocked ticket  blocked  (Blockers: open folder:2)',
+    '-         README.md       unreadable  (no numeric prefix)',
+  ]);
+});
+
+test('runEngine in a Drain that ends with nothing held back says so', async () => {
+  const messages: string[] = [];
+  const layer = Layer.mergeAll(
+    fakeSource([sampleTicket(1)]).layer,
+    HarnessSelectorNoop,
+    StrategySelectorNoop,
+    Layer.succeed(Console.Console, capturingConsole(messages))
+  );
+
+  await Effect.runPromise(runEngine({ project }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer()))));
+
+  expect(messages.slice(-2)).toEqual(['The Engine is Idle, so the Drain ends', 'No tickets are held back']);
+});
+
+test('runEngine in a Drain that ends at its Limit prints no held tickets', async () => {
+  const messages: string[] = [];
+  const layer = Layer.mergeAll(
+    fakeSource([sampleTicket(1), sampleTicket(2)]).layer,
+    HarnessSelectorNoop,
+    StrategySelectorNoop,
+    Layer.succeed(Console.Console, capturingConsole(messages))
+  );
+
+  await Effect.runPromise(runEngine({ project, limit: 1 }).pipe(Effect.provide(Layer.mergeAll(layer, TestClock.layer()))));
+
+  expect(messages.filter((message) => message.includes('Idle') || message.includes('held back'))).toEqual([]);
+});
+
+test('runEngine in a Watch keeps polling while Idle and takes a ticket that becomes Eligible on a later poll', async () => {
+  const ran: Ticket[] = [];
+  const source = fakeSource([Ticket.create({ ...sampleFields(1), hitl: 'yes' })]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fiber = yield* runEngine({ project, watch: true }).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true })
+      );
+      yield* TestClock.adjust('0 millis');
+      expect(source.scopeReads.length).toBe(startRead + 1);
+      yield* TestClock.adjust('10 seconds');
+      yield* TestClock.adjust('10 seconds');
+      expect(source.scopeReads.length).toBe(startRead + 3);
+      expect(ran).toEqual([]);
+
+      source.add(sampleTicket(1));
+      yield* TestClock.adjust('10 seconds');
+      expect(ran).toEqual([sampleTicket(1)]);
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      yield* Fiber.interrupt(fiber);
     }).pipe(Effect.provide(TestClock.layer()))
   );
 });
 
-test('runEngine stops the run when Idle for the given idleTimeout, and names that timeout', async () => {
+test('runEngine in a Watch with no idle timeout keeps running while Idle', async () => {
   const messages: string[] = [];
 
   await Effect.runPromise(
@@ -1826,7 +1953,31 @@ test('runEngine stops the run when Idle for the given idleTimeout, and names tha
         StrategySelectorNoop,
         Layer.succeed(Console.Console, capturingConsole(messages))
       );
-      const fiber = yield* runEngine({ project, idleTimeout: '30 seconds' }).pipe(
+      const fiber = yield* runEngine({ project, watch: true }).pipe(
+        Effect.provide(layer),
+        Effect.forkChild({ startImmediately: true })
+      );
+
+      yield* TestClock.adjust('24 hours');
+      expect(fiber.pollUnsafe()).toBeUndefined();
+      expect(messages.filter((message) => message.includes('Idle'))).toEqual([]);
+      yield* Fiber.interrupt(fiber);
+    }).pipe(Effect.provide(TestClock.layer()))
+  );
+});
+
+test('runEngine in a Watch stops the run when Idle for the given idleTimeout, and names that timeout', async () => {
+  const messages: string[] = [];
+
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const layer = Layer.mergeAll(
+        fakeSource().layer,
+        HarnessSelectorNoop,
+        StrategySelectorNoop,
+        Layer.succeed(Console.Console, capturingConsole(messages))
+      );
+      const fiber = yield* runEngine({ project, watch: true, idleTimeout: '30 seconds' }).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
@@ -1868,7 +2019,7 @@ test('runEngine stays up while a Runner is in Ticket Processing even if other po
   );
 });
 
-test('runEngine starts a fresh Idle window after Ticket Processing ends', async () => {
+test('runEngine in a Watch starts a fresh Idle window after Ticket Processing ends', async () => {
   const ran: Ticket[] = [];
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -1877,7 +2028,7 @@ test('runEngine starts a fresh Idle window after Ticket Processing ends', async 
         HarnessSelectorNoop,
         capturingImplementation(ran)
       );
-      const fiber = yield* runEngine({ project }).pipe(
+      const fiber = yield* runEngine({ project, watch: true, idleTimeout: '5 minutes' }).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
@@ -1890,7 +2041,7 @@ test('runEngine starts a fresh Idle window after Ticket Processing ends', async 
   );
 });
 
-test('runEngine zeros the Idle clock when a Claim starts', async () => {
+test('runEngine in a Watch zeros the Idle clock when a Claim starts', async () => {
   const emitted: Ticket[] = [];
   const source = fakeSource();
 
@@ -1901,7 +2052,7 @@ test('runEngine zeros the Idle clock when a Claim starts', async () => {
         HarnessSelectorNoop,
         capturingImplementation(emitted)
       );
-      const fiber = yield* runEngine({ project }).pipe(
+      const fiber = yield* runEngine({ project, watch: true, idleTimeout: '5 minutes' }).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );

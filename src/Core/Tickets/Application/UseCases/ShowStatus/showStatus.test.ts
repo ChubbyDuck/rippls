@@ -254,7 +254,7 @@ describe('ticketStatuses, unreadable tickets and blockers', () => {
 
     expect(await printed(layer)).toEqual([
       'folder:1  Ticket 1  eligible',
-      'folder:2  Ticket 2  not ready  (Blockers: unresolved folder:9)',
+      'folder:2  Ticket 2  not ready  (HITL: yes)  (Blockers: unresolved folder:9)',
     ]);
   });
 
@@ -395,7 +395,7 @@ describe('showStatus', () => {
     const layer = setup([ticket(1, { hitl: 'yes' }), ticket(3, { blockedBy: [id(1), id(9)] }), ticket(4, { blockedBy: [id(1)] })]);
 
     expect(await printed(layer)).toEqual([
-      'folder:1  Ticket 1  not ready',
+      'folder:1  Ticket 1  not ready  (HITL: yes)',
       'folder:3  Ticket 3  blocked  (Blockers: open folder:1; unresolved folder:9)',
       'folder:4  Ticket 4  blocked  (Blockers: open folder:1)',
     ]);

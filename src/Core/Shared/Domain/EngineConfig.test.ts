@@ -12,7 +12,6 @@ import {
   defaultCommitPrompt,
   defaultEngineConfig,
   defaultFixPrompt,
-  defaultIdleTimeout,
   defaultPollInterval,
   defaultStrategies,
   engineConfig,
@@ -24,7 +23,6 @@ import {
 } from './EngineConfig';
 
 const defaultValues = {
-  idleTimeout: defaultIdleTimeout,
   pollInterval: defaultPollInterval,
   defaultKind: 'implementation',
 };

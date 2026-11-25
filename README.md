@@ -85,8 +85,11 @@ branch and merges nothing.
   (see [Escalation](#escalation)).
 
 The **Limit** caps Tickets taken from the stream, rather than successful completions.
-The Engine finishes processing the Tickets it has taken, or stops after the configured
-idle timeout. A Strategy failure, a failed check, uncommitted work, or a failed done report
+A run is a **Drain** by default: it ends as soon as the Engine is **Idle**, with no Ticket
+Processing in progress and no Eligible ticket, and then prints each ticket it held back
+with its Ticket Status and reason. A **Watch** (`--watch`) keeps polling while Idle and
+takes a ticket as soon as it becomes Eligible; it ends only after an idle timeout that is
+set. A Strategy failure, a failed check, uncommitted work, or a failed done report
 escalates the Ticket and halts the run.
 
 ## Before you start
@@ -239,7 +242,10 @@ Common flags:
 - `--concurrency <count>` keeps that many Runners available. Default: `1`. In place,
   a Concurrency above one fails at start: set `workspace: worktree` first (see
   [Workspace](#workspace)).
-- `--idle-timeout <duration>` stops after continuous idle time. Default: `5 minutes`.
+- `--watch` keeps the run polling while Idle, instead of ending it (a Watch rather than a
+  Drain).
+- `--idle-timeout <duration>` ends a Watch after continuous Idle time. Default: none, so a
+  Watch runs until it is stopped. A Drain ignores it.
 - `--poll-interval <duration>` controls empty-poll delay. Default: `10 seconds`.
 - `--source folder|linear` selects a Source tag.
 - `--log-level <level>` changes console logging.
@@ -260,8 +266,8 @@ npx rippls --limit 1 --concurrency 1
 # Process up to six tickets with two concurrent Runners (needs `workspace: worktree`)
 npx rippls --limit 6 --concurrency 2
 
-# Work only on one project and stop sooner when idle
-npx rippls --project billing --idle-timeout "1 minute"
+# Watch one project in the background, and stop after an hour Idle
+npx rippls --project billing --watch --idle-timeout "1 hour"
 
 # Poll a slower external Source
 npx rippls --poll-interval "30 seconds"
@@ -341,7 +347,7 @@ folder:1  Add login                   claimed  (Claim: Engine honey-wren-c9w5, R
 folder:2  Add logout                  blocked  (Blockers: open folder:1; unresolved folder:9)
 folder:3  Add the session store       done
 folder:4  Add sign-up                 escalated  (Escalation: strategy failure: step 2, verdict other than pass, 1 attempt, Ticket Worktree /repo/.sandcastle/worktrees/ticket-folder-4)
-folder:5  Choose the password policy  not ready
+folder:5  Choose the password policy  not ready  (HITL: yes)
 folder:6  Add password reset          eligible  (Stale Claim: Engine moss-heron-k2p8, Runner moss-heron-k2p8:0, process 20117, host build-box)
 -         README.md                   unreadable  (no numeric prefix)
 folder:7  07-broken.md                unreadable  (unparseable front matter: it has no closing `---`)
@@ -796,7 +802,7 @@ the [commit prompt](#commit-prompt) when the work is not committed yet.
 Defaults can be changed in the file and overridden by CLI flags:
 
 ```ts
-idleTimeout: '5 minutes',
+idleTimeout: '1 hour', // a Watch only; no default
 pollInterval: '10 seconds',
 otlpTraceUrl: 'http://127.0.0.1:4318/v1/traces',
 ```

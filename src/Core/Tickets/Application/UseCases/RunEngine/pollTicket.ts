@@ -156,7 +156,4 @@ const claimNextEligibleTicket = (engine: EngineId, project?: Project) =>
     return yield* Effect.findFirstFilter(eligible, claimIfStillEligible(engine, facts, stale));
   });
 
-export const pollTicket = (engine: EngineId, project?: Project) =>
-  claimNextEligibleTicket(engine, project).pipe(
-    Effect.tap((found) => (Option.isNone(found) ? Console.log('No tickets are found, continuing') : Effect.void))
-  );
+export const pollTicket = claimNextEligibleTicket;

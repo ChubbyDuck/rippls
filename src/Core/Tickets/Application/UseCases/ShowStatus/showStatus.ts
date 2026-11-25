@@ -97,8 +97,9 @@ const describe = (line: StatusLine): readonly string[] => {
   if (line.status === 'unreadable') {
     return [line.unreadable.explanation];
   }
-  const { claim, staleClaim, escalation, blockers } = line;
+  const { status, claim, staleClaim, escalation, blockers } = line;
   return [
+    ...(status === 'not ready' ? ['HITL: yes'] : []),
     ...(claim === undefined ? [] : [`Claim: ${holderOf(claim)}`]),
     ...(staleClaim === undefined ? [] : [`Stale Claim: ${holderOf(staleClaim)}`]),
     ...(escalation === undefined ? [] : [describeEscalation(escalation)]),
@@ -117,8 +118,9 @@ const widest = (values: readonly string[]) => Math.max(0, ...values.map((value) 
 
 // The printed lines: the identity, the Title, and the Ticket Status of each
 // ticket, in aligned columns, then the holder of a Claim or a Stale Claim, the
-// Escalation, the outstanding blockers, or the reason a ticket is unreadable.
-const formatStatusLines = (lines: readonly StatusLine[]): readonly string[] => {
+// Escalation, the HITL of a ticket that is not ready, the outstanding blockers, or
+// the reason a ticket is unreadable.
+export const formatStatusLines = (lines: readonly StatusLine[]): readonly string[] => {
   const idWidth = widest(lines.map(identityOf));
   const titleWidth = widest(lines.map(nameOf));
   return lines.map((line) => {

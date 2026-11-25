@@ -83,9 +83,12 @@ const engine = Command.make(
   {
     limit: Flag.integer('limit').pipe(Flag.optional),
     concurrency: Flag.integer('concurrency').pipe(Flag.withSchema(Concurrency), Flag.withDefault(1)),
+    // A run is a Drain unless it is a Watch. Only a Watch has an idle timeout.
+    watch: Flag.boolean('watch').pipe(Flag.withDefault(false)),
     idleTimeout: Flag.string('idle-timeout').pipe(
       Flag.withSchema(Schema.DurationFromString),
-      Flag.withFallbackConfig(idleTimeoutConfig)
+      Flag.withFallbackConfig(idleTimeoutConfig),
+      Flag.optional
     ),
     pollInterval: Flag.string('poll-interval').pipe(
       Flag.withSchema(Schema.DurationFromString),
@@ -100,7 +103,7 @@ const engine = Command.make(
     source: Flag.choice('source', TicketSourceTag.literals).pipe(Flag.optional),
     project: Flag.string('project').pipe(Flag.withSchema(Project), Flag.optional),
   }),
-  Command.withHandler(({ source, project, limit, concurrency, idleTimeout, pollInterval }) =>
+  Command.withHandler(({ source, project, limit, concurrency, watch, idleTimeout, pollInterval }) =>
     Effect.gen(function* () {
       const config = yield* EngineConfig;
       const located = yield* locatedSourceFor(source);
@@ -115,7 +118,8 @@ const engine = Command.make(
         limit: Option.getOrUndefined(limit),
         concurrency,
         workspace,
-        idleTimeout,
+        watch,
+        idleTimeout: Option.getOrUndefined(idleTimeout),
         pollInterval,
         check,
         commit,

@@ -4,7 +4,6 @@ import { Effect, FileSystem, Path, Schema } from 'effect';
 import { expect, test } from 'vitest';
 
 import {
-  defaultIdleTimeout,
   defaultPollInterval,
   engineConfig,
   engineConfigProvider,
@@ -43,7 +42,6 @@ test('defaults to a folder source with no tickets folder when no config file exi
     harnesses: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
     schedule: [],
     source: { _tag: 'folder' },
-    idleTimeout: defaultIdleTimeout,
     pollInterval: defaultPollInterval,
     defaultKind: 'implementation',
   });

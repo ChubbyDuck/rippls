@@ -1,7 +1,7 @@
-import { Console, Effect, Queue, Stream } from 'effect';
+import { Console, Effect, Queue, Ref, Stream } from 'effect';
 
 import type { Runner } from '~/Core/Shared/Domain/Entities/Runner';
-import { defaultIdleTimeout, defaultPollInterval, defaultWorkspace } from '~/Core/Shared/Domain/EngineConfig';
+import { defaultPollInterval, defaultWorkspace } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
@@ -14,6 +14,7 @@ import type { RunEngineCommand } from './command';
 import { createEngine } from './createEngine';
 import { ensureWorktreesWritable } from './ensureWorktreesWritable';
 import { makeIdleClock } from './idleClock';
+import { reportHeld } from './reportHeld';
 import { reportUnreadable } from './reportUnreadable';
 import { ticketStream } from './ticketStream';
 
@@ -43,7 +44,8 @@ export const runEngine = Effect.fn('engine.run')(function* ({
   limit,
   concurrency = 1,
   workspace = defaultWorkspace,
-  idleTimeout = defaultIdleTimeout,
+  watch = false,
+  idleTimeout,
   pollInterval = defaultPollInterval,
   check,
   commit,
@@ -64,13 +66,18 @@ export const runEngine = Effect.fn('engine.run')(function* ({
     availableRunners,
     Array.from({ length: concurrency }, () => engine.spawn())
   );
-  const clock = yield* makeIdleClock(idleTimeout);
-  const tickets = ticketStream(engine.id, project, clock, pollInterval);
+  // A Watch halts only after an idle timeout that is set. A Drain ends as soon as
+  // the Engine is Idle, so no idle timeout applies to it.
+  const clock = yield* makeIdleClock(watch ? idleTimeout : undefined);
+  const endedIdle = yield* Ref.make(false);
+  const onIdle = Console.log('The Engine is Idle, so the Drain ends').pipe(Effect.andThen(Ref.set(endedIdle, true)));
+  const tickets = ticketStream(engine.id, { project, clock, pollInterval, watch, onIdle });
   const limitedTickets = limit === undefined ? tickets : tickets.pipe(Stream.take(limit));
   yield* Effect.annotateCurrentSpan({
     'engine.id': engine.id,
     'engine.concurrency': concurrency,
     'engine.limit': limit ?? -1,
+    'engine.watch': watch,
   });
   yield* limitedTickets.pipe(
     Stream.mapEffect(
@@ -91,4 +98,8 @@ export const runEngine = Effect.fn('engine.run')(function* ({
     Effect.catchTag('EngineIdleTimeout', (error) => Console.log(error.message)),
     Effect.ensuring(endOwnClaims(engine.id))
   );
+  // Once its own Claims have ended, a Drain that ended Idle lists what it held back.
+  if (yield* Ref.get(endedIdle)) {
+    yield* reportHeld(project);
+  }
 });

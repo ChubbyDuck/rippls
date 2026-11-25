@@ -59,7 +59,7 @@ test('ticketStream hides empty polls, retries each 10 seconds, and emits availab
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const fiber = yield* ticketStream(engine).pipe(
+      const fiber = yield* ticketStream(engine, { watch: true }).pipe(
         Stream.take(3),
         Stream.runForEach((ticket) =>
           Effect.sync(() => {
@@ -100,7 +100,7 @@ test('ticketStream retries empty polls at the given pollInterval', async () => {
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const fiber = yield* ticketStream(engine, undefined, undefined, '2 seconds').pipe(
+      const fiber = yield* ticketStream(engine, { watch: true, pollInterval: '2 seconds' }).pipe(
         Stream.take(1),
         Stream.runDrain,
         Effect.forkChild({ startImmediately: true })
@@ -131,7 +131,7 @@ test('ticketStream waits for downstream demand before reading another ticket', a
   await Effect.runPromise(
     Effect.gen(function* () {
       const release = yield* Deferred.make<void>();
-      const fiber = yield* ticketStream(engine).pipe(
+      const fiber = yield* ticketStream(engine, { watch: true }).pipe(
         Stream.take(2),
         Stream.runForEach(() => Deferred.await(release)),
         Effect.forkChild({ startImmediately: true })

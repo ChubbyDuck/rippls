@@ -69,7 +69,7 @@ The code lives in three places: `src/Core` (domain, use cases and port interface
 
 1. [CONTEXT.md](CONTEXT.md) is the vocabulary; every name in the code comes from it.
 2. [src/index.ts](src/index.ts) defines the CLI flags and wires all the layers together.
-3. [runEngine.ts](src/Core/Tickets/Application/UseCases/RunEngine/runEngine.ts) holds the runner pool, the stream, the idle timeout and the end of each Claim on exit.
+3. [runEngine.ts](src/Core/Tickets/Application/UseCases/RunEngine/runEngine.ts) holds the runner pool, the stream, the end of a Drain once Idle or the idle timeout of a Watch, and the end of each Claim on exit; a Drain then lists the tickets it held back.
 4. [processTicket.ts](src/Core/Tickets/Application/UseCases/ProcessTicket/processTicket.ts) is the lifecycle in the diagram above.
 5. [entity.ts](src/Core/Tickets/Domain/Entities/Ticket/entity.ts) is the Ticket: an identity, a Title, and a body, with every other field read as a hint with a fallback. It has no transitions: the Claim, the Escalation, and done live in the Ledger, and done also in the Source.
 6. [configured.ts](src/Infrastructure/Tickets/StrategySelector/configured.ts) runs a Strategy: its configured steps in order, each with its own prompt, model demand, time limit, retries, and optional verdict.

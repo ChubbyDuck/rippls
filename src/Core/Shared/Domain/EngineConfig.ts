@@ -7,11 +7,11 @@ import { type ModelDemand, modelGenerations, modelTiers } from '../Ports/Harness
 
 import { HarnessName } from './Properties/HarnessName.ts';
 
-export const defaultIdleTimeout = Duration.minutes(5);
-
 export const defaultPollInterval = Duration.seconds(10);
 
-export const idleTimeoutConfig = Config.duration('idleTimeout').pipe(Config.withDefault(defaultIdleTimeout));
+// How long a Watch stays Idle before it ends. It has no default: a Watch with none
+// never ends for being Idle.
+export const idleTimeoutConfig = Config.duration('idleTimeout');
 
 export const pollIntervalConfig = Config.duration('pollInterval').pipe(Config.withDefault(defaultPollInterval));
 
@@ -390,7 +390,6 @@ export type EngineFileConfig = typeof EngineConfigSchema.Encoded;
 export const defaultEngineConfig: EngineConfigValue = {
   harnesses: [{ name: 'Codex' }, { name: 'Cursor' }, { name: 'Claude' }, { name: 'OpenCode' }],
   schedule: [],
-  idleTimeout: defaultIdleTimeout,
   pollInterval: defaultPollInterval,
   defaultKind: defaultTicketKind,
 };
@@ -417,14 +416,18 @@ export const engineConfig: Config.Config<EngineConfigValue> = Config.all({
   schedule: Config.schema(ScheduledConfigs, 'schedule').pipe(Config.withDefault([])),
   otlpTraceUrl: Config.nonEmptyString('otlpTraceUrl').pipe(Config.option),
   source: Config.schema(TicketSourceConfig, 'source').pipe(Config.option),
-  idleTimeout: idleTimeoutConfig,
+  idleTimeout: idleTimeoutConfig.pipe(Config.option),
   pollInterval: pollIntervalConfig,
   defaultKind: defaultKindConfig,
 }).pipe(
-  Config.map(({ otlpTraceUrl, source, ...rest }) => {
-    const withTrace = Option.match(otlpTraceUrl, {
+  Config.map(({ otlpTraceUrl, source, idleTimeout, ...rest }) => {
+    const withIdle = Option.match(idleTimeout, {
       onNone: () => rest,
-      onSome: (url) => ({ ...rest, otlpTraceUrl: url }),
+      onSome: (duration) => ({ ...rest, idleTimeout: duration }),
+    });
+    const withTrace = Option.match(otlpTraceUrl, {
+      onNone: () => withIdle,
+      onSome: (url) => ({ ...withIdle, otlpTraceUrl: url }),
     });
     return Option.match(source, {
       onNone: () => withTrace,
