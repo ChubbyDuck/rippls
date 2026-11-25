@@ -3,8 +3,6 @@ import { parse } from 'yaml';
 
 import { defaultEngineConfig } from '~/Core/Shared/Domain/EngineConfig';
 
-const DEFAULT_TICKETS_DIR = '.agents/tickets';
-
 const CONFIG_FILES = [
   'rippls.config.ts',
   'rippls.config.js',
@@ -30,21 +28,41 @@ const configFromModule = (mod: Record<string, unknown>): unknown => {
   return mod.default;
 };
 
-const defaultFolderSource = (path: Path.Path, root: string, ticketsDir = DEFAULT_TICKETS_DIR) => ({
-  _tag: 'folder' as const,
-  ticketsDir: path.resolve(root, ticketsDir),
-});
+// A plain object, as config files write one: no array, no Date, no class instance.
+const isPlainObject = (value: unknown): value is Record<string, unknown> => {
+  if (!isRecord(value)) {
+    return false;
+  }
+  const prototype: unknown = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+};
 
+// The repository config over the user config: plain objects merge key by key at
+// every level; arrays and values replace. A Strategy is the array of its steps, so a
+// Strategy given for a Kind replaces that Kind's Strategy whole.
+export const mergeConfigs = (user: unknown, repository: unknown): unknown => {
+  if (!isPlainObject(user) || !isPlainObject(repository)) {
+    return repository === undefined ? user : repository;
+  }
+  const merged: Record<string, unknown> = { ...user };
+  for (const [key, value] of Object.entries(repository)) {
+    merged[key] = mergeConfigs(user[key], value);
+  }
+  return merged;
+};
+
+// The defaults a config file leaves out. A folder Source keeps a configured tickets
+// folder, resolved against the Repository Root; without one it has none here, and
+// takes the nearest queue when its Source is resolved (see `locateQueue`).
 export const applyConfigDefaults = (input: unknown, root: string, path: Path.Path) => {
   const record = isRecord(input) ? input : {};
   const withHarnesses = record.harnesses === undefined ? { ...record, harnesses: defaultEngineConfig.harnesses } : record;
   const source = withHarnesses.source;
   if (!isRecord(source)) {
-    return { ...withHarnesses, source: defaultFolderSource(path, root) };
+    return { ...withHarnesses, source: { _tag: 'folder' } };
   }
-  if (source._tag === 'folder') {
-    const ticketsDir = typeof source.ticketsDir === 'string' ? source.ticketsDir : DEFAULT_TICKETS_DIR;
-    return { ...withHarnesses, source: { ...source, ticketsDir: path.resolve(root, ticketsDir) } };
+  if (source._tag === 'folder' && typeof source.ticketsDir === 'string') {
+    return { ...withHarnesses, source: { ...source, ticketsDir: path.resolve(root, source.ticketsDir) } };
   }
   return withHarnesses;
 };
@@ -83,19 +101,33 @@ const importFile = (file: string, path: Path.Path) =>
     )
   );
 
-export const loadEngineFileConfig = Effect.fn('config.load')(function* (root: string) {
+// The config file in a folder, the first of `CONFIG_FILES` that exists, or nothing.
+const readConfigIn = Effect.fn('config.read')(function* (folder: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   for (const name of CONFIG_FILES) {
-    const file = path.join(root, name);
+    const file = path.join(folder, name);
     if (!(yield* fs.exists(file))) {
       continue;
     }
-    const raw =
-      name.endsWith('.ts') || name.endsWith('.js')
-        ? yield* importFile(file, path)
-        : yield* parseFile(file, name, yield* fs.readFileString(file));
-    return applyConfigDefaults(raw, root, path);
+    return name.endsWith('.ts') || name.endsWith('.js')
+      ? yield* importFile(file, path)
+      : yield* parseFile(file, name, yield* fs.readFileString(file));
   }
-  return applyConfigDefaults({}, root, path);
+  return undefined;
+});
+
+// The user's config folder: `$XDG_CONFIG_HOME/rippls`, or `~/.config/rippls`.
+export const userConfigDir = (env: { readonly XDG_CONFIG_HOME?: string | undefined }, home: string, path: Path.Path) =>
+  env.XDG_CONFIG_HOME === undefined || env.XDG_CONFIG_HOME === ''
+    ? path.join(home, '.config', 'rippls')
+    : path.join(env.XDG_CONFIG_HOME, 'rippls');
+
+// The repository config at the Repository Root over the user config in its folder.
+// Neither file is required.
+export const loadEngineFileConfig = Effect.fn('config.load')(function* (root: string, userDir?: string) {
+  const path = yield* Path.Path;
+  const user = userDir === undefined ? undefined : yield* readConfigIn(userDir);
+  const repository = yield* readConfigIn(root);
+  return applyConfigDefaults(mergeConfigs(user, repository), root, path);
 });

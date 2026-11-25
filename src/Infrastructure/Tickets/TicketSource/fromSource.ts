@@ -1,7 +1,7 @@
 import { type Config, ConfigProvider, type FileSystem, Layer, type Path } from 'effect';
 import type { ChildProcessSpawner } from 'effect/unstable/process';
 
-import type { TicketSourceConfig } from '~/Core/Shared/Domain/EngineConfig';
+import type { LinearSourceConfig, LocatedFolderSource, LocatedTicketSource } from '~/Core/Shared/Domain/EngineConfig';
 import type { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { defaultTicketKind, type TicketKind } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketKind';
 import type { LinearApi } from '~/Core/Tickets/Ports/LinearApi';
@@ -11,9 +11,6 @@ import { LinearApiLive } from '~/Infrastructure/Tickets/LinearApi/live';
 import { TicketSourceFolderLive } from './folder';
 import { TicketSourceLinearLive } from './linear';
 
-type FolderSource = Extract<TicketSourceConfig, { readonly _tag: 'folder' }>;
-type LinearSource = Extract<TicketSourceConfig, { readonly _tag: 'linear' }>;
-
 /** What the folder Source needs: the files, Git, and the Repository Root its Ticket Worktrees belong to. */
 type FolderServices =
   | FileSystem.FileSystem
@@ -21,7 +18,7 @@ type FolderServices =
   | ChildProcessSpawner.ChildProcessSpawner
   | RepositoryRoot;
 
-const linearConfig = (source: LinearSource, defaultKind: TicketKind) =>
+const linearConfig = (source: LinearSourceConfig, defaultKind: TicketKind) =>
   ConfigProvider.layer(
     ConfigProvider.fromUnknown({
       teamId: source.teamId,
@@ -30,7 +27,7 @@ const linearConfig = (source: LinearSource, defaultKind: TicketKind) =>
     })
   );
 
-const folderConfig = (source: FolderSource, defaultKind: TicketKind) =>
+const folderConfig = (source: LocatedFolderSource, defaultKind: TicketKind) =>
   ConfigProvider.layer(
     ConfigProvider.fromUnknown({
       ticketsDir: source.ticketsDir,
@@ -40,25 +37,25 @@ const folderConfig = (source: FolderSource, defaultKind: TicketKind) =>
   );
 
 export function ticketSourceLive(
-  source: FolderSource,
+  source: LocatedFolderSource,
   defaultKind?: TicketKind
 ): Layer.Layer<TicketSource, Config.ConfigError, FolderServices>;
 export function ticketSourceLive(
-  source: LinearSource,
+  source: LinearSourceConfig,
   defaultKind?: TicketKind
 ): Layer.Layer<TicketSource, Config.ConfigError, LinearApi>;
 export function ticketSourceLive(
-  source: TicketSourceConfig,
+  source: LocatedTicketSource,
   defaultKind?: TicketKind
 ): Layer.Layer<TicketSource, Config.ConfigError, LinearApi | FolderServices>;
-export function ticketSourceLive(source: TicketSourceConfig, defaultKind: TicketKind = defaultTicketKind) {
+export function ticketSourceLive(source: LocatedTicketSource, defaultKind: TicketKind = defaultTicketKind) {
   return source._tag === 'linear'
     ? TicketSourceLinearLive.pipe(Layer.provide(linearConfig(source, defaultKind)))
     : TicketSourceFolderLive.pipe(Layer.provide(folderConfig(source, defaultKind)));
 }
 
 export const liveTicketSource = (
-  source: TicketSourceConfig,
+  source: LocatedTicketSource,
   defaultKind: TicketKind = defaultTicketKind
 ): Layer.Layer<TicketSource, Config.ConfigError, FolderServices> =>
   source._tag === 'linear'

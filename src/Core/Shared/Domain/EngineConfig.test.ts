@@ -398,15 +398,15 @@ test('engineConfig rejects a HITL fallback that is not yes or no', () => {
   ).toBeDefined();
 });
 
-test('engineConfig rejects a folder source without ticketsDir', () => {
+test('engineConfig accepts a folder source without ticketsDir, which takes the nearest queue', () => {
   expect(
     Effect.runSync(
       load({
         harnesses: [{ name: 'Codex' }],
         source: { _tag: 'folder' },
-      }).pipe(Effect.flip)
-    ).cause.message
-  ).toBe('Missing key\n  at ["source"]["ticketsDir"]\nExpected "linear"\n  at ["source"]["_tag"]');
+      })
+    ).source
+  ).toEqual({ _tag: 'folder' });
 });
 
 test('engineConfig rejects a linear source without teamId', () => {

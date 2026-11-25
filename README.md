@@ -121,8 +121,12 @@ Create a folder for tickets:
 mkdir -p .agents/tickets
 ```
 
-Rippls defaults to that folder, the four named Harnesses, and no extra config file.
-`ticketsDir` may be a path relative to the **Repository Root**.
+Rippls takes the nearest `.agents/tickets` at or above the folder where you start it, up
+to the **Repository Root**, so starting inside one app of a monorepo runs that app's
+queue. It prints the queue it uses when a run starts. With no queue there, it fails and
+names `rippls init` and the `source.ticketsDir` key. A configured `ticketsDir` wins over
+the lookup, and may be a path relative to the **Repository Root**. Rippls also defaults
+to the four named Harnesses and needs no config file.
 
 Add `.agents/tickets/1-first-ticket.md`:
 
@@ -232,10 +236,10 @@ Common flags:
 - `--help` prints all flags.
 - `--version` prints the CLI version.
 
-Source-specific settings still come from `rippls.config.ts` (or `.js`, `.json`,
-`.yaml`) at the **Repository Root**. Selecting a different Source with `--source`
-does not supply its required `ticketsDir` or `teamId`. With no config file, Rippls
-uses a folder Source at `.agents/tickets`.
+Source-specific settings still come from the config (see [Configuration](#configuration)).
+Selecting a different Source with `--source` does not supply its required `teamId`; a
+folder Source without `ticketsDir` takes the nearest queue. With no config file, Rippls
+uses a folder Source at the nearest `.agents/tickets`.
 
 Examples:
 
@@ -505,9 +509,20 @@ retry again.
 
 ## Configuration
 
-Configuration is optional. When `rippls.config.ts` (or `.js`, `.json`, `.yaml`,
-`.yml`) is absent from the **Repository Root**, Rippls uses Codex, Cursor, Claude,
-and OpenCode, and a folder Source at `.agents/tickets`.
+Configuration is optional. Rippls reads two config files, each named
+`rippls.config.ts` (or `.js`, `.json`, `.yaml`, `.yml`):
+
+- the **user config**, in `$XDG_CONFIG_HOME/rippls/`, or `~/.config/rippls/` without
+  it, for personal defaults that apply to every repository;
+- the **repository config**, at the **Repository Root**.
+
+The repository config wins. Plain objects merge key by key at every level; arrays and
+values replace, so a repository that sets `harnesses` replaces the user's list, and a
+Strategy given for a Kind replaces that Kind's Strategy whole. Neither file is required.
+A relative `ticketsDir` in either file is resolved against the **Repository Root**.
+
+With neither file, Rippls uses Codex, Cursor, Claude, and OpenCode, and a folder Source
+at the nearest `.agents/tickets` (see [Quick start](#quick-start-with-folder-tickets)).
 
 To override those defaults, export `engineFileConfig` or a default object:
 
@@ -762,6 +777,7 @@ Configure it with:
 ```ts
 source: {
   _tag: 'folder',
+  // Optional; without it, the nearest .agents/tickets at or above the start folder.
   ticketsDir: '.agents/tickets',
   // Optional; the HITL of a ticket that states none. Default: 'yes'.
   defaultHitl: 'no',

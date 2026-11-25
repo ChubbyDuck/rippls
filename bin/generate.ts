@@ -4,6 +4,7 @@ import { Config, Console, Effect, Layer, Schema } from 'effect';
 import { Command, Flag } from 'effect/unstable/cli';
 
 import { EngineFileConfigLive } from '~/config/layer';
+import { locateFolderQueue } from '~/config/queue';
 import { engineConfig, resolveTicketSource } from '~/Core/Shared/Domain/EngineConfig';
 import { generateTickets } from '~/Core/Tickets/Application/UseCases/Generate/generate';
 import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngine/repositoryRoot';
@@ -15,6 +16,7 @@ import { fixtureWriterFolderLive } from '~/Infrastructure/Tickets/FixtureWriter/
 const AppLive = Layer.unwrap(
   engineConfig.pipe(
     Effect.flatMap((config) => resolveTicketSource(config.source, 'folder')),
+    Effect.flatMap((source) => locateFolderQueue(source, process.cwd())),
     Effect.map((source) => fixtureWriterFolderLive(source.ticketsDir))
   )
 ).pipe(Layer.provide(EngineFileConfigLive), Layer.provideMerge(RepositoryRootLive));

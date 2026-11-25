@@ -1,10 +1,11 @@
 import * as NodeRuntime from '@effect/platform-node/NodeRuntime';
 import * as NodeServices from '@effect/platform-node/NodeServices';
 import { hostname } from 'node:os';
-import { Config, Effect, Layer, Option, Schema } from 'effect';
+import { Config, Console, Effect, Layer, Option, Schema } from 'effect';
 import { Argument, Command, Flag } from 'effect/unstable/cli';
 
 import { EngineFileConfigLive } from '~/config/layer';
+import { locateQueue, queueLine } from '~/config/queue';
 import {
   checkConfig,
   commitConfig,
@@ -23,6 +24,7 @@ import { runEngine } from '~/Core/Tickets/Application/UseCases/RunEngine/runEngi
 import { showStatus } from '~/Core/Tickets/Application/UseCases/ShowStatus/showStatus';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
+import { QueueNotFound } from '~/Core/Tickets/Domain/Exceptions/QueueNotFound';
 import { TicketNotEscalated } from '~/Core/Tickets/Domain/Exceptions/TicketNotEscalated';
 import { TicketNotOfSource } from '~/Core/Tickets/Domain/Exceptions/TicketNotOfSource';
 import { ConfiguredHarnessesLive } from '~/Infrastructure/Shared/HarnessSelector/configured';
@@ -46,11 +48,19 @@ const AppLive = Layer.mergeAll(
 
 const Concurrency = Schema.Int.check(Schema.isGreaterThan(0));
 
-const ticketSourceFor = (source: Option.Option<TicketSourceTag>) =>
+// The Source a command uses, with its queue: the configured one, or the nearest
+// queue at or above the folder where Rippls started.
+const locatedSourceFor = (source: Option.Option<TicketSourceTag>) =>
   Effect.gen(function* () {
     const config = yield* EngineConfig;
     const resolved = yield* resolveTicketSource(config.source, Option.getOrUndefined(source));
-    return liveTicketSource(resolved, config.defaultKind);
+    return yield* locateQueue(resolved, process.cwd());
+  });
+
+const ticketSourceFor = (source: Option.Option<TicketSourceTag>) =>
+  Effect.gen(function* () {
+    const config = yield* EngineConfig;
+    return liveTicketSource(yield* locatedSourceFor(source), config.defaultKind);
   });
 
 const engine = Command.make(
@@ -77,7 +87,10 @@ const engine = Command.make(
   }),
   Command.withHandler(({ source, project, limit, concurrency, idleTimeout, pollInterval }) =>
     Effect.gen(function* () {
-      const ticketSource = yield* ticketSourceFor(source);
+      const config = yield* EngineConfig;
+      const located = yield* locatedSourceFor(source);
+      yield* Console.log(queueLine(located));
+      const ticketSource = liveTicketSource(located, config.defaultKind);
       const check = yield* checkConfig;
       const commit = yield* commitConfig;
       return yield* runEngine({
@@ -126,7 +139,7 @@ export const program = Command.run(command, { version: '0.0.2' }).pipe(
 
 // Errors whose message is written for the person who ran the command.
 const isExplained = (error: unknown): error is Error =>
-  error instanceof TicketNotEscalated || error instanceof TicketNotOfSource;
+  error instanceof TicketNotEscalated || error instanceof TicketNotOfSource || error instanceof QueueNotFound;
 
 const describeError = (error: unknown) =>
   error instanceof Config.ConfigError ? error.cause.message : isExplained(error) ? error.message : error;

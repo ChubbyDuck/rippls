@@ -2,6 +2,7 @@ import * as NodeServices from '@effect/platform-node/NodeServices';
 import { ConfigProvider, Effect, FileSystem, Layer, Path } from 'effect';
 import { expect, test } from 'vitest';
 
+import { locateFolderQueue } from '~/config/queue';
 import { engineConfig, resolveTicketSource } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { LinearApi, type LinearIssue, LinearIssueNotFound } from '~/Core/Tickets/Ports/LinearApi';
@@ -15,7 +16,11 @@ const folderSource = (ticketsDir: string) =>
   engineConfig.parse(ConfigProvider.fromUnknown({
     harnesses: [{ name: 'Codex' }],
     source: { _tag: 'folder', ticketsDir },
-  })).pipe(Effect.flatMap((config) => resolveTicketSource(config.source, 'folder')));
+  })).pipe(
+    Effect.flatMap((config) => resolveTicketSource(config.source, 'folder')),
+    Effect.flatMap((source) => locateFolderQueue(source, ticketsDir)),
+    Effect.provideService(RepositoryRoot, ticketsDir)
+  );
 
 const linearSource = (teamId: string) =>
   engineConfig.parse(ConfigProvider.fromUnknown({
@@ -59,7 +64,9 @@ test('ticketSourceLive gives the folder source the default Ticket Kind and its H
           source: { _tag: 'folder', ticketsDir: dir, defaultHitl: 'no' },
         })
       );
-      const resolved = yield* resolveTicketSource(config.source, 'folder');
+      const resolved = yield* locateFolderQueue(yield* resolveTicketSource(config.source, 'folder'), dir).pipe(
+        Effect.provideService(RepositoryRoot, dir)
+      );
       const tickets = yield* TicketSource.pipe(
         Effect.flatMap((source) => source.getManyBy({})),
         Effect.provide(

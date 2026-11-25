@@ -4,6 +4,7 @@ import { Console, Effect, FileSystem, Layer, Path } from 'effect';
 import { Command } from 'effect/unstable/cli';
 
 import { EngineFileConfigLive } from '~/config/layer';
+import { locateFolderQueue } from '~/config/queue';
 import { engineConfig, resolveTicketSource } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngine/repositoryRoot';
 
@@ -16,7 +17,7 @@ const command = Command.make('clean', {}, () =>
     const fs = yield* FileSystem.FileSystem;
     const path = yield* Path.Path;
     const config = yield* engineConfig;
-    const source = yield* resolveTicketSource(config.source, 'folder');
+    const source = yield* locateFolderQueue(yield* resolveTicketSource(config.source, 'folder'), process.cwd());
     const files = yield* fs.readDirectory(source.ticketsDir);
     const tickets = files.filter((file) => ID_FILE.test(file));
     yield* Effect.forEach(tickets, (file) => fs.remove(path.join(source.ticketsDir, file)));

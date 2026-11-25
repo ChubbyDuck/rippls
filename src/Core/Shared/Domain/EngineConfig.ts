@@ -153,7 +153,8 @@ export type TicketSourceTag = typeof TicketSourceTag.Type;
 
 export const TicketSourceConfig = Schema.TaggedUnion({
   folder: {
-    ticketsDir: TicketsDir,
+    // The queue. Without it, the folder Source takes the nearest queue (see `locateQueue`).
+    ticketsDir: Schema.optionalKey(TicketsDir),
     // The HITL of a folder ticket that states no HITL, no marker, and no Ticket
     // Kind, and no Marker. `yes` unless set; `no` suits a folder where every file is ready.
     defaultHitl: Schema.optionalKey(Hitl),
@@ -165,6 +166,16 @@ export const TicketSourceConfig = Schema.TaggedUnion({
 });
 
 export type TicketSourceConfig = typeof TicketSourceConfig.Type;
+
+export type FolderSourceConfig = Extract<TicketSourceConfig, { readonly _tag: 'folder' }>;
+
+export type LinearSourceConfig = Extract<TicketSourceConfig, { readonly _tag: 'linear' }>;
+
+// A Source whose queue is known: a folder Source with its tickets folder, configured
+// or found by the lookup, or a Linear Source.
+export type LocatedFolderSource = FolderSourceConfig & { readonly ticketsDir: TicketsDir };
+
+export type LocatedTicketSource = LocatedFolderSource | LinearSourceConfig;
 
 // The repository's own check command, which the Engine runs in the Ticket Worktree
 // after the Strategy succeeds and before the merge. Its exit code is the verdict.
@@ -412,11 +423,11 @@ export const engineConfig: Config.Config<EngineConfigValue> = Config.all({
 export function resolveTicketSource(
   configured: TicketSourceConfig | undefined,
   override: 'folder'
-): Effect.Effect<Extract<TicketSourceConfig, { readonly _tag: 'folder' }>, Config.ConfigError>;
+): Effect.Effect<FolderSourceConfig, Config.ConfigError>;
 export function resolveTicketSource(
   configured: TicketSourceConfig | undefined,
   override: 'linear'
-): Effect.Effect<Extract<TicketSourceConfig, { readonly _tag: 'linear' }>, Config.ConfigError>;
+): Effect.Effect<LinearSourceConfig, Config.ConfigError>;
 export function resolveTicketSource(
   configured: TicketSourceConfig | undefined,
   override?: TicketSourceTag
