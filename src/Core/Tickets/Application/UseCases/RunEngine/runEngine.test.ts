@@ -314,22 +314,18 @@ test('runEngine claims each ticket and reports the Claim before a Runner takes i
     'Ticket folder:1 -- implementation is claimed',
     `Ticket folder:1 -- implementation is taken into the runner ${claiming}`,
     "Ticket folder:1 -- implementation is processed by 'implementation' strategy and 'default' harness using 'default-model'",
-    'Ticket folder:1 -- implementation prepared worktree ticket-folder-1 from 0003-sandboxed-local-ticket-loop.md',
-    'Ticket folder:1 -- implementation is opening worktree ticket-folder-1 at /repo/.sandcastle/worktrees/ticket-folder-1',
+    'Ticket folder:1 -- implementation works in its Workspace on branch ticket-folder-1 at /repo/.sandcastle/worktrees/ticket-folder-1',
     '',
     'Ticket folder:1 -- implementation has no check command configured, so the check is skipped',
-    'Ticket folder:1 -- implementation has its work committed in worktree ticket-folder-1',
-    'Ticket folder:1 -- implementation is merging worktree ticket-folder-1',
+    'Ticket folder:1 -- implementation has its work committed on branch ticket-folder-1',
     'Ticket folder:1 -- implementation is done',
     'Ticket folder:2 -- implementation is claimed',
     `Ticket folder:2 -- implementation is taken into the runner ${claiming}`,
     "Ticket folder:2 -- implementation is processed by 'implementation' strategy and 'default' harness using 'default-model'",
-    'Ticket folder:2 -- implementation prepared worktree ticket-folder-2 from 0003-sandboxed-local-ticket-loop.md',
-    'Ticket folder:2 -- implementation is opening worktree ticket-folder-2 at /repo/.sandcastle/worktrees/ticket-folder-2',
+    'Ticket folder:2 -- implementation works in its Workspace on branch ticket-folder-2 at /repo/.sandcastle/worktrees/ticket-folder-2',
     '',
     'Ticket folder:2 -- implementation has no check command configured, so the check is skipped',
-    'Ticket folder:2 -- implementation has its work committed in worktree ticket-folder-2',
-    'Ticket folder:2 -- implementation is merging worktree ticket-folder-2',
+    'Ticket folder:2 -- implementation has its work committed on branch ticket-folder-2',
     'Ticket folder:2 -- implementation is done',
   ]);
 });
@@ -2492,7 +2488,7 @@ test('runEngine in place fails at start with a Concurrency above one, and claims
 
   expect(error).toEqual(new ConcurrencyNotInPlace({ concurrency: 2 }));
   expect(error.message).toBe(
-    'The in-place Workspace allows a Concurrency of one, and the Concurrency is 2: two Agents would share one checkout. ' +
+    'The in-place Workspace allows a Concurrency of one, and the Concurrency is 2: every Runner would share the Repository Root. ' +
       'Set `workspace: worktree` in the config to run Tickets in parallel in Ticket Worktrees, or run with `--concurrency 1`.'
   );
   expect(source.reports).toEqual([]);
@@ -2659,7 +2655,7 @@ test('runEngine in place escalates a failed ticket with no worktree path, and a 
   );
   expect(result.escalation?.worktree).toBeUndefined();
   expect(messages).toContain(
-    `Ticket folder:1 -- implementation failed (strategy failure: step 1, Harness error) and is escalated after 1 attempt(s); its work stays in the Repository Root at ${result.root} as it is`
+    `Ticket folder:1 -- implementation failed (strategy failure: step 1, Harness error) and is escalated after 1 attempt(s); its work stays at ${result.root} as it is`
   );
   expect(messages).toContain(
     'folder:1 is retried after 1 attempt; the next Engine run continues in the Repository Root as it is'

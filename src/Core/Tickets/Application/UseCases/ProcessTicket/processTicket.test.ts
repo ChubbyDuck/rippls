@@ -36,7 +36,6 @@ const ticketFields = {
 const ticket = Ticket.create(ticketFields);
 const engine = Schema.decodeSync(EngineId)('standalone');
 const runnerId = Schema.decodeSync(RunnerId)('standalone:0');
-const repositoryRoot = '/repo';
 const projectWorktree = { path: '/repo/.sandcastle/worktrees/test', branch: 'test' };
 // As the Worktree Manager does, the fake names the branch of a Ticket Worktree
 // from the ticket identity with the characters unsafe in a branch name replaced.
@@ -73,7 +72,7 @@ const withClaims = <A, E, R>(services: Layer.Layer<A, E, R>) =>
   );
 
 test('processTicket can be reused independently with the services supplied by each caller', () => {
-  const work = processTicket({ ticket, runnerId, repositoryRoot });
+  const work = processTicket({ ticket, runnerId });
 
   for (const name of ['first-harness', 'second-harness']) {
     const events: string[] = [];
@@ -167,7 +166,7 @@ test('processTicket runs a ticket that omits project', () => {
   );
 
   expect(
-    Effect.runSync(processTicket({ ticket: withoutProject, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))))
+    Effect.runSync(processTicket({ ticket: withoutProject, runnerId }).pipe(Effect.provide(withClaims(services))))
   ).toBeUndefined();
   expect(doneReported).toEqual([withoutProject.id]);
 });
@@ -216,7 +215,7 @@ test('processTicket escalates the ticket in the Ledger with the failed step as t
   );
 
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(
+    processTicket({ ticket, runnerId }).pipe(
       Effect.provide(Layer.merge(services, ledger.layer)),
       Effect.flip
     )
@@ -245,7 +244,7 @@ test('processTicket keeps the escalation and the Claim, logs the failed report, 
   );
 
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(
+    processTicket({ ticket, runnerId }).pipe(
       Effect.provide(Layer.mergeAll(services, ledger.layer, Layer.succeed(Console.Console, capturing))),
       Effect.flip
     )
@@ -289,7 +288,7 @@ test('processTicket propagates a missing strategy and does not mark the ticket d
   );
 
   expect(
-    Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip))
+    Effect.runSync(processTicket({ ticket, runnerId }).pipe(Effect.provide(withClaims(services)), Effect.flip))
   ).toBe(failure);
   expect(doneReported).toEqual([]);
 });
@@ -346,7 +345,7 @@ test('processTicket hands the strategy a harness bound to the ticket worktree', 
     WorktreeManagerNoop
   );
 
-  Effect.runSync(processTicket({ ticket: withoutProject, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
+  Effect.runSync(processTicket({ ticket: withoutProject, runnerId }).pipe(Effect.provide(withClaims(services))));
 
   expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1']);
 });
@@ -363,7 +362,7 @@ test('processTicket hands the strategy a harness bound to the ticket worktree of
     WorktreeManagerNoop
   );
 
-  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
+  Effect.runSync(processTicket({ ticket, runnerId }).pipe(Effect.provide(withClaims(services))));
 
   expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1']);
 });
@@ -399,8 +398,8 @@ test('two tickets that name the same project run in distinct ticket worktrees', 
     recordingWorktrees()
   );
 
-  Effect.runSync(processTicket({ ticket: first, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
-  Effect.runSync(processTicket({ ticket: second, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
+  Effect.runSync(processTicket({ ticket: first, runnerId }).pipe(Effect.provide(withClaims(services))));
+  Effect.runSync(processTicket({ ticket: second, runnerId }).pipe(Effect.provide(withClaims(services))));
 
   expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1', '/repo/.sandcastle/worktrees/ticket-folder-2']);
 });
@@ -426,7 +425,7 @@ test('processTicket closes the ticket worktree after a successful strategy', () 
     recordingWorktrees(closed)
   );
 
-  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
+  Effect.runSync(processTicket({ ticket, runnerId }).pipe(Effect.provide(withClaims(services))));
 
   expect(closed).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1']);
 });
@@ -452,7 +451,7 @@ test('processTicket retains the ticket worktree when the strategy fails', () => 
     recordingWorktrees(closed)
   );
 
-  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip));
+  Effect.runSync(processTicket({ ticket, runnerId }).pipe(Effect.provide(withClaims(services)), Effect.flip));
 
   expect(closed).toEqual([]);
 });
@@ -499,7 +498,7 @@ test('a project-worktree create failure is retried once and then halts without e
   );
 
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services)), Effect.flip)
+    processTicket({ ticket, runnerId }).pipe(Effect.provide(withClaims(services)), Effect.flip)
   );
 
   expect(halt).toBeInstanceOf(EngineHalted);
@@ -540,7 +539,7 @@ test.each([
     );
 
     const halt = Effect.runSync(
-      processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(Layer.merge(services, ledger.layer)), Effect.flip)
+      processTicket({ ticket, runnerId }).pipe(Effect.provide(Layer.merge(services, ledger.layer)), Effect.flip)
     );
 
     expect(halt).toEqual(new EngineHalted({ ticketId: ticket.id, reason: unexpected.message }));
@@ -573,7 +572,7 @@ test('a project-worktree create failure that succeeds on retry processes the tic
     })
   );
 
-  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(withClaims(services))));
+  Effect.runSync(processTicket({ ticket, runnerId }).pipe(Effect.provide(withClaims(services))));
 
   expect(attempts).toBe(2);
   expect(cwds).toEqual(['/repo/.sandcastle/worktrees/ticket-folder-1']);
@@ -622,7 +621,7 @@ test('a ticket-worktree close failure is retried once and then halts with no don
   );
 
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(Layer.merge(services, ledger.layer)), Effect.flip)
+    processTicket({ ticket, runnerId }).pipe(Effect.provide(Layer.merge(services, ledger.layer)), Effect.flip)
   );
 
   expect(halt).toBeInstanceOf(EngineHalted);
@@ -662,9 +661,11 @@ test('processTicket logs the preparation of a Ticket Worktree with the branch th
     Layer.succeed(Console.Console, capturing)
   );
 
-  Effect.runSync(processTicket({ ticket: inFeatureFolder, runnerId, repositoryRoot }).pipe(Effect.provide(services)));
+  Effect.runSync(processTicket({ ticket: inFeatureFolder, runnerId }).pipe(Effect.provide(services)));
 
-  expect(logged).toContain('Ticket folder:auth/1 -- implementation prepared worktree ticket-folder-auth-1 from auth');
+  expect(logged).toContain(
+    'Ticket folder:auth/1 -- implementation works in its Workspace on branch ticket-folder-auth-1 at /repo/.sandcastle/worktrees/ticket-folder-auth-1'
+  );
   expect(logged.filter((line) => line.includes('ticket-folder:auth/1'))).toEqual([]);
 });
 
@@ -678,7 +679,7 @@ test('processTicket names its Runner in the Claim and releases the Claim once th
     })
   );
 
-  Effect.runSync(processTicket({ ticket, runnerId, repositoryRoot }).pipe(Effect.provide(Layer.merge(services, ledger.layer))));
+  Effect.runSync(processTicket({ ticket, runnerId }).pipe(Effect.provide(Layer.merge(services, ledger.layer))));
 
   expect(seen).toEqual([new Claim({ ticket: ticket.id, engine, process: 1, host: 'memory', runner: runnerId })]);
   expect(ledger.claims.has(ticket.id)).toBe(false);
@@ -713,7 +714,7 @@ test('a done report that fails escalates the ticket, merges nothing, and records
   );
 
   const halt = Effect.runSync(
-    processTicket({ ticket, runnerId, repositoryRoot }).pipe(
+    processTicket({ ticket, runnerId }).pipe(
       Effect.provide(Layer.merge(services, ledger.layer)),
       Effect.flip
     )

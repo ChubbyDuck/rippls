@@ -107,6 +107,23 @@ const loggingOf = (path: Path.Path, repositoryRoot: string, label: string) => ({
 
 const isNotFound = (error: PlatformError.PlatformError) => error.reason._tag === 'NotFound';
 
+// The logs folder keeps itself out of Git with an ignore file of its own, so that a
+// log never makes the Workspace dirty: in place, the logs are inside the Repository
+// Root that the clean check reads. An ignore file already there is kept. A folder
+// that cannot be written is left to the run, which reports its own failure.
+const ignoreLogs = (fs: FileSystem.FileSystem, path: Path.Path, repositoryRoot: string) => {
+  const logs = path.join(repositoryRoot, '.sandcastle', 'logs');
+  const ignoreFile = path.join(logs, '.gitignore');
+  return fs.exists(ignoreFile).pipe(
+    Effect.flatMap((exists) =>
+      exists
+        ? Effect.void
+        : fs.makeDirectory(logs, { recursive: true }).pipe(Effect.andThen(fs.writeFileString(ignoreFile, '*\n')))
+    ),
+    Effect.ignore
+  );
+};
+
 // The keys of the Repository Root's `.sandcastle/.env`. Sandcastle reads that file
 // from the run's working directory, and in a Ticket Worktree it does not exist (Git
 // ignores it), so Rippls passes its keys as the run's environment. A missing file
@@ -175,6 +192,7 @@ const sandcastleHarness = (
       }
       const provider = providers[name][selected.id]!;
       const env = yield* rootEnvOf(fs, path, repositoryRoot);
+      yield* ignoreLogs(fs, path, repositoryRoot);
       return yield* Effect.tryPromise({
         try: (signal) =>
           run({

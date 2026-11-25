@@ -149,7 +149,7 @@ prompt and reads the signal back; any outcome other than the pass signal fails i
 _Avoid_: Gate, review
 
 **Check command**:
-The repository's own command that the Engine runs in the Ticket Worktree, through the
+The repository's own command that the Engine runs in the Workspace, through the
 Worktree Manager and within a time limit, after the Strategy succeeds. Exit code zero
 passes; any other exit code, or the time limit, fails the check. A Project may have
 its own check command. With no check command, the check is skipped.
@@ -240,9 +240,10 @@ escalation to a human, and reused after a Retry.
 _Avoid_: Project Worktree, per-prompt worktree
 
 **Worktree Manager**:
-The service responsible for preparing Project Worktrees and Ticket Worktrees,
-running a command in a worktree, telling whether a worktree is clean, and merging
-and closing successful Ticket Worktrees.
+The service responsible for preparing the Workspace of a Ticket, running a command
+in it, telling whether it is clean, and merging and closing successful Ticket
+Worktrees. With Ticket Worktrees it prepares Project Worktrees and Ticket Worktrees;
+in place it prepares the Repository Root on its current branch, and merges nothing.
 _Avoid_: Worktree Repository
 
 ## Sources

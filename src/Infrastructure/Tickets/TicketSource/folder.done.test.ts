@@ -304,7 +304,7 @@ const processIn = (root: string, tickets: string, worktree: Worktree) =>
     const processed = yield* Effect.gen(function* () {
       const source = yield* TicketSource;
       const ticket = yield* source.getOneBy({ id: ticketId });
-      return yield* processTicket({ ticket, runnerId, repositoryRoot: root });
+      return yield* processTicket({ ticket, runnerId });
     }).pipe(
       Effect.provide(services),
       Effect.provideService(Console.Console, Object.assign(Object.create(console), { log: () => {}, error: () => {} })),

@@ -5,10 +5,9 @@ import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 export type ProcessTicketCommand = {
   readonly ticket: Ticket;
   readonly runnerId: RunnerId;
-  readonly repositoryRoot: string;
   // The check that runs after the Strategy succeeds. Without it the check is skipped.
   readonly check?: CheckConfig;
-  // The commit prompt and its model demand, for a Ticket Worktree left dirty. Without
+  // The commit prompt and its model demand, for a Workspace left dirty. Without
   // it the default is used.
   readonly commit?: CommitConfig;
 };

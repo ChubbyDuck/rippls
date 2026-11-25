@@ -41,7 +41,7 @@ export const checkTicketWorktree = Effect.fn('ticket.check')(function* (
   }
   const worktrees = yield* WorktreeManager;
   for (let fixes = 0; ; fixes++) {
-    yield* Console.log(`${ticket.label} is checking with \`${command}\` in worktree ${worktree.branch}`);
+    yield* Console.log(`${ticket.label} is checking with \`${command}\` on branch ${worktree.branch}`);
     const run = yield* worktrees.runCommand({ worktree, command, timeLimit: check.timeLimit });
     if (run._tag === 'Exited' && run.exitCode === 0) {
       yield* Console.log(`${ticket.label} passed the check`);

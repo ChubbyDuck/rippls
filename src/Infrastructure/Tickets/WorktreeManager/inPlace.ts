@@ -43,25 +43,31 @@ export const WorktreeManagerInPlaceLive = (repositoryRoot: string, ticketsDir?: 
       const realPathOf = (target: string) => fs.realPath(target).pipe(Effect.orElseSucceed(() => target));
 
       // The tickets folder as Git names it: relative to the Repository Root, with
-      // `/` between segments. A folder outside the Repository Root has none.
-      const queueInRoot =
+      // `/` between segments. Git lists a symbolic link to the folder as one
+      // untracked file at its own path, so the folder counts by the path it was
+      // given as well as by its real path. A folder outside the Repository Root, or
+      // the Repository Root itself, gives no path: the clean check would otherwise
+      // ignore every untracked file.
+      const realRoot = yield* realPathOf(repositoryRoot);
+      const inRoot = (relative: string) =>
+        relative === '' || relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)
+          ? []
+          : [relative.split(path.sep).join('/')];
+      const queues =
         ticketsDir === undefined
-          ? undefined
-          : path.relative(yield* realPathOf(repositoryRoot), yield* realPathOf(ticketsDir));
-      const queue =
-        queueInRoot === undefined ||
-        queueInRoot === '..' ||
-        queueInRoot.startsWith(`..${path.sep}`) ||
-        path.isAbsolute(queueInRoot)
-          ? undefined
-          : queueInRoot.split(path.sep).join('/');
-      const isInQueue = (file: string) => queue !== undefined && (queue === '' || file === queue || file.startsWith(`${queue}/`));
+          ? []
+          : [
+              ...inRoot(path.relative(repositoryRoot, ticketsDir)),
+              ...inRoot(path.relative(realRoot, ticketsDir)),
+              ...inRoot(path.relative(realRoot, yield* realPathOf(ticketsDir))),
+            ];
+      const isInQueue = (file: string) => queues.some((queue) => file === queue || file.startsWith(`${queue}/`));
 
       // The current branch, or `HEAD` when it is detached.
       const current = spawner
         .string(ChildProcess.make('git', ['branch', '--show-current'], { cwd: repositoryRoot }))
         .pipe(
-          Effect.map((output): Worktree => ({ path: repositoryRoot, branch: output.trim() || 'HEAD' })),
+          Effect.map((output): Worktree => ({ path: repositoryRoot, branch: output.trim() || 'HEAD', retained: false })),
           Effect.mapError(() => new WorktreeCreationError())
         );
 

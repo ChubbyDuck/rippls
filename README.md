@@ -4,8 +4,8 @@
 
 Rippls is an opinionated ticket workflow engine for AI agents. It defines a ticket format, lifecycle
 rules, and reusable **Strategies** of configured steps. A pool of named
-**Runners** processes a **Ticket Stream**. By default the work happens in place, in your
-current checkout and on your current branch; config moves it into isolated Git worktrees.
+**Runners** processes a **Ticket Stream**. By default the work happens in place, in the
+Repository Root on your current branch; config moves it into isolated Git worktrees.
 
 Rippls is a CLI. Install it with npm or pnpm, then run it from the Git repository
 you want it to process. No clone of this project is required.
@@ -570,8 +570,8 @@ workspace: 'in-place', // the default; or 'worktree'
 - **`in-place`.** The work of every ticket happens in the Repository Root and lands on
   your current branch, as you would work by hand. No worktree is created and no
   dependencies are installed. Your `.env`, ports, and end-to-end suite behave as they do
-  for you. Nothing is merged. A Concurrency above one fails at start, since two Agents
-  would share one checkout. The check for a clean Workspace after the Strategy ignores
+  for you. Nothing is merged. A Concurrency above one fails at start, since every
+  Runner would share the Repository Root. The check for a clean Workspace after the Strategy ignores
   untracked files under the tickets folder, so a queue that Git does not track still
   works; ignored files never count.
 - **`worktree`.** Each ticket gets its own Ticket Worktree and branch under
@@ -1096,9 +1096,10 @@ With Ticket Worktrees, Project determines where successful ticket work accumulat
 then creates Ticket Worktrees from that branch. Successful ticket branches merge
 into the project branch.
 
-Worktrees live under `.sandcastle/worktrees/`. Rippls adds no ignore rule, so add
-`.sandcastle/` to your `.gitignore`: the worktrees, the logs, and `.sandcastle/.env` then
-do not show as untracked files. Project Worktrees remain for later tickets and are not
+Worktrees live under `.sandcastle/worktrees/`. Rippls adds no ignore rule for them, so add
+`.sandcastle/` to your `.gitignore`: the worktrees and `.sandcastle/.env` then do not
+show as untracked files. The Harness logs folder, `.sandcastle/logs/`, ignores itself in
+either Workspace. Project Worktrees remain for later tickets and are not
 merged into the Repository Root automatically. Ticket Worktrees are closed after success and retained after an escalation. A retried
 ticket continues in its retained Ticket Worktree, with its commits and uncommitted
 changes.

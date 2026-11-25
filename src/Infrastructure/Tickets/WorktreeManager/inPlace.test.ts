@@ -106,7 +106,7 @@ test('preparing a ticket, a Project ticket, or a Project returns the Repository 
     })
   );
 
-  const atRoot = { path: result.root, branch: 'trunk' };
+  const atRoot = { path: result.root, branch: 'trunk', retained: false };
   expect(result.ticket).toEqual(atRoot);
   expect(result.projectTicket).toEqual(atRoot);
   expect(result.project).toEqual(atRoot);
@@ -125,7 +125,7 @@ test('preparing a ticket on a detached HEAD returns the Repository Root on HEAD'
     })
   );
 
-  expect(prepared.worktree).toEqual({ path: prepared.root, branch: 'HEAD' });
+  expect(prepared.worktree).toEqual({ path: prepared.root, branch: 'HEAD', retained: false });
 });
 
 test('merge and close changes nothing: no commit, no branch, and the tree as it was', async () => {
@@ -222,6 +222,37 @@ test('isClean reports a change to a tracked file, under the tickets folder too',
   );
 
   expect(result).toEqual({ fresh: true, ticketChanged: false, renamed: false });
+});
+
+test('isClean ignores a tickets folder that is an untracked symbolic link to a folder outside the Repository Root', async () => {
+  const clean = await run(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root } = yield* repositoryWith('tracked');
+      const outside = yield* fs.makeTempDirectory({ prefix: 'engine-in-place-queue-' });
+      yield* fs.writeFileString(path.join(outside, '02-elsewhere.md'), '# 02 — Elsewhere\n');
+      const link = path.join(root, '.agents', 'queue');
+      yield* fs.symlink(outside, link);
+      return yield* isCleanIn(root, link);
+    })
+  );
+
+  expect(clean).toBe(true);
+});
+
+test('isClean with the Repository Root as the tickets folder counts every untracked file', async () => {
+  const clean = await run(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const { root } = yield* repositoryWith('tracked');
+      yield* fs.writeFileString(path.join(root, 'notes.txt'), 'left by hand\n');
+      return yield* isCleanIn(root, root);
+    })
+  );
+
+  expect(clean).toBe(false);
 });
 
 test('isClean never counts an ignored file', async () => {

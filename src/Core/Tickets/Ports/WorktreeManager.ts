@@ -7,9 +7,13 @@ import type { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/Work
 import type { WorktreeCreationError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCreationError';
 import type { WorktreeNotExpected } from '~/Core/Tickets/Domain/Exceptions/WorktreeNotExpected';
 
+// Where the work of a ticket happens. A Ticket Worktree is retained for a human
+// after an escalation; the Repository Root in place says `retained: false`, since
+// there is no worktree to keep.
 export interface Worktree {
   readonly path: string;
   readonly branch: string;
+  readonly retained?: false;
 }
 
 // How a command run in a worktree ended: it exited with a code, or the time limit

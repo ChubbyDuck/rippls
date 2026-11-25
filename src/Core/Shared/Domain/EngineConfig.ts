@@ -190,7 +190,7 @@ export const workspaceConfig: Config.Config<Workspace> = Config.schema(Workspace
   Config.withDefault(defaultWorkspace)
 );
 
-// The repository's own check command, which the Engine runs in the Ticket Worktree
+// The repository's own check command, which the Engine runs in the Workspace
 // after the Strategy succeeds and before the merge. Its exit code is the verdict.
 // A Project may override the command; a ticket without a Project, or of a Project
 // without an override, uses `command`. With no command the check is skipped.
@@ -247,7 +247,7 @@ const ModelDemandConfig = Schema.Struct({
   generation: Schema.optionalKey(Schema.Literals(modelGenerations)),
 });
 
-// The prompt the Engine sends when a Ticket Worktree is dirty after the check, so
+// The prompt the Engine sends when the Workspace is dirty after the check, so
 // that the work is committed whichever skill did it. The prompt is a template over
 // the ticket (see `renderPrompt`); a model demand that is set replaces the default
 // one whole.

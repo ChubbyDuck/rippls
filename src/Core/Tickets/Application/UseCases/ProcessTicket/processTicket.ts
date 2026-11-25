@@ -21,18 +21,17 @@ import { prepareTicketWorktree } from './prepareTicketWorktree';
 // retained Ticket Worktree, the Source hears escalated, and only then is the Claim
 // released. A report that fails is logged, and the Claim stays: the exit that
 // follows the halt reports escalated again, and a later Engine that meets the
-// record finishes it. The Engine then halts. In place, the work is in the
-// Repository Root itself: there is no Ticket Worktree to retain, so the Escalation
-// records no path, and the tree is left as it is.
-const escalate = (ticket: Ticket, worktree: Worktree, repositoryRoot: string, reason: string) =>
+// record finishes it. The Engine then halts. A Workspace that is not retained, as
+// the Repository Root in place, gives the Escalation no path and is left as it is.
+const escalate = (ticket: Ticket, worktree: Worktree, reason: string) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
     const source = yield* TicketSource;
-    const inPlace = worktree.path === repositoryRoot;
-    const escalation = yield* ledger.escalate(ticket.id, inPlace ? { reason } : { reason, worktree: worktree.path });
-    const kept = inPlace
-      ? `its work stays in the Repository Root at ${worktree.path} as it is`
-      : `its Ticket Worktree is retained at ${worktree.path}`;
+    const retained = worktree.retained !== false;
+    const escalation = yield* ledger.escalate(ticket.id, retained ? { reason, worktree: worktree.path } : { reason });
+    const kept = retained
+      ? `its Ticket Worktree is retained at ${worktree.path}`
+      : `its work stays at ${worktree.path} as it is`;
     yield* Console.error(
       `${ticket.label} failed (${reason}) and is escalated after ${escalation.attempts} attempt(s); ${kept}`
     );
@@ -55,19 +54,17 @@ const escalate = (ticket: Ticket, worktree: Worktree, repositoryRoot: string, re
 // Source again, and a later Engine that meets the record finishes it. In place,
 // the merge does nothing: the work and the done move are already on the current
 // branch.
-const landDone = (ticket: Ticket, worktree: Worktree, repositoryRoot: string) =>
+const landDone = (ticket: Ticket, worktree: Worktree) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
     const source = yield* TicketSource;
     const worktrees = yield* WorktreeManager;
     const afterMerge = yield* source
       .reportDone(ticket.id, worktree)
-      .pipe(Effect.catchTag('TicketEventNotReported', () => escalate(ticket, worktree, repositoryRoot, 'done report failure')));
-    yield* Effect.suspend(() =>
-      Console.log(`${ticket.label} is merging worktree ${worktree.branch}`).pipe(
-        Effect.andThen(worktrees.mergeAndClose(worktree))
-      )
-    ).pipe(
+      .pipe(Effect.catchTag('TicketEventNotReported', () => escalate(ticket, worktree, 'done report failure')));
+    // The Worktree Manager narrates the merge, since only it knows whether there
+    // is one: in place there is none.
+    yield* Effect.suspend(() => worktrees.mergeAndClose(worktree)).pipe(
       Effect.retry({ times: 1 }),
       Effect.catchTag('WorktreeCloseError', () =>
         Effect.fail(new EngineHalted({ ticketId: ticket.id, reason: 'worktree close failure' }))
@@ -101,7 +98,6 @@ const failingOn =
 export const processTicket = ({
   ticket,
   runnerId,
-  repositoryRoot,
   check = defaultCheckConfig,
   commit = defaultCommitConfig,
 }: ProcessTicketCommand) =>
@@ -128,14 +124,13 @@ export const processTicket = ({
       })
     );
     // Only the Worktree Manager knows the branch, so the preparation is logged once it returns.
-    yield* Console.log(`${ticket.label} prepared worktree ${worktree.branch} from ${ticket.project ?? 'HEAD'}`);
-    yield* Console.log(`${ticket.label} is opening worktree ${worktree.branch} at ${worktree.path}`);
+    yield* Console.log(`${ticket.label} works in its Workspace on branch ${worktree.branch} at ${worktree.path}`);
     const worktreeHarness = harnessInWorktree(harness, worktree.path);
     const outcome = yield* strategy
       .run(ticket, worktreeHarness)
       .pipe(Effect.withSpan('strategy.run', { attributes: { harness: harness.name, strategy: strategy.name } }));
     if (Result.isFailure(outcome)) {
-      return yield* escalate(ticket, worktree, repositoryRoot, outcome.failure.message);
+      return yield* escalate(ticket, worktree, outcome.failure.message);
     }
     // A check command that cannot run, or a fix the Harness cannot carry out, fails
     // the check as a failing command does.
@@ -146,7 +141,7 @@ export const processTicket = ({
       })
     );
     if (!passed) {
-      return yield* escalate(ticket, worktree, repositoryRoot, 'check failure');
+      return yield* escalate(ticket, worktree, 'check failure');
     }
     // The commit is a post-condition: a worktree still dirty after the commit
     // prompt, one whose state cannot be read, or a commit prompt the Harness fails
@@ -158,9 +153,9 @@ export const processTicket = ({
       })
     );
     if (!committed) {
-      return yield* escalate(ticket, worktree, repositoryRoot, 'commit failure');
+      return yield* escalate(ticket, worktree, 'commit failure');
     }
-    yield* landDone(ticket, worktree, repositoryRoot);
+    yield* landDone(ticket, worktree);
   }).pipe(
     Effect.withSpan('runner.run', {
       attributes: {

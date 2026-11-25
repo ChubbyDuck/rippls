@@ -63,6 +63,20 @@ test('a run records a log path under the Repository Root', async () => {
   });
 });
 
+test('a run leaves an ignore file in the logs folder, so a log never makes the Workspace dirty, and keeps one already there', async () => {
+  const root = await Effect.runPromise(fs.makeTempDirectory({ prefix: 'harness-logs-' }));
+  const ignoreFile = path.join(root, '.sandcastle', 'logs', '.gitignore');
+  const { Claude: inRoot } = registeredHarnessesOf(root, path, fs);
+
+  await Effect.runPromise(inRoot.run('do the work', { label: 'ticket-11', cwd: root }));
+  const written = await Effect.runPromise(fs.readFileString(ignoreFile));
+  await Effect.runPromise(fs.writeFileString(ignoreFile, '*.log\n'));
+  await Effect.runPromise(inRoot.run('do the work', { label: 'ticket-12', cwd: root }));
+
+  expect(written).toBe('*\n');
+  expect(await Effect.runPromise(fs.readFileString(ignoreFile))).toBe('*.log\n');
+});
+
 const printCommandOf = (call: unknown) => {
   const { agent: harness } = call as {
     agent: {
