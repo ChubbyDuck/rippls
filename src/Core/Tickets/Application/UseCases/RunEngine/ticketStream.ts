@@ -2,6 +2,7 @@ import { Console, type Duration, Effect, Option, Stream } from 'effect';
 
 import { defaultPollInterval } from '~/Core/Shared/Domain/EngineConfig';
 import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
+import type { Ticket } from '~/Core/Tickets/Domain/Entities/Ticket/entity';
 import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 
 import type { IdleClock } from './idleClock';
@@ -14,6 +15,17 @@ const ignoreIdle: TicketStreamClock = {
   onClaim: Effect.void,
   processing: Effect.succeed({ inProgress: false, nextEnd: Effect.never }),
 };
+
+// What one poll leads to: a ticket the Engine claimed, the end of a Drain once the
+// Engine is Idle, or another poll.
+type PollOutcome =
+  | { readonly _tag: 'Claimed'; readonly ticket: Ticket }
+  | { readonly _tag: 'Idle' }
+  | { readonly _tag: 'Again' };
+
+const claimed = (ticket: Ticket): PollOutcome => ({ _tag: 'Claimed', ticket });
+const idle: PollOutcome = { _tag: 'Idle' };
+const again: PollOutcome = { _tag: 'Again' };
 
 export type TicketStreamOptions = {
   readonly project?: Project;
@@ -42,28 +54,26 @@ export const ticketStream = (
     onIdle = Effect.void,
   }: TicketStreamOptions = {}
 ) => {
-  // A poll gives the ticket it claimed, or ends the stream when the Engine is
-  // Idle in a Drain, or asks for another poll.
   const poll = Effect.gen(function* () {
     const before = yield* clock.processing;
     const ticket = yield* pollTicket(engine, project);
     if (Option.isSome(ticket)) {
       yield* clock.onClaim;
-      return ticket.value;
+      return claimed(ticket.value);
     }
     yield* clock.onEmpty;
     if (!watch && !before.inProgress) {
       yield* onIdle;
-      return 'idle';
+      return idle;
     }
     yield* Console.log('No tickets are found, continuing');
     yield* Effect.sleep(pollInterval).pipe(Effect.raceFirst(before.nextEnd));
-    return 'again';
+    return again;
   });
   return Stream.unfold(undefined, () =>
     poll.pipe(
-      Effect.repeat({ until: (result) => result !== 'again' }),
-      Effect.map((result) => (typeof result === 'string' ? undefined : ([result, undefined] as const)))
+      Effect.repeat({ until: (outcome) => outcome._tag !== 'Again' }),
+      Effect.map((outcome) => (outcome._tag === 'Claimed' ? ([outcome.ticket, undefined] as const) : undefined))
     )
   );
 };

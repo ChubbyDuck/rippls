@@ -60,7 +60,9 @@ export const makeIdleClock = (idleTimeout?: Duration.Input): Effect.Effect<IdleC
       onEmpty: Ref.get(occupied).pipe(Effect.flatMap((count) => (count === 0 ? startTimeout : Effect.void))),
       onClaim: Ref.update(occupied, (count) => count + 1).pipe(Effect.andThen(stopTimeout)),
       onDone: Ref.update(occupied, (count) => Math.max(0, count - 1)).pipe(Effect.andThen(signalEnd)),
-      processing: Effect.all({ count: Ref.get(occupied), signal: Ref.get(ended) }).pipe(
+      // The signal is read before the count, so an end between the two reads has
+      // already completed the signal this poll holds.
+      processing: Effect.all({ signal: Ref.get(ended), count: Ref.get(occupied) }).pipe(
         Effect.map(({ count, signal }) => ({ inProgress: count > 0, nextEnd: Deferred.await(signal) }))
       ),
       awaitTimeout: Deferred.await(halted),

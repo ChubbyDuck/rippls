@@ -148,12 +148,10 @@ const finishStoppedSagas = (
 // the Eligible tickets. A ticket whose only Claim is a Stale Claim is Unclaimed,
 // and the Engine replaces that Claim when it takes the ticket. The Engine claims
 // the first one it can.
-const claimNextEligibleTicket = (engine: EngineId, project?: Project) =>
+export const pollTicket = (engine: EngineId, project?: Project) =>
   Effect.gen(function* () {
     const { tickets, stale, facts } = yield* readTicketScope(project);
     yield* finishStoppedSagas(engine, tickets, stale, facts);
     const eligible = tickets.filter((ticket) => isEligible(ticket, facts));
     return yield* Effect.findFirstFilter(eligible, claimIfStillEligible(engine, facts, stale));
   });
-
-export const pollTicket = claimNextEligibleTicket;

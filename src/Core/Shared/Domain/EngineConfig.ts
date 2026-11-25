@@ -411,6 +411,13 @@ const asConfigInput = (value: unknown): unknown => {
 
 export const engineConfigProvider = (input: unknown) => ConfigProvider.fromUnknown(asConfigInput(input));
 
+// A key of the config value, present only when its setting is set.
+const keyWhenSet = <K extends string, V>(key: K, value: Option.Option<V>) =>
+  Option.match(value, {
+    onNone: () => ({}),
+    onSome: (set) => ({ [key]: set }) as { readonly [P in K]: V },
+  });
+
 export const engineConfig: Config.Config<EngineConfigValue> = Config.all({
   harnesses: Config.schema(ConfiguredHarnesses, 'harnesses'),
   schedule: Config.schema(ScheduledConfigs, 'schedule').pipe(Config.withDefault([])),
@@ -420,20 +427,12 @@ export const engineConfig: Config.Config<EngineConfigValue> = Config.all({
   pollInterval: pollIntervalConfig,
   defaultKind: defaultKindConfig,
 }).pipe(
-  Config.map(({ otlpTraceUrl, source, idleTimeout, ...rest }) => {
-    const withIdle = Option.match(idleTimeout, {
-      onNone: () => rest,
-      onSome: (duration) => ({ ...rest, idleTimeout: duration }),
-    });
-    const withTrace = Option.match(otlpTraceUrl, {
-      onNone: () => withIdle,
-      onSome: (url) => ({ ...withIdle, otlpTraceUrl: url }),
-    });
-    return Option.match(source, {
-      onNone: () => withTrace,
-      onSome: (value) => ({ ...withTrace, source: value }),
-    });
-  }),
+  Config.map(({ otlpTraceUrl, source, idleTimeout, ...rest }) => ({
+    ...rest,
+    ...keyWhenSet('idleTimeout', idleTimeout),
+    ...keyWhenSet('otlpTraceUrl', otlpTraceUrl),
+    ...keyWhenSet('source', source),
+  })),
   Config.withDefault(defaultEngineConfig)
 );
 
