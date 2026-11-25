@@ -671,7 +671,7 @@ const ledgerWithClaim = (runs: boolean) => {
   const ledger = makeLedgerMemory();
   ledger.claims.set(
     toLinearId(uuid),
-    new Claim({ ticket: toLinearId(uuid), engine: stoppedEngine, process: 2, host: 'memory' })
+    Claim.make({ ticket: toLinearId(uuid), engine: stoppedEngine, process: 2, host: 'memory' })
   );
   if (runs) {
     ledger.running.add(2);

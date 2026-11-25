@@ -24,7 +24,7 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
   const cleared = new Map<TicketId, Escalation>();
   const done = new Set<TicketId>();
   const claimOf = (ticket: TicketId, engine: EngineId) =>
-    new Claim({ ticket, engine, process: holder.process, host: holder.host });
+    Claim.make({ ticket, engine, process: holder.process, host: holder.host });
   const pick = <A>(records: ReadonlyMap<TicketId, A>, tickets: readonly TicketId[]): ReadonlyMap<TicketId, A> =>
     new Map(
       tickets.flatMap((ticket) => {
@@ -71,7 +71,7 @@ export const makeLedgerMemory = (holder: ClaimHolder = { process: 1, host: 'memo
     escalate: (ticket, { reason, worktree }) =>
       Effect.sync(() => {
         const attempts = ((escalated.get(ticket) ?? cleared.get(ticket))?.attempts ?? 0) + 1;
-        const escalation = new Escalation({ ticket, reason, attempts, worktree });
+        const escalation = Escalation.make({ ticket, reason, attempts, worktree });
         escalated.set(ticket, escalation);
         cleared.delete(ticket);
         return escalation;

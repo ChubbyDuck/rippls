@@ -153,7 +153,7 @@ const startRead = 1;
 // A Claim that another Engine holds in the shared Ledger.
 const otherEngine = Schema.decodeSync(EngineId)('other-engine-0000');
 const heldByOther = (ticket: TicketId) =>
-  new Claim({ ticket, engine: otherEngine, process: 1, host: 'memory' });
+  Claim.make({ ticket, engine: otherEngine, process: 1, host: 'memory' });
 
 const sampleFields = (value = 1) => ({
   id: id(value),
@@ -169,7 +169,7 @@ const sampleTicket = (value = 1) => Ticket.create(sampleFields(value));
 
 // The ticket as its Source sees it once it is done.
 const seenAsDone = (ticket: Ticket) =>
-  new Ticket({
+  Ticket.make({
     id: ticket.id,
     title: ticket.title,
     project: ticket.project,
@@ -337,7 +337,7 @@ test('runEngine claims a ticket in the Ledger before a Runner processes it, and 
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, claimRecordingImplementation(ledger, seen));
 
   expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
-  expect(seen).toEqual([new Claim({ ticket: id(1), engine: engineId, process: 1, host: 'memory', runner: claiming })]);
+  expect(seen).toEqual([Claim.make({ ticket: id(1), engine: engineId, process: 1, host: 'memory', runner: claiming })]);
   expect(source.doneReported).toEqual([id(1)]);
   expect([...ledger.done]).toEqual([id(1)]);
   expect(ledger.claims.size).toBe(0);
@@ -553,26 +553,26 @@ test('runEngine prints the unreadable tickets and folders, the unresolved blocke
   const ran: Ticket[] = [];
   const messages: string[] = [];
   const unreadable = [
-    new UnreadableTicket({ name: 'README.md', reason: 'no numeric prefix' }),
-    new UnreadableTicket({ name: 'web/notes.md', reason: 'no numeric prefix' }),
-    new UnreadableTicket({
+    UnreadableTicket.make({ name: 'README.md', reason: 'no numeric prefix' }),
+    UnreadableTicket.make({ name: 'web/notes.md', reason: 'no numeric prefix' }),
+    UnreadableTicket.make({
       name: '07-broken.md',
       id: id(7),
       reason: 'unparseable front matter',
       detail: 'it has no closing `---`',
     }),
-    new UnreadableTicket({
+    UnreadableTicket.make({
       name: '08-unknown-kind.md',
       id: id(8),
       reason: 'invalid hint',
       detail: 'Expected "implementation" | "research", got "chore" at ["kind"]',
     }),
-    new UnreadableTicket({
+    UnreadableTicket.make({
       name: 'web/',
       reason: 'folder cannot be read',
       detail: 'PermissionDenied: FileSystem.readDirectory (/repo/tickets/web)',
     }),
-    new UnreadableTicket({
+    UnreadableTicket.make({
       name: '09-locked.md',
       id: id(9),
       reason: 'file cannot be read',
@@ -778,7 +778,7 @@ test('runEngine records an escalation in the Ledger, reports no done to the Sour
     new EngineHalted({ ticketId: id(1), reason: 'strategy failure: step 1, Harness error' })
   );
   expect([...ledger.escalated.values()]).toEqual([
-    new Escalation({
+    Escalation.make({
       ticket: id(1),
       reason: 'strategy failure: step 1, Harness error',
       attempts: 1,
@@ -960,7 +960,7 @@ test('runEngine does not process a ticket that another Engine completed after th
 test('runEngine keeps the Claim on a ticket completed since the read when it could not report the release of the Stale Claim it replaced', async () => {
   const ran: Ticket[] = [];
   const ledger = makeLedgerMemory();
-  ledger.claims.set(id(1), new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
+  ledger.claims.set(id(1), Claim.make({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
   const source = fakeSource([sampleTicket(1), sampleTicket(2)], {
     report: (ticket, event) =>
       event === 'released' ? Effect.fail(new TicketEventNotReported({ ticketId: ticket, event })) : Effect.void,
@@ -1354,7 +1354,7 @@ test('runEngine replaces a Stale Claim with the one replace operation of the Led
   const ledger = makeLedgerMemory();
   const seen: Array<Claim | undefined> = [];
   const source = fakeSource([sampleTicket(1)]);
-  const stale = new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' });
+  const stale = Claim.make({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' });
   ledger.claims.set(id(1), stale);
   // Every operation of the Ledger that makes, removes, or replaces a Claim.
   const real = Effect.runSync(Ledger.pipe(Effect.provide(ledger.layer)));
@@ -1395,7 +1395,7 @@ test('runEngine replaces a stale Claim: it reports released before the new claim
   const ledger = makeLedgerMemory();
   const source = fakeSource([sampleTicket(1)]);
   // The other Engine's process no longer runs on this host.
-  ledger.claims.set(id(1), new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
+  ledger.claims.set(id(1), Claim.make({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
 
   expect(await Effect.runPromise(runEngine({ project, limit: 1 }, ledger).pipe(Effect.provide(layer)))).toBeUndefined();
@@ -1409,7 +1409,7 @@ test('runEngine replaces a stale Claim: it reports released before the new claim
 test('runEngine reports released only when it wins the replacement of a Stale Claim that another Engine also replaces', async () => {
   const ledger = makeLedgerMemory();
   // The other Engine's process no longer runs on this host.
-  ledger.claims.set(id(1), new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
+  ledger.claims.set(id(1), Claim.make({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
   const replacements: boolean[] = [];
   const recordingReplacements = Layer.effect(
     Ledger,
@@ -1473,7 +1473,7 @@ test('runEngine reports released only when it wins the replacement of a Stale Cl
 test('runEngine keeps its new Claim when the release of a Stale Claim fails, does not process the ticket, and releases the Claim on exit', async () => {
   const ledger = makeLedgerMemory();
   const seen: Array<Claim | undefined> = [];
-  ledger.claims.set(id(1), new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
+  ledger.claims.set(id(1), Claim.make({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' }));
   // As on Linear, a failed release leaves the ticket claimed on the Source, so the
   // claimed report fails too. At exit, the release succeeds.
   let releases = 0;
@@ -1513,10 +1513,10 @@ test('runEngine keeps its new Claim when the release of a Stale Claim fails, doe
 // A Stale Claim of a stopped Engine on a ticket that the Ledger shows as escalated
 // or done: its Engine could not report the end state.
 const staleClaimOn = (ledger: ReturnType<typeof makeLedgerMemory>, ticket: TicketId) =>
-  ledger.claims.set(ticket, new Claim({ ticket, engine: otherEngine, process: 2, host: 'memory' }));
+  ledger.claims.set(ticket, Claim.make({ ticket, engine: otherEngine, process: 2, host: 'memory' }));
 
 const escalationOf = (ticket: TicketId) =>
-  new Escalation({ ticket, reason: 'strategy failure', attempts: 1, worktree: `/repo/.sandcastle/worktrees/ticket-${ticket}` });
+  Escalation.make({ ticket, reason: 'strategy failure', attempts: 1, worktree: `/repo/.sandcastle/worktrees/ticket-${ticket}` });
 
 test('runEngine removes the Claim of an escalated ticket only after the Source accepts the escalated report', () => {
   const timeline: string[] = [];
@@ -1673,7 +1673,7 @@ test('runEngine does not take a ticket whose Claim another running Engine holds'
   const ran: Ticket[] = [];
   const ledger = makeLedgerMemory();
   const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
-  const live = new Claim({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' });
+  const live = Claim.make({ ticket: id(1), engine: otherEngine, process: 2, host: 'memory' });
   ledger.running.add(2);
   ledger.claims.set(id(1), live);
   const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, capturingImplementation(ran));
@@ -1864,7 +1864,7 @@ test('runEngine in a Drain that ends with held tickets prints each one with its 
       sampleTicket(4),
       blockedTicket(5, 2),
     ],
-    { unreadable: [new UnreadableTicket({ name: 'README.md', reason: 'no numeric prefix' })] }
+    { unreadable: [UnreadableTicket.make({ name: 'README.md', reason: 'no numeric prefix' })] }
   );
   const layer = Layer.mergeAll(
     source.layer,
@@ -2334,7 +2334,7 @@ test('runEngine escalates and halts with no merge when the check still fails aft
     `check \`pnpm typecheck && pnpm test\` in ${worktreeOf(id(1))} within 10m`,
   ]);
   expect([...ledger.escalated.values()]).toEqual([
-    new Escalation({ ticket: id(1), reason: 'check failure', attempts: 1, worktree: worktreeOf(id(1)) }),
+    Escalation.make({ ticket: id(1), reason: 'check failure', attempts: 1, worktree: worktreeOf(id(1)) }),
   ]);
   expect(ledger.done.size).toBe(0);
   expect(source.doneReported).toEqual([]);
@@ -2536,7 +2536,7 @@ test('runEngine escalates and halts with no merge and no fix prompt when the Tic
     `${worktreeOf(id(1))} is dirty`,
   ]);
   expect([...ledger.escalated.values()]).toEqual([
-    new Escalation({ ticket: id(1), reason: 'commit failure', attempts: 1, worktree: worktreeOf(id(1)) }),
+    Escalation.make({ ticket: id(1), reason: 'commit failure', attempts: 1, worktree: worktreeOf(id(1)) }),
   ]);
   expect(ledger.done.size).toBe(0);
   expect(source.doneReported).toEqual([]);
@@ -2802,7 +2802,7 @@ test('runEngine in place escalates a failed ticket with no worktree path, and a 
 
   expect(result.halt).toEqual(new EngineHalted({ ticketId: id(1), reason: 'strategy failure: step 1, Harness error' }));
   expect(result.escalation).toEqual(
-    new Escalation({ ticket: id(1), reason: 'strategy failure: step 1, Harness error', attempts: 1 })
+    Escalation.make({ ticket: id(1), reason: 'strategy failure: step 1, Harness error', attempts: 1 })
   );
   expect(result.escalation?.worktree).toBeUndefined();
   expect(messages).toContain(

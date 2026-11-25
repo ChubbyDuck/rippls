@@ -55,10 +55,10 @@ const fakeSource = (tickets: readonly Ticket[], unreadable: readonly UnreadableT
 // The Ledger runs process 1 on the host `memory`; a Claim of another process on
 // that host is a Stale Claim.
 const claimOf = (ticket: TicketId, process = 1) =>
-  new Claim({ ticket, engine, process, host: 'memory', runner });
+  Claim.make({ ticket, engine, process, host: 'memory', runner });
 
 const escalationOf = (ticket: TicketId) =>
-  new Escalation({ ticket, reason: 'strategy failure: step 2, verdict other than pass', attempts: 2, worktree: '/repo/.sandcastle/worktrees/ticket-5' });
+  Escalation.make({ ticket, reason: 'strategy failure: step 2, verdict other than pass', attempts: 2, worktree: '/repo/.sandcastle/worktrees/ticket-5' });
 
 const setup = (
   tickets: readonly Ticket[],
@@ -199,14 +199,14 @@ describe('ticketStatuses', () => {
 
 // The unreadable tickets of a folder, one for each reason.
 const unreadable = [
-  new UnreadableTicket({ name: 'README.md', reason: 'no numeric prefix' }),
-  new UnreadableTicket({
+  UnreadableTicket.make({ name: 'README.md', reason: 'no numeric prefix' }),
+  UnreadableTicket.make({
     name: '07-broken.md',
     id: id(7),
     reason: 'unparseable front matter',
     detail: 'it has no closing `---`',
   }),
-  new UnreadableTicket({ name: '08-unknown-kind.md', id: id(8), reason: 'invalid hint', detail: 'Expected a kind at ["kind"]' }),
+  UnreadableTicket.make({ name: '08-unknown-kind.md', id: id(8), reason: 'invalid hint', detail: 'Expected a kind at ["kind"]' }),
 ];
 
 describe('ticketStatuses, unreadable tickets and blockers', () => {
@@ -313,7 +313,7 @@ describe('showStatus', () => {
 
   it('prints the holder of a Stale Claim, marked stale, with the Ticket Status the ticket has without it', async () => {
     const layer = setup([ticket(3), ticket(4, { blockedBy: [id(9)] })], {
-      claims: [claimOf(id(3), 4242), new Claim({ ticket: id(4), engine, process: 4243, host: 'memory' })],
+      claims: [claimOf(id(3), 4242), Claim.make({ ticket: id(4), engine, process: 4243, host: 'memory' })],
     });
 
     expect(await printed(layer)).toEqual([
@@ -331,7 +331,7 @@ describe('showStatus', () => {
   });
 
   it('prints a Claim that has no Runner yet', async () => {
-    const claim = new Claim({ ticket: id(3), engine, process: 1, host: 'memory' });
+    const claim = Claim.make({ ticket: id(3), engine, process: 1, host: 'memory' });
     const layer = setup([ticket(3)], { claims: [claim] });
 
     expect(await printed(layer)).toEqual([
@@ -348,7 +348,7 @@ describe('showStatus', () => {
   });
 
   it('prints an escalated ticket of the in-place Workspace, which holds no Ticket Worktree, as in place', async () => {
-    const inPlace = new Escalation({ ticket: id(5), reason: 'check failure', attempts: 1 });
+    const inPlace = Escalation.make({ ticket: id(5), reason: 'check failure', attempts: 1 });
     const layer = setup([ticket(5)], { escalations: [inPlace] });
 
     expect(await printed(layer)).toEqual([
@@ -370,12 +370,12 @@ describe('showStatus', () => {
   it('prints a folder and a ticket file that cannot be read, with the reason', async () => {
     const layer = setup([ticket(1)], {
       unreadable: [
-        new UnreadableTicket({
+        UnreadableTicket.make({
           name: 'web/',
           reason: 'folder cannot be read',
           detail: 'PermissionDenied: FileSystem.readDirectory (/repo/tickets/web)',
         }),
-        new UnreadableTicket({
+        UnreadableTicket.make({
           name: '02-locked.md',
           id: id(2),
           reason: 'file cannot be read',

@@ -32,6 +32,6 @@ export class Claim extends Schema.Class<Claim>('Claim')({
   }
 
   withRunner(runner: RunnerId): Claim {
-    return new Claim({ ticket: this.ticket, engine: this.engine, process: this.process, host: this.host, runner });
+    return Claim.make({ ticket: this.ticket, engine: this.engine, process: this.process, host: this.host, runner });
   }
 }

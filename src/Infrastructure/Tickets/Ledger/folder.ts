@@ -67,7 +67,7 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
       const doneOf = (ticket: TicketId) => path.join(doneDir, fileName(ticket));
       const replacingOf = (ticket: TicketId) => path.join(replacingDir, encodeURIComponent(ticket));
       const claimOf = (ticket: TicketId, engine: EngineId) =>
-        new Claim({ ticket, engine, process: holder.process, host: holder.host });
+        Claim.make({ ticket, engine, process: holder.process, host: holder.host });
 
       // A record is written whole in a scratch folder next to the records, so a
       // reader never sees a partial record.
@@ -244,7 +244,7 @@ export const ledgerFolder = (gitCommonDir: string, holder: ClaimHolder) =>
           const current = yield* readEscalation(escalationOf(ticket));
           const earlier = Option.isSome(current) ? current : yield* readEscalation(clearedOf(ticket));
           const attempts = Option.match(earlier, { onNone: () => 0, onSome: (held) => held.attempts }) + 1;
-          const escalation = new Escalation({ ticket, reason, attempts, worktree });
+          const escalation = Escalation.make({ ticket, reason, attempts, worktree });
           const scratch = yield* writeScratch(encodeEscalation(escalation));
           yield* fs.makeDirectory(escalationsDir, { recursive: true }).pipe(
             Effect.andThen(fs.rename(scratch, escalationOf(ticket))),

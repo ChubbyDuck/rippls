@@ -69,7 +69,7 @@ export const readIssue = (issue: LinearIssue, defaultKind: TicketKind): Result.R
   }).pipe(
     Result.mapError(
       (error) =>
-        new UnreadableTicket({
+        UnreadableTicket.make({
           name: issue.identifier,
           id,
           reason: 'invalid hint',

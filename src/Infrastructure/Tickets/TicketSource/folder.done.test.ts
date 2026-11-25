@@ -289,7 +289,7 @@ const gitWorktrees = (root: string, worktree: Worktree) =>
 const processIn = (root: string, tickets: string, worktree: Worktree) =>
   Effect.gen(function* () {
     const ledger = makeLedgerMemory();
-    ledger.claims.set(ticketId, new Claim({ ticket: ticketId, engine, process: 1, host: 'memory' }));
+    ledger.claims.set(ticketId, Claim.make({ ticket: ticketId, engine, process: 1, host: 'memory' }));
     const services = Layer.mergeAll(
       folderSourceIn(root, tickets),
       ledger.layer,

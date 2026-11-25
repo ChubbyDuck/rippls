@@ -132,10 +132,10 @@ test('the record names the Engine, the process, and the host, and gains the Runn
   );
 
   expect(claimed.get(ticket(1))).toEqual(
-    new Claim({ ticket: ticket(1), engine: first, process: holder.process, host: holder.host })
+    Claim.make({ ticket: ticket(1), engine: first, process: holder.process, host: holder.host })
   );
   expect(assigned.get(ticket(1))).toEqual(
-    new Claim({ ticket: ticket(1), engine: first, process: holder.process, host: holder.host, runner })
+    Claim.make({ ticket: ticket(1), engine: first, process: holder.process, host: holder.host, runner })
   );
 });
 
@@ -166,7 +166,7 @@ test('an escalation records the reason, the attempt count, and the retained Tick
       );
     })
   );
-  const expected = new Escalation({ ticket: ticket(1), reason: 'strategy failure', attempts: 1, worktree: '/wt/ticket-1' });
+  const expected = Escalation.make({ ticket: ticket(1), reason: 'strategy failure', attempts: 1, worktree: '/wt/ticket-1' });
   expect(escalated).toEqual(expected);
   expect([...escalations.entries()]).toEqual([[ticket(1), expected]]);
 });
@@ -186,7 +186,7 @@ test('an escalation in place records no Ticket Worktree, and reads back without 
       );
     })
   );
-  const expected = new Escalation({ ticket: ticket(1), reason: 'check failure', attempts: 1 });
+  const expected = Escalation.make({ ticket: ticket(1), reason: 'check failure', attempts: 1 });
   expect(escalated).toEqual(expected);
   expect(escalations.get(ticket(1))?.worktree).toBeUndefined();
   expect([...escalations.entries()]).toEqual([[ticket(1), expected]]);
@@ -210,7 +210,7 @@ test('a second failure of the same ticket raises its attempt count', async () =>
     })
   );
   expect(escalations.get(ticket(1))).toEqual(
-    new Escalation({ ticket: ticket(1), reason: 'second', attempts: 2, worktree: '/wt/1' })
+    Escalation.make({ ticket: ticket(1), reason: 'second', attempts: 2, worktree: '/wt/1' })
   );
 });
 
@@ -237,7 +237,7 @@ test('clearing an escalation leaves the ticket not escalated, and the next escal
   );
 
   expect(afterClear.size).toBe(0);
-  expect(again).toEqual(new Escalation({ ticket: ticket(1), reason: 'third', attempts: 3, worktree: '/wt/1' }));
+  expect(again).toEqual(Escalation.make({ ticket: ticket(1), reason: 'third', attempts: 3, worktree: '/wt/1' }));
 });
 
 test('clearing a ticket that is not escalated does nothing', async () => {
@@ -389,7 +389,7 @@ test('replacing a Stale Claim makes it a Claim of the Engine, and a Claim made s
     })
   );
 
-  const replaced = new Claim({ ticket: ticket(1), engine: first, process: running.process, host: running.host });
+  const replaced = Claim.make({ ticket: ticket(1), engine: first, process: running.process, host: running.host });
   expect([won, wonLate]).toEqual([true, false]);
   expect(afterReplace).toEqual(replaced);
   expect(afterLate).toEqual(replaced);

@@ -100,13 +100,13 @@ const withoutNumber = (relative: readonly string[]): UnreadableTicket | undefine
   if (name === undefined || !MARKDOWN_FILE.test(name) || idFromFilename(name) !== undefined) {
     return undefined;
   }
-  return new UnreadableTicket({ name: pathOf({ directories: relative.slice(0, -1), name }), reason: 'no numeric prefix' });
+  return UnreadableTicket.make({ name: pathOf({ directories: relative.slice(0, -1), name }), reason: 'no numeric prefix' });
 };
 
 // A folder below the tickets folder that cannot be read, named by its path with a
 // trailing `/`, and the tickets folder itself as `./`.
 const unreadableFolder = (folder: readonly string[], message: string): UnreadableTicket =>
-  new UnreadableTicket({
+  UnreadableTicket.make({
     name: `${folder.length === 0 ? '.' : folder.join('/')}/`,
     reason: 'folder cannot be read',
     detail: detailOf(message),
@@ -285,7 +285,7 @@ const unreadableFile =
   (file: TicketFile) =>
   (reason: UnreadableTicket['reason']) =>
   (detail: string): UnreadableTicket =>
-    new UnreadableTicket({ name: pathOf(file), id: ticketIdIn(file.folder.join('/'), file.number), reason, detail });
+    UnreadableTicket.make({ name: pathOf(file), id: ticketIdIn(file.folder.join('/'), file.number), reason, detail });
 
 /**
  * The Ticket a file reads as, or why it is unreadable. A Ticket needs an

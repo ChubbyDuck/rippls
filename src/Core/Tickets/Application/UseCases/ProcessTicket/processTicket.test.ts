@@ -60,7 +60,7 @@ const WorktreeManagerNoop = recordingWorktrees();
 const ledgerClaiming = (...tickets: readonly Ticket[]) => {
   const ledger = makeLedgerMemory();
   for (const claimed of tickets) {
-    ledger.claims.set(claimed.id, new Claim({ ticket: claimed.id, engine, process: 1, host: 'memory' }));
+    ledger.claims.set(claimed.id, Claim.make({ ticket: claimed.id, engine, process: 1, host: 'memory' }));
   }
   return ledger;
 };
@@ -227,7 +227,7 @@ test('processTicket escalates the ticket in the Ledger with the failed step as t
   expect(reported).toEqual(['escalated']);
   expect(ledger.claims.size).toBe(0);
   expect(ledger.escalated.get(ticket.id)).toEqual(
-    new Escalation({ ticket: ticket.id, reason, attempts: 1, worktree: ticketWorktreeOf(ticket.id).path })
+    Escalation.make({ ticket: ticket.id, reason, attempts: 1, worktree: ticketWorktreeOf(ticket.id).path })
   );
 });
 
@@ -681,7 +681,7 @@ test('processTicket names its Runner in the Claim and releases the Claim once th
 
   Effect.runSync(processTicket({ ticket, runnerId }).pipe(Effect.provide(Layer.merge(services, ledger.layer))));
 
-  expect(seen).toEqual([new Claim({ ticket: ticket.id, engine, process: 1, host: 'memory', runner: runnerId })]);
+  expect(seen).toEqual([Claim.make({ ticket: ticket.id, engine, process: 1, host: 'memory', runner: runnerId })]);
   expect(ledger.claims.has(ticket.id)).toBe(false);
 });
 

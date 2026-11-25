@@ -8,6 +8,6 @@ export class Engine {
   constructor(readonly id: EngineId) {}
 
   spawn(): Runner {
-    return new Runner({ id: runnerIdFrom(this.id, String(this.nextRunner++)) });
+    return Runner.make({ id: runnerIdFrom(this.id, String(this.nextRunner++)) });
   }
 }

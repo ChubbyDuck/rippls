@@ -37,7 +37,7 @@ const fakeSource = (failing?: TicketEvent) => {
 };
 
 const escalated = (ticket: TicketId, attempts: number) =>
-  new Escalation({ ticket, reason: 'strategy failure', attempts, worktree });
+  Escalation.make({ ticket, reason: 'strategy failure', attempts, worktree });
 
 const setup = (escalations: readonly Escalation[], failing?: TicketEvent) => {
   const ledger = makeLedgerMemory();

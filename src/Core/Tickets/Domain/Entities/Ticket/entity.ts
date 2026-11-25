@@ -77,7 +77,7 @@ export const hitlFromHints = (hints: TicketHints, fallback: Hitl): Hitl =>
   fallback;
 
 export const ticketFromHints = (hints: TicketHints, fallbacks: TicketFallbacks): Ticket =>
-  new Ticket({
+  Ticket.make({
     id: hints.id,
     title: hints.title,
     project: hints.project,
