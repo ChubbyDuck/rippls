@@ -59,9 +59,11 @@ or unreadable for a ticket that its Source cannot read: a file whose name has no
 numeric prefix, front matter that cannot be parsed, an invalid hint, or a file that
 cannot be read from disk. A folder that cannot be read is reported as unreadable too. An unreadable
 ticket is no Ticket, so no other value applies to it. The values are unreadable, done,
-escalated, claimed, not ready, blocked, and eligible. When several apply, the first in
-that order is the Ticket Status. Claimed means not Unclaimed; not
-ready means HITL yes; eligible means Eligible. A `status` value
+escalated, claimed, unclassified, not ready, blocked, and eligible. When several apply,
+the first in that order is the Ticket Status. Claimed means not Unclaimed;
+unclassified means a Ticket of a classified Source with no Classification that holds;
+not ready means HITL yes, or a Classification of HITL; blocked means not Unblocked, or
+a Classification of blocked; eligible means Eligible. A `status` value
 in a ticket file is not the Ticket Status; it is read only as a Marker.
 _Avoid_: State, phase
 
@@ -102,28 +104,37 @@ _Avoid_: Dead lock, orphan, abandoned Claim
 **Escalation**:
 The Ledger's record that a Ticket needs a human because its Ticket Processing
 failed. It holds the reason, the attempt count, and the path of the retained Ticket
-Worktree. The Engine does not change the Ticket's Kind or HITL. An escalated Ticket
+Worktree, or, in place, the session of the Agent that failed. The Engine does not
+change the Ticket's Kind or HITL. An escalated Ticket
 is not Eligible until a human clears its Escalation with a Retry.
 _Avoid_: HITL raise, failure, human task
 
 **Retry**:
 A human's return of an escalated Ticket to unattended processing. It clears the
 Escalation in the Ledger, keeps its attempt count, and is reported to the Source as
-retried. The Ticket's next Ticket Processing continues in its retained Ticket Worktree.
+retried. The Ticket's next Ticket Processing continues in its retained Ticket Worktree,
+or, in place, in the Repository Root as it is.
 _Avoid_: Reset, requeue, resume
 
 **Ledger**:
 The Engine's own record of Ticket Processing, keyed by ticket identity: Claims,
-Escalations, and done. It is local to the Repository Root for every Source; a Source is never
-the Ledger.
-_Avoid_: Database, store, registry
+Escalations, and done, which cannot be recovered once lost, and Classifications, which
+the Classifier can give again. It is local to the Repository Root for every Source; a
+Source is never the Ledger.
+_Avoid_: Database, store, registry, cache
 
 **Strategy**:
 A named, reusable procedure for carrying out a Ticket's work through a Harness and
-returning an outcome: a list of Steps from config, run in order in one Ticket
-Worktree. A failed Step fails the Strategy, and no further Step runs. Each Ticket
-Kind has one configured Strategy, named after it, unless config gives it none.
+returning an outcome: a list of Steps from config, run in order in one Workspace.
+A failed Step fails the Strategy, and no further Step runs. A Ticket Kind may have a
+Strategy of its own, named after it; every other Kind uses the default Strategy.
 _Avoid_: Handler, workflow, prompt
+
+**Default Strategy**:
+The Strategy for every Ticket Kind that has none of its own: one Verdict step that
+implements the Ticket, reviews and fixes its own commits, ticks the Ticket's
+acceptance criteria, and passes only when the work is done.
+_Avoid_: fallback Strategy, loop prompt
 
 **Step**:
 One prompt of a Strategy that the Engine sends to the Harness, with an optional prompt
@@ -181,6 +192,31 @@ _Avoid_: Queue, batch, quota
 An Engine's condition when no Ticket Processing is in progress and no Eligible Ticket
 is available.
 
+**Drain**:
+An Engine run that ends as soon as the Engine is Idle.
+_Avoid_: one-shot, batch
+
+**Watch**:
+An Engine run that stays when Idle, polling its Source, and takes a Ticket as soon
+as one is Eligible.
+_Avoid_: daemon, background mode, poll mode
+
+**Run Log**:
+The file one Engine run leaves next to its tickets folder, holding what its Agents
+left for a human: Questions and Follow-ups, under the Ticket that left each. Run Logs
+pile up, one per run, until a human settles them.
+_Avoid_: loop log, report
+
+**Question**:
+An entry of a Run Log for a decision only a human can make, with the options and the
+one the Agent took. A decision the Agent made and kept belongs in its commit message.
+_Avoid_: note, finding
+
+**Follow-up**:
+An entry of a Run Log for a defect or a gap that an Agent found and left unfixed,
+named by its concrete failure.
+_Avoid_: deferred, finding
+
 ## Worktrees
 
 **Repository Root**:
@@ -192,10 +228,15 @@ The stable worktree in which a Project's successful ticket work accumulates.
 It remains for later Tickets and is merged into the Repository Root by a human.
 _Avoid_: Ticket Worktree, checkout, branch
 
+**Workspace**:
+Where all Agents for one Ticket perform its work: in place, in the Repository Root
+itself, or in a Ticket Worktree. In place allows a Concurrency of one.
+_Avoid_: checkout, sandbox
+
 **Ticket Worktree**:
-The temporary worktree in which all Agents for one Ticket perform their work.
-It is merged and closed after success, retained after escalation to a human, and
-reused after a Retry.
+The temporary worktree in which all Agents for one Ticket perform their work, when
+the Workspace is not in place. It is merged and closed after success, retained after
+escalation to a human, and reused after a Retry.
 _Avoid_: Project Worktree, per-prompt worktree
 
 **Worktree Manager**:
@@ -249,6 +290,19 @@ _Avoid_: AFK, automated, no-HITL
 
 **Eligible**:
 An Unblocked, Unclaimed, Unattended Ticket that is neither done nor escalated, which
-the Engine may take next.
+the Engine may take next. For a Ticket of a classified Source, a Classification of
+ready stands in for Unblocked and Unattended.
 Eligibility is distinct from a stored ready-for-agent status.
 _Avoid_: Ready, next, pollable
+
+**Classifier**:
+A small Model that reads the open Tickets of a classified Source, with the done ones
+by name, and gives each a Classification. For those Tickets it replaces the reading of
+HITL and blocking relations from what the Ticket states.
+_Avoid_: selector, gate, triage
+
+**Classification**:
+The Classifier's judgement of one Ticket: ready, HITL, or blocked. It holds while the
+Ticket's text is unchanged, and a blocked one only while the done Tickets are
+unchanged too.
+_Avoid_: verdict, selection

@@ -10,6 +10,7 @@ What the Engine knows about a ticket has three homes, split by lifetime:
 | --- | --- | --- |
 | Description: text, Title, Ticket Kind, HITL, blockers | The ticket | Authors and skills only |
 | Transient: Claim, attempts, escalation | The Ledger | The Engine only |
+| Judgement: Classification, which can be given again (ADR-0006) | The Ledger | The Engine, from the Classifier |
 | Done | The repository, as the ticket's position, with the merge; and the Ledger, once the work is merged | The Engine, as a move and a record |
 
 The Engine signals a Source only through operations that do not depend on the ticket's shape: moving a file, and, on Linear, changing the assignee, the workflow state, or a label. It reports each event to the Source, and each Source expresses the event in its own way. The folder Source does nothing for a claimed, a released, or an escalated ticket.
