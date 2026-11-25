@@ -5,27 +5,8 @@ import { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeC
 import { WorktreeCreationError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCreationError';
 import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
+import { changesOf, gitStatusIn } from './gitStatus';
 import { runCommandWith } from './runCommand';
-
-// The paths `git status --porcelain -z` lists as changed, with the untracked ones
-// apart. A rename or a copy is followed by the path it came from, which is skipped:
-// the path it went to stands for the change.
-const changesOf = (porcelain: string) => {
-  const fields = porcelain.split('\0');
-  const changes: Array<{ readonly path: string; readonly untracked: boolean }> = [];
-  for (let index = 0; index < fields.length; index++) {
-    const field = fields[index] ?? '';
-    if (field.length < 4) {
-      continue;
-    }
-    const status = field.slice(0, 2);
-    changes.push({ path: field.slice(3), untracked: status === '??' });
-    if (status.includes('R') || status.includes('C')) {
-      index++;
-    }
-  }
-  return changes;
-};
 
 // The in-place Workspace: every Ticket's work happens in the Repository Root itself
 // and lands on its current branch (see ADR-0005). Preparing a ticket or a Project
@@ -76,18 +57,17 @@ export const WorktreeManagerInPlaceLive = (repositoryRoot: string, ticketsDir?: 
         prepareTicket: () => current,
         mergeAndClose: () => Effect.void,
         runCommand: runCommandWith(spawner),
-        // Clean is a `git status` with no change but the untracked files under the
-        // tickets folder. Untracked files are listed one by one whatever
-        // `status.showUntrackedFiles` says, and ignored files never are.
-        isClean: (worktree: Worktree) =>
-          spawner
-            .string(
-              ChildProcess.make('git', ['status', '--porcelain', '-z', '--untracked-files=all'], { cwd: worktree.path })
-            )
-            .pipe(
-              Effect.map((porcelain) => changesOf(porcelain).every((change) => change.untracked && isInQueue(change.path))),
-              Effect.mapError(() => new WorktreeCommandError())
+        // The changes `git status` lists, but the untracked files under the tickets
+        // folder.
+        changedPaths: (worktree) =>
+          spawner.string(gitStatusIn(worktree.path)).pipe(
+            Effect.map((porcelain) =>
+              changesOf(porcelain)
+                .filter((change) => !(change.untracked && isInQueue(change.path)))
+                .map((change) => change.path)
             ),
+            Effect.mapError(() => new WorktreeCommandError())
+          ),
       };
     })
   );

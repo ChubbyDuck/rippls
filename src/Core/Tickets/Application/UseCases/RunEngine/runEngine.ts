@@ -8,6 +8,7 @@ import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/
 import { endSaga } from '~/Core/Tickets/Application/Services/endSaga';
 import { ConcurrencyNotInPlace } from '~/Core/Tickets/Domain/Exceptions/ConcurrencyNotInPlace';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
+import { WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
 import { processTicket } from '../ProcessTicket/processTicket';
 import type { RunEngineCommand } from './command';
@@ -16,6 +17,7 @@ import { ensureWorktreesWritable } from './ensureWorktreesWritable';
 import { makeIdleClock } from './idleClock';
 import { reportHeld } from './reportHeld';
 import { reportUnreadable } from './reportUnreadable';
+import { requireCleanRoot } from './requireCleanRoot';
 import { ticketStream } from './ticketStream';
 
 // On exit the Engine ends the saga of the Claims it holds, and only of those. The
@@ -71,7 +73,12 @@ export const runEngine = Effect.fn('engine.run')(function* ({
   const clock = yield* makeIdleClock(watch ? idleTimeout : undefined);
   const endedIdle = yield* Ref.make(false);
   const onIdle = Console.log('The Engine is Idle, so the Drain ends').pipe(Effect.andThen(Ref.set(endedIdle, true)));
-  const tickets = ticketStream(engine.id, { project, clock, pollInterval, watch, onIdle });
+  // In place, the Repository Root must be clean before each ticket. With Ticket
+  // Worktrees, every Agent commits in a worktree of its own, so the Repository Root
+  // is left as it is.
+  const worktrees = yield* WorktreeManager;
+  const beforePoll = workspace === 'in-place' ? requireCleanRoot(worktrees, root) : Effect.void;
+  const tickets = ticketStream(engine.id, { project, clock, pollInterval, watch, onIdle, beforePoll });
   const limitedTickets = limit === undefined ? tickets : tickets.pipe(Stream.take(limit));
   yield* Effect.annotateCurrentSpan({
     'engine.id': engine.id,

@@ -52,7 +52,7 @@ completion, and escalation across Strategies.
 The **Workspace** is where all Agents for one Ticket perform its work: **in place**, in
 the Repository Root itself (the default), or in a **Ticket Worktree** (see
 [Workspace](#workspace)). The **Worktree Manager** prepares the Workspace of a ticket,
-runs a command in it, tells whether it is clean, and merges and closes successful Ticket
+runs a command in it, lists its uncommitted changes, and merges and closes successful Ticket
 Worktrees. In place, it has one adapter that prepares the Repository Root on its current
 branch and merges nothing.
 
@@ -90,7 +90,9 @@ Processing in progress and no Eligible ticket, and then prints each ticket it he
 with its Ticket Status and reason. A **Watch** (`--watch`) keeps polling while Idle and
 takes a ticket as soon as it becomes Eligible; it ends only after an idle timeout that is
 set. A Strategy failure, a failed check, uncommitted work, or a failed done report
-escalates the Ticket and halts the run.
+escalates the Ticket and halts the run. In place, the Repository Root must be clean
+before each ticket: a dirty tree halts a Drain with the list of changed paths, and makes
+a Watch skip the poll and check again at the next one (see [Workspace](#workspace)).
 
 ## Before you start
 
@@ -577,9 +579,12 @@ workspace: 'in-place', // the default; or 'worktree'
   your current branch, as you would work by hand. No worktree is created and no
   dependencies are installed. Your `.env`, ports, and end-to-end suite behave as they do
   for you. Nothing is merged. A Concurrency above one fails at start, since every
-  Runner would share the Repository Root. The check for a clean Workspace after the Strategy ignores
-  untracked files under the tickets folder, so a queue that Git does not track still
-  works; ignored files never count.
+  Runner would share the Repository Root. Before each ticket, the Repository Root must
+  be clean, so your unfinished work never goes into an Agent's commit: a dirty tree
+  halts a Drain with the list of changed paths, and a Watch skips the poll and checks
+  again at the next one. Both this check and the check for a clean Workspace after the
+  Strategy ignore untracked files under the tickets folder, so a queue that Git does not
+  track still works; ignored files never count.
 - **`worktree`.** Each ticket gets its own Ticket Worktree and branch under
   `.sandcastle/worktrees/`, with its dependencies installed, and success merges it (see
   [Projects and worktrees](#projects-and-worktrees)). Use it for a Concurrency above one.

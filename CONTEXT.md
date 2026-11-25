@@ -241,7 +241,7 @@ _Avoid_: Project Worktree, per-prompt worktree
 
 **Worktree Manager**:
 The service responsible for preparing the Workspace of a Ticket, running a command
-in it, telling whether it is clean, and merging and closing successful Ticket
+in it, listing its uncommitted changes, and merging and closing successful Ticket
 Worktrees. With Ticket Worktrees it prepares Project Worktrees and Ticket Worktrees;
 in place it prepares the Repository Root on its current branch, and merges nothing.
 _Avoid_: Worktree Repository

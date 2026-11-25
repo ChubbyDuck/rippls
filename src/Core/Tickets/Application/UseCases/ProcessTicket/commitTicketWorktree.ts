@@ -17,14 +17,15 @@ export const commitTicketWorktree = Effect.fn('ticket.commit')(function* (
   commit: CommitConfig
 ) {
   const worktrees = yield* WorktreeManager;
+  const isClean = worktrees.changedPaths(worktree).pipe(Effect.map((paths) => paths.length === 0));
   const committed = Console.log(`${ticket.label} has its work committed on branch ${worktree.branch}`);
-  if (yield* worktrees.isClean(worktree)) {
+  if (yield* isClean) {
     yield* committed;
     return true;
   }
   yield* Console.log(`${ticket.label} has uncommitted work on branch ${worktree.branch}, so the commit prompt is sent`);
   yield* harness.run(renderPrompt(commit.prompt, ticket), { label: `ticket-${ticket.id}-commit`, model: commit.model });
-  const clean = yield* worktrees.isClean(worktree);
+  const clean = yield* isClean;
   yield* clean
     ? committed
     : Console.error(`${ticket.label} still has uncommitted work on branch ${worktree.branch} after the commit prompt`);

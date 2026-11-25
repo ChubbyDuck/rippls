@@ -11,6 +11,7 @@ import { WorktreeNotExpected } from '~/Core/Tickets/Domain/Exceptions/WorktreeNo
 import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
 import { ensureDependencies } from './ensureDependencies';
+import { changesOf, gitStatusIn } from './gitStatus';
 import { runCommandWith } from './runCommand';
 
 // Sandcastle stores a named-branch worktree at this path. A second createWorktree
@@ -219,15 +220,12 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
             yield* Console.log(`Worktree ${worktree.branch} is closed`);
           }),
         runCommand: runCommandWith(spawner),
-        // Clean is an empty `git status`. Untracked files are listed one by one
-        // whatever `status.showUntrackedFiles` says, and ignored files never are.
-        isClean: (worktree: Worktree) =>
-          spawner
-            .string(ChildProcess.make('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: worktree.path }))
-            .pipe(
-              Effect.map((changes) => changes.trim().length === 0),
-              Effect.mapError(() => new WorktreeCommandError())
-            ),
+        // Every change `git status` lists.
+        changedPaths: (worktree) =>
+          spawner.string(gitStatusIn(worktree.path)).pipe(
+            Effect.map((porcelain) => changesOf(porcelain).map((change) => change.path)),
+            Effect.mapError(() => new WorktreeCommandError())
+          ),
       };
     })
   );

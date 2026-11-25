@@ -738,7 +738,7 @@ const linearEngineLayer = (
       prepareProject: (project) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${project}`, branch: project }),
       prepareTicket: () => Effect.succeed({ path: '/repo/.sandcastle/worktrees/ticket', branch: 'ticket' }),
       runCommand: () => Effect.die('runCommand should not be called'),
-      isClean: () => Effect.succeed(true),
+      changedPaths: () => Effect.succeed([]),
       mergeAndClose: () => Effect.void,
     }),
     Layer.succeed(HarnessSelector, {

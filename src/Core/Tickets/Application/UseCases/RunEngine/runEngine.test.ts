@@ -27,6 +27,7 @@ import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Projec
 import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
 import { ConcurrencyNotInPlace } from '~/Core/Tickets/Domain/Exceptions/ConcurrencyNotInPlace';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
+import { RepositoryRootDirty } from '~/Core/Tickets/Domain/Exceptions/RepositoryRootDirty';
 import { RepositoryRootNotFound } from '~/Core/Tickets/Domain/Exceptions/RepositoryRootNotFound';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
 import { TicketEventNotReported } from '~/Core/Tickets/Domain/Exceptions/TicketEventNotReported';
@@ -62,7 +63,7 @@ const WorktreeManagerNoop = Layer.succeed(WorktreeManager, {
   prepareProject: (project) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${project}`, branch: project }),
   prepareTicket: ({ id }) => Effect.succeed(ticketWorktreeOf(id)),
   runCommand: () => Effect.die('runCommand should not be called'),
-  isClean: () => Effect.succeed(true),
+  changedPaths: () => Effect.succeed([]),
   mergeAndClose: () => Effect.void,
 });
 
@@ -829,7 +830,7 @@ test('runEngine takes a retried ticket again, in its retained Ticket Worktree', 
         return worktree;
       }),
     runCommand: () => Effect.die('runCommand should not be called'),
-    isClean: () => Effect.succeed(true),
+    changedPaths: () => Effect.succeed([]),
     mergeAndClose: () => Effect.void,
   });
 
@@ -903,7 +904,7 @@ const timelineWorktrees = (timeline: string[], merge: Effect.Effect<void, Worktr
     prepareTicket: ({ id: ticket }) =>
       Effect.succeed({ path: `/repo/.sandcastle/worktrees/ticket-${ticket}`, branch: `ticket-${ticket}` }),
     runCommand: () => Effect.die('runCommand should not be called'),
-    isClean: () => Effect.succeed(true),
+    changedPaths: () => Effect.succeed([]),
     mergeAndClose: () =>
       Effect.sync(() => {
         timeline.push('merge and close');
@@ -2204,17 +2205,17 @@ const checkingWorktrees = (timeline: string[], runs: readonly CommandRun[], stat
         }
         return run;
       }),
-    isClean: (worktree) =>
+    changedPaths: (worktree) =>
       Effect.sync(() => {
         if (pendingStates === undefined) {
-          return true;
+          return [];
         }
         const clean = pendingStates.shift();
         if (clean === undefined) {
           throw new Error('no worktree state left');
         }
         timeline.push(`${worktree.path} is ${clean ? 'clean' : 'dirty'}`);
-        return clean;
+        return clean ? [] : ['work.txt'];
       }),
     mergeAndClose: () =>
       Effect.sync(() => {
@@ -2454,8 +2455,8 @@ test('runEngine does not run the check when the Strategy fails', async () => {
   expect(timeline).toEqual([]);
 });
 
-// Runs the Engine on one ticket with the given check and commit config, the check
-// runs in `runs`, and the worktree states in `states`.
+// Runs the Engine with Ticket Worktrees on one ticket with the given check and
+// commit config, the check runs in `runs`, and the worktree states in `states`.
 const runCommitted = ({
   check = defaultCheckConfig,
   commit,
@@ -2481,7 +2482,7 @@ const runCommitted = ({
     StrategySelectorNoop
   );
   return Effect.runPromise(
-    executeEngine({ project, limit: 1, check, commit }).pipe(Random.withSeed('test'), Effect.provide(layer), Effect.result)
+    executeEngine({ project, limit: 1, check, commit, workspace: 'worktree' }).pipe(Random.withSeed('test'), Effect.provide(layer), Effect.result)
   ).then((outcome) => ({ outcome, timeline, prompts, demands, ledger, source }));
 };
 
@@ -2569,8 +2570,8 @@ test('runEngine does not ask whether the Ticket Worktree is clean when the check
   expect(timeline).toEqual([strategyRun(id(1)), `check \`pnpm typecheck && pnpm test\` in ${worktreeOf(id(1))} within 10m`]);
 });
 
-// Runs the Engine on one ticket whose Strategy succeeds, with the given Worktree
-// Manager and Harness, and no check command.
+// Runs the Engine with Ticket Worktrees on one ticket whose Strategy succeeds, with
+// the given Worktree Manager and Harness, and no check command.
 const runWith = (worktrees: Layer.Layer<WorktreeManager>, harness: Layer.Layer<HarnessSelector>) => {
   const ledger = makeLedgerMemory();
   const layer = Layer.mergeAll(
@@ -2582,7 +2583,11 @@ const runWith = (worktrees: Layer.Layer<WorktreeManager>, harness: Layer.Layer<H
     StrategySelectorNoop
   );
   return Effect.runPromise(
-    executeEngine({ project, limit: 1 }).pipe(Random.withSeed('test'), Effect.provide(layer), Effect.result)
+    executeEngine({ project, limit: 1, workspace: 'worktree' }).pipe(
+      Random.withSeed('test'),
+      Effect.provide(layer),
+      Effect.result
+    )
   ).then((outcome) => ({ outcome, ledger }));
 };
 
@@ -2612,7 +2617,7 @@ test('runEngine escalates with no merge when it cannot read whether the Ticket W
     prepareProject: (value) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${value}`, branch: value }),
     prepareTicket: ({ id: ticket }) => Effect.succeed({ path: worktreeOf(ticket), branch: `ticket-${ticket}` }),
     runCommand: () => Effect.die('runCommand should not be called'),
-    isClean: () => Effect.fail(new WorktreeCommandError()),
+    changedPaths: () => Effect.fail(new WorktreeCommandError()),
     mergeAndClose: (worktree) =>
       Effect.sync(() => {
         merged.push(worktree.path);
@@ -2862,4 +2867,170 @@ test('runEngine in place scopes the run to a Project and runs the check command 
   expect(result.sandcastle).toBe(false);
   expect(result.open).toEqual({ root: true, login: false, invoice: true });
   expect([...ledger.done]).toEqual([login]);
+});
+
+// The clean Repository Root before each ticket in place.
+
+// A Harness that records each run and commits its work, as `committingHarness` does.
+const recordingCommits = (labels: string[]): Harness => ({
+  ...committingHarness,
+  run: (prompt, options) =>
+    Effect.sync(() => {
+      labels.push(options.label);
+    }).pipe(Effect.andThen(committingHarness.run(prompt, options))),
+});
+
+// Waits on the real clock until `isReady` holds.
+const eventually = (isReady: () => boolean) =>
+  Effect.gen(function* () {
+    while (!isReady()) {
+      yield* Effect.sleep('5 millis');
+    }
+  });
+
+test('runEngine in a Drain in place halts before it claims a ticket when the Repository Root is dirty, and names the changed paths', async () => {
+  const ledger = makeLedgerMemory();
+  const labels: string[] = [];
+  const result = await runInPlace(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repository = yield* inPlaceRepository({ '01-first.md': standardTemplate('01', 'First', 'None') });
+      const { root, ticketsDir } = repository;
+      yield* fs.writeFileString(path.join(root, 'base.txt'), 'edited by hand\n');
+      yield* fs.writeFileString(path.join(root, 'notes.txt'), 'left by hand\n');
+      const halt = yield* executeEngine({}).pipe(
+        Random.withSeed('test'),
+        Effect.provide(inPlaceLayer(repository, ledger, recordingCommits(labels))),
+        Effect.flip
+      );
+      return {
+        halt,
+        root,
+        subjects: (yield* gitIn(root, ['log', '--format=%s'])).trim(),
+        open: yield* fs.exists(path.join(ticketsDir, '01-first.md')),
+      };
+    })
+  );
+
+  expect(result.halt).toEqual(new RepositoryRootDirty({ root: result.root, paths: ['base.txt', 'notes.txt'] }));
+  expect(result.halt.message).toBe(
+    `The Repository Root ${result.root} has uncommitted changes, which an Agent working in place would commit:\n` +
+      '  base.txt\n' +
+      '  notes.txt\n' +
+      'Commit or stash them before the next ticket.'
+  );
+  expect(labels).toEqual([]);
+  expect(result.subjects).toBe('init');
+  expect(result.open).toBe(true);
+  expect(ledger.claims.size).toBe(0);
+  expect(ledger.done.size).toBe(0);
+  expect(ledger.escalated.size).toBe(0);
+});
+
+test('runEngine in a Watch in place takes no ticket while the Repository Root is dirty, and takes it on a later poll once it is clean', async () => {
+  const ledger = makeLedgerMemory();
+  const messages: string[] = [];
+  const labels: string[] = [];
+  const result = await runInPlace(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repository = yield* inPlaceRepository({ '01-first.md': standardTemplate('01', 'First', 'None') });
+      const { root, ticketsDir } = repository;
+      const notes = path.join(root, 'notes.txt');
+      yield* fs.writeFileString(notes, 'left by hand\n');
+      const fiber = yield* executeEngine({ watch: true, limit: 1, pollInterval: '10 millis' }).pipe(
+        Random.withSeed('test'),
+        Effect.provide(inPlaceLayer(repository, ledger, recordingCommits(labels), StrategySelectorNoop, messages)),
+        Effect.forkChild({ startImmediately: true })
+      );
+      const skippedPoll = (message: string) => message.endsWith('The Watch takes no ticket until the next poll');
+      // Two skipped polls: the Watch did not fail at the first one.
+      yield* eventually(() => messages.filter(skippedPoll).length >= 2);
+      const whileDirty = { labels: [...labels], claims: ledger.claims.size, running: fiber.pollUnsafe() === undefined };
+      yield* fs.remove(notes);
+      yield* Fiber.join(fiber);
+      return {
+        whileDirty,
+        skipped: messages.find(skippedPoll),
+        root,
+        subjects: (yield* gitIn(root, ['log', '--format=%s'])).trim().split('\n'),
+        done: yield* fs.exists(path.join(ticketsDir, 'done', '01-first.md')),
+      };
+    })
+  );
+
+  expect(result.whileDirty).toEqual({ labels: [], claims: 0, running: true });
+  expect(result.skipped).toBe(
+    `The Repository Root ${result.root} has uncommitted changes, which an Agent working in place would commit:\n` +
+      '  notes.txt\n' +
+      'Commit or stash them before the next ticket.\n' +
+      'The Watch takes no ticket until the next poll'
+  );
+  expect(labels).toEqual([`ticket-${id(1)}`]);
+  expect(result.subjects).toEqual([doneMoveMessage(id(1)), `feat: ticket-${id(1)}`, 'init']);
+  expect(result.done).toBe(true);
+  expect([...ledger.done]).toEqual([id(1)]);
+});
+
+test('runEngine in place does not count untracked files under the tickets folder as changes', async () => {
+  const ledger = makeLedgerMemory();
+  const result = await runInPlace(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repository = yield* inPlaceRepository({ '01-first.md': standardTemplate('01', 'First', 'None') });
+      const { ticketsDir } = repository;
+      yield* fs.makeDirectory(path.join(ticketsDir, 'auth'));
+      yield* fs.writeFileString(path.join(ticketsDir, 'auth', '01-login.md'), standardTemplate('01', 'Login', 'None'));
+      yield* executeEngine({ limit: 1 }).pipe(
+        Random.withSeed('test'),
+        Effect.provide(inPlaceLayer(repository, ledger, committingHarness))
+      );
+      return { done: yield* fs.exists(path.join(ticketsDir, 'done', '01-first.md')) };
+    })
+  );
+
+  expect(result.done).toBe(true);
+  expect([...ledger.done]).toEqual([id(1)]);
+});
+
+test('runEngine with Ticket Worktrees runs while the Repository Root is dirty, and never reads its changes', async () => {
+  const asked: string[] = [];
+  const ran: Ticket[] = [];
+  const dirtyRoot = Layer.succeed(WorktreeManager, {
+    prepareProject: (value) => Effect.succeed({ path: `/repo/.sandcastle/worktrees/${value}`, branch: value }),
+    prepareTicket: ({ id: ticket }) => Effect.succeed(ticketWorktreeOf(ticket)),
+    runCommand: () => Effect.die('runCommand should not be called'),
+    changedPaths: (worktree) =>
+      Effect.sync(() => {
+        asked.push(worktree.path);
+        return worktree.path === '/repo' ? ['notes.txt'] : [];
+      }),
+    mergeAndClose: () => Effect.void,
+  });
+  const source = fakeSource([sampleTicket(1)]);
+  const ledger = makeLedgerMemory();
+
+  await Effect.runPromise(
+    executeEngine({ project, workspace: 'worktree' }).pipe(
+      Random.withSeed('test'),
+      Effect.provide(
+        Layer.mergeAll(
+          EngineStartupTest,
+          dirtyRoot,
+          ledger.layer,
+          source.layer,
+          HarnessSelectorNoop,
+          capturingImplementation(ran),
+          TestClock.layer()
+        )
+      )
+    )
+  );
+
+  expect(ran).toEqual([sampleTicket(1)]);
+  expect(asked).toEqual([ticketWorktreeOf(id(1)).path]);
+  expect([...ledger.done]).toEqual([id(1)]);
 });

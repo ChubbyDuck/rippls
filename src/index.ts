@@ -29,6 +29,7 @@ import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Projec
 import { ConcurrencyNotInPlace } from '~/Core/Tickets/Domain/Exceptions/ConcurrencyNotInPlace';
 import { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { QueueNotFound } from '~/Core/Tickets/Domain/Exceptions/QueueNotFound';
+import { RepositoryRootDirty } from '~/Core/Tickets/Domain/Exceptions/RepositoryRootDirty';
 import { TicketNotEscalated } from '~/Core/Tickets/Domain/Exceptions/TicketNotEscalated';
 import { TicketNotOfSource } from '~/Core/Tickets/Domain/Exceptions/TicketNotOfSource';
 import { ConfiguredHarnessesLive } from '~/Infrastructure/Shared/HarnessSelector/configured';
@@ -164,7 +165,8 @@ const isExplained = (error: unknown): error is Error =>
   error instanceof TicketNotEscalated ||
   error instanceof TicketNotOfSource ||
   error instanceof QueueNotFound ||
-  error instanceof ConcurrencyNotInPlace;
+  error instanceof ConcurrencyNotInPlace ||
+  error instanceof RepositoryRootDirty;
 
 const describeError = (error: unknown) =>
   error instanceof Config.ConfigError ? error.cause.message : isExplained(error) ? error.message : error;

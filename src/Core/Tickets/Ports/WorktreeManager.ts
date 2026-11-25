@@ -42,9 +42,11 @@ export class WorktreeManager extends Context.Service<
       readonly command: string;
       readonly timeLimit: Duration.Input;
     }) => Effect.Effect<CommandRun, WorktreeCommandError>;
-    // Whether the worktree is clean: no uncommitted change, and no untracked file
-    // that Git does not ignore. In place, the untracked files under the tickets
-    // folder do not count.
-    readonly isClean: (worktree: Worktree) => Effect.Effect<boolean, WorktreeCommandError>;
+    // The paths of the worktree with an uncommitted change, untracked files that Git
+    // does not ignore included; none when it is clean. In place, the untracked files
+    // under the tickets folder do not count.
+    readonly changedPaths: (
+      worktree: Pick<Worktree, 'path'>
+    ) => Effect.Effect<ReadonlyArray<string>, WorktreeCommandError>;
   }
 >()('rippls/Core/Tickets/Ports/WorktreeManager') {}

@@ -58,8 +58,8 @@ const repositoryWith = (queue: 'tracked' | 'ignored' | 'untracked') =>
 const managerIn = (root: string, tickets?: string) =>
   WorktreeManager.pipe(Effect.provide(WorktreeManagerInPlaceLive(root, tickets)));
 
-const isCleanIn = (root: string, tickets: string) =>
-  managerIn(root, tickets).pipe(Effect.flatMap((manager) => manager.isClean({ path: root, branch: 'trunk' })));
+const changedPathsIn = (root: string, tickets: string) =>
+  managerIn(root, tickets).pipe(Effect.flatMap((manager) => manager.changedPaths({ path: root })));
 
 const folderSourceIn = (root: string, tickets: string) =>
   TicketSourceFolderLive.pipe(
@@ -172,22 +172,22 @@ test('runCommand runs the command in the Repository Root', async () => {
   expect(result.run).toEqual({ _tag: 'Exited', exitCode: 0, output: `${result.root}\nfrom trunk\n` });
 });
 
-test('isClean ignores untracked files under the tickets folder, at any depth', async () => {
-  const clean = await run(
+test('changedPaths ignores untracked files under the tickets folder, at any depth', async () => {
+  const changed = await run(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { root, tickets } = yield* repositoryWith('untracked');
       yield* fs.makeDirectory(path.join(tickets, 'auth', 'done'), { recursive: true });
       yield* fs.writeFileString(path.join(tickets, 'auth', 'done', '02-sign-in.md'), '# 02 — Sign in\n');
-      return yield* isCleanIn(root, tickets);
+      return yield* changedPathsIn(root, tickets);
     })
   );
 
-  expect(clean).toBe(true);
+  expect(changed).toEqual([]);
 });
 
-test('isClean reports an untracked file outside the tickets folder, even in a folder whose name starts like it', async () => {
+test('changedPaths lists an untracked file outside the tickets folder, even in a folder whose name starts like it', async () => {
   const result = await run(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -196,36 +196,36 @@ test('isClean reports an untracked file outside the tickets folder, even in a fo
       const beside = path.join(root, '.agents', 'tickets-old');
       yield* fs.makeDirectory(beside, { recursive: true });
       yield* fs.writeFileString(path.join(beside, 'stray.md'), 'stray\n');
-      const besideQueue = yield* isCleanIn(root, tickets);
+      const besideQueue = yield* changedPathsIn(root, tickets);
       yield* fs.remove(beside, { recursive: true });
       yield* fs.writeFileString(path.join(root, 'notes.txt'), 'left by hand\n');
-      return { besideQueue, inRoot: yield* isCleanIn(root, tickets) };
+      return { besideQueue, inRoot: yield* changedPathsIn(root, tickets) };
     })
   );
 
-  expect(result).toEqual({ besideQueue: false, inRoot: false });
+  expect(result).toEqual({ besideQueue: ['.agents/tickets-old/stray.md'], inRoot: ['notes.txt'] });
 });
 
-test('isClean reports a change to a tracked file, under the tickets folder too', async () => {
+test('changedPaths lists a change to a tracked file, under the tickets folder too, and a rename by its new path', async () => {
   const result = await run(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { root, tickets } = yield* repositoryWith('tracked');
-      const fresh = yield* isCleanIn(root, tickets);
+      const fresh = yield* changedPathsIn(root, tickets);
       yield* fs.writeFileString(path.join(tickets, ticketFile), '# 01 — In place\n\n- [x] Ticked.\n');
-      const ticketChanged = yield* isCleanIn(root, tickets);
+      const ticketChanged = yield* changedPathsIn(root, tickets);
       yield* git(root, ['checkout', '--', '.']);
       yield* git(root, ['mv', 'base.txt', 'moved.txt']);
-      return { fresh, ticketChanged, renamed: yield* isCleanIn(root, tickets) };
+      return { fresh, ticketChanged, renamed: yield* changedPathsIn(root, tickets) };
     })
   );
 
-  expect(result).toEqual({ fresh: true, ticketChanged: false, renamed: false });
+  expect(result).toEqual({ fresh: [], ticketChanged: [`${ticketsFolder}/${ticketFile}`], renamed: ['moved.txt'] });
 });
 
-test('isClean ignores a tickets folder that is an untracked symbolic link to a folder outside the Repository Root', async () => {
-  const clean = await run(
+test('changedPaths ignores a tickets folder that is an untracked symbolic link to a folder outside the Repository Root', async () => {
+  const changed = await run(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
@@ -234,50 +234,50 @@ test('isClean ignores a tickets folder that is an untracked symbolic link to a f
       yield* fs.writeFileString(path.join(outside, '02-elsewhere.md'), '# 02 — Elsewhere\n');
       const link = path.join(root, '.agents', 'queue');
       yield* fs.symlink(outside, link);
-      return yield* isCleanIn(root, link);
+      return yield* changedPathsIn(root, link);
     })
   );
 
-  expect(clean).toBe(true);
+  expect(changed).toEqual([]);
 });
 
-test('isClean with the Repository Root as the tickets folder counts every untracked file', async () => {
-  const clean = await run(
+test('changedPaths with the Repository Root as the tickets folder lists every untracked file', async () => {
+  const changed = await run(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { root } = yield* repositoryWith('tracked');
       yield* fs.writeFileString(path.join(root, 'notes.txt'), 'left by hand\n');
-      return yield* isCleanIn(root, root);
+      return yield* changedPathsIn(root, root);
     })
   );
 
-  expect(clean).toBe(false);
+  expect(changed).toEqual(['notes.txt']);
 });
 
-test('isClean never counts an ignored file', async () => {
-  const clean = await run(
+test('changedPaths never lists an ignored file', async () => {
+  const changed = await run(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const { root, tickets } = yield* repositoryWith('ignored');
       yield* fs.writeFileString(path.join(root, 'run.log'), 'a log\n');
-      return yield* isCleanIn(root, tickets);
+      return yield* changedPathsIn(root, tickets);
     })
   );
 
-  expect(clean).toBe(true);
+  expect(changed).toEqual([]);
 });
 
-test('isClean with no tickets folder counts every untracked file', async () => {
-  const clean = await run(
+test('changedPaths with no tickets folder lists every untracked file', async () => {
+  const changed = await run(
     Effect.gen(function* () {
       const { root } = yield* repositoryWith('untracked');
-      return yield* managerIn(root).pipe(Effect.flatMap((manager) => manager.isClean({ path: root, branch: 'trunk' })));
+      return yield* managerIn(root).pipe(Effect.flatMap((manager) => manager.changedPaths({ path: root })));
     })
   );
 
-  expect(clean).toBe(false);
+  expect(changed).toEqual([`${ticketsFolder}/${ticketFile}`]);
 });
 
 test('the done move of a tracked ticket is a commit on the current branch with the fixed message, and leaves the tree clean', async () => {
@@ -293,7 +293,7 @@ test('the done move of a tracked ticket is a commit on the current branch with t
         moved: yield* git(root, ['show', '--name-status', '--format=', 'HEAD']),
         open: yield* fs.exists(path.join(tickets, ticketFile)),
         done: yield* fs.exists(path.join(tickets, 'done', ticketFile)),
-        clean: yield* isCleanIn(root, tickets),
+        changed: yield* changedPathsIn(root, tickets),
       };
     })
   );
@@ -303,7 +303,7 @@ test('the done move of a tracked ticket is a commit on the current branch with t
   expect(result.moved).toBe(`R100\t${ticketsFolder}/${ticketFile}\t${ticketsFolder}/done/${ticketFile}`);
   expect(result.open).toBe(false);
   expect(result.done).toBe(true);
-  expect(result.clean).toBe(true);
+  expect(result.changed).toEqual([]);
 });
 
 test.each(['ignored', 'untracked'] as const)(
@@ -320,11 +320,11 @@ test.each(['ignored', 'untracked'] as const)(
           headMoved: (yield* git(root, ['rev-parse', 'HEAD'])) !== head,
           open: yield* fs.exists(path.join(tickets, ticketFile)),
           done: yield* fs.exists(path.join(tickets, 'done', ticketFile)),
-          clean: yield* isCleanIn(root, tickets),
+          changed: yield* changedPathsIn(root, tickets),
         };
       })
     );
 
-    expect(result).toEqual({ headMoved: false, open: false, done: true, clean: true });
+    expect(result).toEqual({ headMoved: false, open: false, done: true, changed: [] });
   }
 );

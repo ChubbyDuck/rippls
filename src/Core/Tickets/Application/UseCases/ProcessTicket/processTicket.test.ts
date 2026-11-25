@@ -48,7 +48,7 @@ const recordingWorktrees = (closed: string[] = []) =>
     prepareProject: () => Effect.succeed(projectWorktree),
     prepareTicket: ({ id }) => Effect.succeed(ticketWorktreeOf(id)),
     runCommand: () => Effect.die('runCommand should not be called'),
-    isClean: () => Effect.succeed(true),
+    changedPaths: () => Effect.succeed([]),
     mergeAndClose: (worktree) =>
       Effect.sync(() => {
         closed.push(worktree.path);
@@ -492,7 +492,7 @@ test('a project-worktree create failure is retried once and then halts without e
       },
       prepareTicket: () => Effect.die('prepareTicket should not be called'),
       runCommand: () => Effect.die('runCommand should not be called'),
-      isClean: () => Effect.succeed(true),
+      changedPaths: () => Effect.succeed([]),
       mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
     })
   );
@@ -528,7 +528,7 @@ test.each([
         prepareProject: () => Effect.succeed(projectWorktree),
         prepareTicket: () => Effect.die('prepareTicket should not be called'),
         runCommand: () => Effect.die('runCommand should not be called'),
-        isClean: () => Effect.die('isClean should not be called'),
+        changedPaths: () => Effect.die('changedPaths should not be called'),
         mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
         [failing]: () =>
           Effect.suspend(() => {
@@ -567,7 +567,7 @@ test('a project-worktree create failure that succeeds on retry processes the tic
       },
       prepareTicket: ({ id }) => Effect.succeed(ticketWorktreeOf(id)),
       runCommand: () => Effect.die('runCommand should not be called'),
-      isClean: () => Effect.succeed(true),
+      changedPaths: () => Effect.succeed([]),
       mergeAndClose: () => Effect.void,
     })
   );
@@ -612,7 +612,7 @@ test('a ticket-worktree close failure is retried once and then halts with no don
       prepareProject: () => Effect.succeed(projectWorktree),
       prepareTicket: ({ id }) => Effect.succeed(ticketWorktreeOf(id)),
       runCommand: () => Effect.die('runCommand should not be called'),
-      isClean: () => Effect.succeed(true),
+      changedPaths: () => Effect.succeed([]),
       mergeAndClose: () => {
         attempts += 1;
         return Effect.fail(new WorktreeCloseError());

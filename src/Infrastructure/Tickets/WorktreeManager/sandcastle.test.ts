@@ -654,8 +654,8 @@ test('runCommand takes the exit of the shell as the verdict when the command lea
 });
 
 // Prepares the Ticket Worktree of `folder:17` in a new repository whose `.gitignore`
-// ignores `*.log`, changes it with `change`, and tells whether it is clean.
-const cleanAfter = (
+// ignores `*.log`, changes it with `change`, and lists its changed paths.
+const changedAfter = (
   change: (worktree: string) => Effect.Effect<void, PlatformError.PlatformError, NodeServices.NodeServices>
 ) =>
   Effect.gen(function* () {
@@ -669,7 +669,7 @@ const cleanAfter = (
       const manager = yield* WorktreeManager;
       const worktree = yield* manager.prepareTicket({ id: ticketId });
       yield* change(worktree.path);
-      return yield* manager.isClean(worktree);
+      return yield* manager.changedPaths(worktree);
     }).pipe(Effect.provide(WorktreeManagerLive(root)));
   });
 
@@ -680,11 +680,11 @@ const writeIn = (worktree: string, file: string, content: string) =>
     yield* fs.writeFileString(path.join(worktree, file), content);
   });
 
-test('isClean tells a fresh Ticket Worktree, and one whose work is committed, clean', async () => {
-  expect(await run(cleanAfter(() => Effect.void))).toBe(true);
+test('changedPaths lists nothing in a fresh Ticket Worktree, nor in one whose work is committed', async () => {
+  expect(await run(changedAfter(() => Effect.void))).toEqual([]);
   expect(
     await run(
-      cleanAfter((worktree) =>
+      changedAfter((worktree) =>
         writeIn(worktree, 'feat.txt', 'work').pipe(
           Effect.andThen(git(worktree, ['add', 'feat.txt'])),
           Effect.andThen(git(worktree, ['commit', '-m', 'feat'])),
@@ -692,18 +692,18 @@ test('isClean tells a fresh Ticket Worktree, and one whose work is committed, cl
         )
       )
     )
-  ).toBe(true);
+  ).toEqual([]);
 });
 
-test('isClean tells a Ticket Worktree with a modified file dirty', async () => {
-  expect(await run(cleanAfter((worktree) => writeIn(worktree, 'base.txt', 'changed')))).toBe(false);
+test('changedPaths lists a modified file of a Ticket Worktree', async () => {
+  expect(await run(changedAfter((worktree) => writeIn(worktree, 'base.txt', 'changed')))).toEqual(['base.txt']);
 });
 
-test('isClean tells a Ticket Worktree with an untracked file dirty, even in a new folder', async () => {
-  expect(await run(cleanAfter((worktree) => writeIn(worktree, 'new.txt', 'new')))).toBe(false);
+test('changedPaths lists an untracked file of a Ticket Worktree, even in a new folder', async () => {
+  expect(await run(changedAfter((worktree) => writeIn(worktree, 'new.txt', 'new')))).toEqual(['new.txt']);
   expect(
     await run(
-      cleanAfter((worktree) =>
+      changedAfter((worktree) =>
         Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           yield* fs.makeDirectory(`${worktree}/src`);
@@ -712,9 +712,9 @@ test('isClean tells a Ticket Worktree with an untracked file dirty, even in a ne
         })
       )
     )
-  ).toBe(false);
+  ).toEqual(['src/new.txt']);
 });
 
-test('isClean tells a Ticket Worktree with only an ignored file clean', async () => {
-  expect(await run(cleanAfter((worktree) => writeIn(worktree, 'debug.log', 'noise')))).toBe(true);
+test('changedPaths lists no ignored file of a Ticket Worktree', async () => {
+  expect(await run(changedAfter((worktree) => writeIn(worktree, 'debug.log', 'noise')))).toEqual([]);
 });
