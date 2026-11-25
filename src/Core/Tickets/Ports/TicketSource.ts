@@ -49,4 +49,4 @@ export class TicketSource extends Context.Service<
      */
     readonly reportDone: (ticket: TicketId, worktree: Worktree) => Effect.Effect<AfterMerge, TicketEventNotReported>;
   }
->()('TicketSource') {}
+>()('rippls/Core/Tickets/Ports/TicketSource') {}

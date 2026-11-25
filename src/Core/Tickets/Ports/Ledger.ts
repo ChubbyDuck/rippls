@@ -62,4 +62,4 @@ export class Ledger extends Context.Service<
     /** The given tickets that the Ledger records as done. */
     readonly done: (tickets: readonly TicketId[]) => Effect.Effect<ReadonlySet<TicketId>, LedgerError>;
   }
->()('Ledger') {}
+>()('rippls/Core/Tickets/Ports/Ledger') {}

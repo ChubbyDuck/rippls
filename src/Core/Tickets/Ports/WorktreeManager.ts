@@ -47,4 +47,4 @@ export class WorktreeManager extends Context.Service<
     // folder do not count.
     readonly isClean: (worktree: Worktree) => Effect.Effect<boolean, WorktreeCommandError>;
   }
->()('WorktreeManager') {}
+>()('rippls/Core/Tickets/Ports/WorktreeManager') {}

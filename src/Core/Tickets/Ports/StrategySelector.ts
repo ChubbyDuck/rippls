@@ -9,4 +9,4 @@ export class StrategySelector extends Context.Service<
   {
     readonly select: (kind: TicketKind) => Effect.Effect<Strategy, StrategyNotFound>;
   }
->()('StrategySelector') {}
+>()('rippls/Core/Tickets/Ports/StrategySelector') {}

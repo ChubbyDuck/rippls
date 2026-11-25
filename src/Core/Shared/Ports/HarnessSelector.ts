@@ -7,4 +7,4 @@ export class HarnessSelector extends Context.Service<
   {
     readonly select: Effect.Effect<Harness>;
   }
->()('HarnessSelector') {}
+>()('rippls/Core/Shared/Ports/HarnessSelector') {}

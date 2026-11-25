@@ -394,7 +394,7 @@ export const defaultEngineConfig: EngineConfigValue = {
   defaultKind: defaultTicketKind,
 };
 
-export class EngineConfig extends Context.Service<EngineConfig, EngineConfigValue>()('EngineConfig') {}
+export class EngineConfig extends Context.Service<EngineConfig, EngineConfigValue>()('rippls/Core/Shared/Domain/EngineConfig') {}
 
 const asConfigInput = (value: unknown): unknown => {
   if (value instanceof Date) {

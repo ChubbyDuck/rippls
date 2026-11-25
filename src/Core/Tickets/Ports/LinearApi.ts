@@ -93,4 +93,4 @@ export class LinearApi extends Context.Service<
     readonly createRelation: (input: LinearRelationInput) => Effect.Effect<void, LinearRequestError>;
     readonly deleteRelation: (relationId: string) => Effect.Effect<void, LinearRequestError>;
   }
->()('LinearApi') {}
+>()('rippls/Core/Tickets/Ports/LinearApi') {}

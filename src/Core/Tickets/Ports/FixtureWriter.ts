@@ -32,4 +32,4 @@ export class FixtureWriter extends Context.Service<
   {
     readonly write: (fixtures: readonly Fixture[]) => Effect.Effect<void, FixtureNotWritten>;
   }
->()('FixtureWriter') {}
+>()('rippls/Core/Tickets/Ports/FixtureWriter') {}
