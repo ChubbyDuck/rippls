@@ -1,9 +1,7 @@
-import { ChildProcess } from 'effect/unstable/process';
+import { Effect } from 'effect';
+import { ChildProcess, type ChildProcessSpawner } from 'effect/unstable/process';
 
-// Lists every change of the worktree, NUL-separated. Untracked files are listed one
-// by one whatever `status.showUntrackedFiles` says, and ignored files never are.
-export const gitStatusIn = (directory: string) =>
-  ChildProcess.make('git', ['status', '--porcelain', '-z', '--untracked-files=all'], { cwd: directory });
+import { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCommandError';
 
 // The paths `git status --porcelain -z` lists as changed, with the untracked ones
 // apart. A rename or a copy is followed by the path it came from, which is skipped:
@@ -24,3 +22,13 @@ export const changesOf = (porcelain: string) => {
   }
   return changes;
 };
+
+// Every change of the directory as `git status` lists it. Untracked files are listed
+// one by one whatever `status.showUntrackedFiles` says, and ignored files never are.
+export const changesIn = (spawner: ChildProcessSpawner.ChildProcessSpawner['Service'], directory: string) =>
+  spawner
+    .string(ChildProcess.make('git', ['status', '--porcelain', '-z', '--untracked-files=all'], { cwd: directory }))
+    .pipe(
+      Effect.map(changesOf),
+      Effect.mapError(() => new WorktreeCommandError())
+    );

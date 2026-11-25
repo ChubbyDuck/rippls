@@ -14,6 +14,8 @@ export type Processing = {
 export type IdleClock = {
   readonly onEmpty: Effect.Effect<void>;
   readonly onClaim: Effect.Effect<void>;
+  // A poll that finds an Eligible ticket it cannot take yet: the Engine is not Idle.
+  readonly onWaiting: Effect.Effect<void>;
   readonly onDone: Effect.Effect<void>;
   readonly processing: Effect.Effect<Processing>;
   readonly awaitTimeout: Effect.Effect<never, EngineIdleTimeout>;
@@ -59,6 +61,7 @@ export const makeIdleClock = (idleTimeout?: Duration.Input): Effect.Effect<IdleC
     return {
       onEmpty: Ref.get(occupied).pipe(Effect.flatMap((count) => (count === 0 ? startTimeout : Effect.void))),
       onClaim: Ref.update(occupied, (count) => count + 1).pipe(Effect.andThen(stopTimeout)),
+      onWaiting: stopTimeout,
       onDone: Ref.update(occupied, (count) => Math.max(0, count - 1)).pipe(Effect.andThen(signalEnd)),
       // The signal is read before the count, so an end between the two reads has
       // already completed the signal this poll holds.

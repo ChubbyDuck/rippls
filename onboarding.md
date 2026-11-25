@@ -1,6 +1,6 @@
 # Rippls in one sitting
 
-**What it is:** a CLI (`rippls`) you run inside any Git repo. It pulls tickets from a folder of Markdown files or from Linear, hands each one to a coding-agent CLI (Claude Code, Codex, Cursor, OpenCode) in its Workspace, then lands the result or escalates to a human. The Workspace is in place by default: the Repository Root on its current branch, with nothing to merge. With `workspace: worktree`, it is an isolated Git worktree that is merged on success ([ADR 0005](docs/adr/0005-in-place-workspace-by-default.md)). It is about 5,900 lines of TypeScript on Effect 4 (RC), with 10,700 lines of tests. Tests (533), typecheck and lint all pass right now.
+**What it is:** a CLI (`rippls`) you run inside any Git repo. It pulls tickets from a folder of Markdown files or from Linear, hands each one to a coding-agent CLI (Claude Code, Codex, Cursor, OpenCode) in its Workspace, then lands the result or escalates to a human. The Workspace is in place by default: the Repository Root on its current branch, with nothing to merge. With `workspace: worktree`, it is an isolated Git worktree that is merged on success ([ADR 0005](docs/adr/0005-in-place-workspace-by-default.md)). It is about 5,900 lines of TypeScript on Effect 4 (RC), with 10,700 lines of tests. Tests (569), typecheck and lint all pass right now.
 
 ## The one flow to hold in your head
 
@@ -12,6 +12,9 @@ rippls ──► RunEngine ─────────────────�
      picks an Eligible ticket:        ──► replace a Stale Claim;          │
      unblocked + unclaimed + hitl:no      report `claimed`                │
      + not escalated + not done                                           │
+     in place, before the claim: a dirty                                  │
+     Repository Root halts a Drain, and makes                             │
+     a Watch skip the poll                                                │
                 │                                                         │
                 ▼                                                         │
            ProcessTicket (one Runner, one Ticket)                         │
@@ -80,7 +83,7 @@ After that, read whichever adapter you need. The tests sit next to the source an
 
 - **Your local `rippls.config.ts` is silently ignored.** It exports `harnessFileConfig` with an `agents` key, but [load.ts:23-28](src/config/load.ts#L23-L28) only reads `engineFileConfig` or `default`. Runs in this repo therefore use the defaults: all four Harnesses in rotation and no tracing, not Cursor only with OTLP.
 - **Eligibility reads `status` only as a Marker.** The one rule in [eligibility.ts](src/Core/Tickets/Domain/Services/eligibility.ts) is unblocked + unclaimed + not escalated + not done + `hitl: no`. A `status` of `ready-for-agent` means HITL no and `ready-for-human` HITL yes, unless the ticket states its `hitl`; any other `status` is ignored, so a `hitl: no` ticket with `status: blocked` is taken once every blocker is done.
-- **One Escalation stops the run.** A failed Strategy step, check, commit, or done report escalates the ticket, and `EngineHalted` propagates out of the stream. A worktree create or merge failure, after one retry, and a Ticket Kind with no Strategy (`StrategyNotFound`) halt the run too, without an Escalation.
+- **One Escalation stops the run.** A failed Strategy step, check, commit, or done report escalates the ticket, and `EngineHalted` propagates out of the stream. A worktree create or merge failure, after one retry, and a Ticket Kind with no Strategy (`StrategyNotFound`) halt the run too, without an Escalation. In place, so does a Drain that finds the Repository Root dirty when a ticket is Eligible, before it claims one (`RepositoryRootDirty`, which lists the changed paths); a Watch logs it and skips the poll instead, and is not Idle meanwhile.
 - **`prototype` and `grilling` have no default Strategy.** They imply `hitl: yes`, so they are not taken unless a ticket says `hitl: no`; then the run stops with `StrategyNotFound` unless config gives the kind a Strategy.
 - **Model IDs are hard-coded.** The catalog is in [registered.ts:22-52](src/Infrastructure/Shared/HarnessSelector/registered.ts#L22-L52); a Strategy asks for a tier/fast/generation and falls back to the Harness default when nothing matches.
 - **A Claim from another host is never stale.** The Engine replaces a Claim whose process no longer runs on its own host, but it cannot see the processes of another host, so such a Claim keeps its ticket claimed until someone removes the Ledger record.

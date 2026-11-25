@@ -77,8 +77,8 @@ export const runEngine = Effect.fn('engine.run')(function* ({
   // Worktrees, every Agent commits in a worktree of its own, so the Repository Root
   // is left as it is.
   const worktrees = yield* WorktreeManager;
-  const beforePoll = workspace === 'in-place' ? requireCleanRoot(worktrees, root) : Effect.void;
-  const tickets = ticketStream(engine.id, { project, clock, pollInterval, watch, onIdle, beforePoll });
+  const cleanRootCheck = workspace === 'in-place' ? requireCleanRoot(worktrees, root) : Effect.void;
+  const tickets = ticketStream(engine.id, { project, clock, pollInterval, watch, onIdle, cleanRootCheck });
   const limitedTickets = limit === undefined ? tickets : tickets.pipe(Stream.take(limit));
   yield* Effect.annotateCurrentSpan({
     'engine.id': engine.id,

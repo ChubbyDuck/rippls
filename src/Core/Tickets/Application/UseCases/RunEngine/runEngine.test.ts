@@ -2880,10 +2880,13 @@ const recordingCommits = (labels: string[]): Harness => ({
     }).pipe(Effect.andThen(committingHarness.run(prompt, options))),
 });
 
-// Waits on the real clock until `isReady` holds.
-const eventually = (isReady: () => boolean) =>
+// Waits on the real clock until `isReady` holds, for two seconds at most.
+const eventually = (isReady: () => boolean, what: string) =>
   Effect.gen(function* () {
-    while (!isReady()) {
+    for (let waited = 0; !isReady(); waited += 5) {
+      if (waited >= 2000) {
+        return yield* Effect.die(`still waiting for ${what}`);
+      }
       yield* Effect.sleep('5 millis');
     }
   });
@@ -2928,7 +2931,69 @@ test('runEngine in a Drain in place halts before it claims a ticket when the Rep
   expect(ledger.escalated.size).toBe(0);
 });
 
-test('runEngine in a Watch in place takes no ticket while the Repository Root is dirty, and takes it on a later poll once it is clean', async () => {
+test('runEngine in a Drain in place ends Idle on a dirty Repository Root when no ticket is Eligible, and prints the held tickets', async () => {
+  const ledger = makeLedgerMemory();
+  const messages: string[] = [];
+  await runInPlace(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repository = yield* inPlaceRepository({
+        '01-first.md': standardTemplate('01', 'First', 'None'),
+        '02-second.md': standardTemplate('02', 'Second', '01'),
+      });
+      ledger.escalated.set(id(1), Escalation.make({ ticket: id(1), reason: 'strategy failure', attempts: 1 }));
+      yield* fs.writeFileString(path.join(repository.root, 'notes.txt'), 'left by hand\n');
+      yield* executeEngine({}).pipe(
+        Random.withSeed('test'),
+        Effect.provide(inPlaceLayer(repository, ledger, committingHarness, StrategySelectorNoop, messages))
+      );
+    })
+  );
+
+  expect(messages).toContain('The Engine is Idle, so the Drain ends');
+  expect(messages.some((message) => message.includes('uncommitted changes'))).toBe(false);
+  expect(messages.some((message) => message.includes(id(1)) && message.includes('strategy failure'))).toBe(true);
+  expect(ledger.claims.size).toBe(0);
+});
+
+test('runEngine in a Drain in place that cannot read whether the Repository Root is clean says so and fails, with no Claim', async () => {
+  const messages: string[] = [];
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1)]);
+  const unreadableRoot = Layer.succeed(WorktreeManager, {
+    prepareProject: () => Effect.die('prepareProject should not be called'),
+    prepareTicket: () => Effect.die('prepareTicket should not be called'),
+    runCommand: () => Effect.die('runCommand should not be called'),
+    changedPaths: () => Effect.fail(new WorktreeCommandError()),
+    mergeAndClose: () => Effect.die('mergeAndClose should not be called'),
+  });
+
+  const error = await Effect.runPromise(
+    executeEngine({ project }).pipe(
+      Random.withSeed('test'),
+      Effect.provide(
+        Layer.mergeAll(
+          EngineStartupTest,
+          unreadableRoot,
+          ledger.layer,
+          source.layer,
+          HarnessSelectorNoop,
+          StrategySelectorNoop,
+          Layer.succeed(Console.Console, capturingConsole(messages))
+        )
+      ),
+      Effect.flip
+    )
+  );
+
+  expect(error).toEqual(new WorktreeCommandError());
+  expect(messages).toContain('Could not read whether the Repository Root is clean');
+  expect(ledger.claims.size).toBe(0);
+  expect(source.reports).toEqual([]);
+});
+
+test('runEngine in a Watch in place takes no ticket while the Repository Root is dirty, is not Idle meanwhile, and takes it on a later poll once it is clean', async () => {
   const ledger = makeLedgerMemory();
   const messages: string[] = [];
   const labels: string[] = [];
@@ -2940,14 +3005,17 @@ test('runEngine in a Watch in place takes no ticket while the Repository Root is
       const { root, ticketsDir } = repository;
       const notes = path.join(root, 'notes.txt');
       yield* fs.writeFileString(notes, 'left by hand\n');
-      const fiber = yield* executeEngine({ watch: true, limit: 1, pollInterval: '10 millis' }).pipe(
+      // The Eligible ticket that waits keeps the Engine from being Idle, so the idle
+      // timeout never ends the Watch while the tree is dirty.
+      const fiber = yield* executeEngine({ watch: true, limit: 1, pollInterval: '10 millis', idleTimeout: '30 millis' }).pipe(
         Random.withSeed('test'),
         Effect.provide(inPlaceLayer(repository, ledger, recordingCommits(labels), StrategySelectorNoop, messages)),
         Effect.forkChild({ startImmediately: true })
       );
       const skippedPoll = (message: string) => message.endsWith('The Watch takes no ticket until the next poll');
-      // Two skipped polls: the Watch did not fail at the first one.
-      yield* eventually(() => messages.filter(skippedPoll).length >= 2);
+      // Many skipped polls, well past the idle timeout: the Watch neither failed at the
+      // first one nor ended for being Idle.
+      yield* eventually(() => messages.filter(skippedPoll).length >= 10, 'ten skipped polls');
       const whileDirty = { labels: [...labels], claims: ledger.claims.size, running: fiber.pollUnsafe() === undefined };
       yield* fs.remove(notes);
       yield* Fiber.join(fiber);

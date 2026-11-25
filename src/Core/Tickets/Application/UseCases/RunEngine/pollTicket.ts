@@ -147,11 +147,16 @@ const finishStoppedSagas = (
 // included, the Ledger holds the Claims and Escalations, and the core rule picks
 // the Eligible tickets. A ticket whose only Claim is a Stale Claim is Unclaimed,
 // and the Engine replaces that Claim when it takes the ticket. The Engine claims
-// the first one it can.
-export const pollTicket = (engine: EngineId, project?: Project) =>
+// the first one it can. When a ticket is Eligible, `beforeClaim` runs first, and
+// its failure stops the poll before any Claim.
+export const pollTicket = <E = never>(engine: EngineId, project?: Project, beforeClaim: Effect.Effect<void, E> = Effect.void) =>
   Effect.gen(function* () {
     const { tickets, stale, facts } = yield* readTicketScope(project);
     yield* finishStoppedSagas(engine, tickets, stale, facts);
     const eligible = tickets.filter((ticket) => isEligible(ticket, facts));
+    if (eligible.length === 0) {
+      return Option.none<Ticket>();
+    }
+    yield* beforeClaim;
     return yield* Effect.findFirstFilter(eligible, claimIfStillEligible(engine, facts, stale));
   });

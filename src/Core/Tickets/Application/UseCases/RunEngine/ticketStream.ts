@@ -7,14 +7,15 @@ import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/P
 import type { RepositoryRootDirty } from '~/Core/Tickets/Domain/Exceptions/RepositoryRootDirty';
 import type { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCommandError';
 
-import type { IdleClock } from './idleClock';
+import type { IdleClock, Processing } from './idleClock';
 import { pollTicket } from './pollTicket';
 
-export type TicketStreamClock = Pick<IdleClock, 'onEmpty' | 'onClaim' | 'processing'>;
+export type TicketStreamClock = Pick<IdleClock, 'onEmpty' | 'onClaim' | 'onWaiting' | 'processing'>;
 
 const ignoreIdle: TicketStreamClock = {
   onEmpty: Effect.void,
   onClaim: Effect.void,
+  onWaiting: Effect.void,
   processing: Effect.succeed({ inProgress: false, nextEnd: Effect.never }),
 };
 
@@ -29,6 +30,9 @@ const claimed = (ticket: Ticket): PollOutcome => ({ _tag: 'Claimed', ticket });
 const idle: PollOutcome = { _tag: 'Idle' };
 const again: PollOutcome = { _tag: 'Again' };
 
+// A poll that a Watch skipped, since the Repository Root was not clean.
+const skipped = Symbol('skipped');
+
 export type TicketStreamOptions = {
   readonly project?: Project;
   readonly clock?: TicketStreamClock;
@@ -37,10 +41,10 @@ export type TicketStreamOptions = {
   // stream once it is Idle, after `onIdle`.
   readonly watch?: boolean;
   readonly onIdle?: Effect.Effect<void>;
-  // What must hold before each poll, as a clean Repository Root in place. A Drain
-  // fails with its error. A Watch logs it and skips the poll, so it takes no ticket
-  // until a later poll finds it holds.
-  readonly beforePoll?: Effect.Effect<void, RepositoryRootDirty | WorktreeCommandError>;
+  // In place, the check that the Repository Root is clean, which runs once a poll
+  // finds an Eligible ticket and before it claims one. A Drain fails with its error.
+  // A Watch logs it and takes no ticket until a later poll finds the tree clean.
+  readonly cleanRootCheck?: Effect.Effect<void, RepositoryRootDirty | WorktreeCommandError>;
 };
 
 /**
@@ -58,29 +62,33 @@ export const ticketStream = (
     pollInterval = defaultPollInterval,
     watch = false,
     onIdle = Effect.void,
-    beforePoll = Effect.void,
+    cleanRootCheck = Effect.void,
   }: TicketStreamOptions = {}
 ) => {
-  // A Watch that skips a poll counts it as an empty one.
-  const skipped = (reason: string) =>
-    clock.onEmpty.pipe(Effect.andThen(Console.log(`${reason}\nThe Watch takes no ticket until the next poll`)));
-  const ready = watch
-    ? beforePoll.pipe(
-        Effect.as(true),
+  const unreadable = 'Could not read whether the Repository Root is clean';
+  // A Watch that finds the Repository Root dirty, or cannot read it, skips the poll.
+  // An Eligible ticket waits, so the Engine is not Idle.
+  const skip = (reason: string) =>
+    Console.log(`${reason}\nThe Watch takes no ticket until the next poll`).pipe(Effect.as(skipped));
+  const pollOnce = watch
+    ? pollTicket(engine, project, cleanRootCheck).pipe(
         Effect.catchTags({
-          RepositoryRootDirty: (error) => skipped(error.message).pipe(Effect.as(false)),
-          WorktreeCommandError: () =>
-            skipped('Could not read whether the Repository Root is clean').pipe(Effect.as(false)),
+          RepositoryRootDirty: (error) => skip(error.message),
+          WorktreeCommandError: () => skip(unreadable),
         })
       )
-    : beforePoll.pipe(Effect.as(true));
+    : pollTicket(engine, project, cleanRootCheck).pipe(
+        Effect.tapErrorTag('WorktreeCommandError', () => Console.error(unreadable))
+      );
+  const waitForNextPoll = (before: Processing) =>
+    Effect.sleep(pollInterval).pipe(Effect.raceFirst(before.nextEnd), Effect.as(again));
   const poll = Effect.gen(function* () {
     const before = yield* clock.processing;
-    if (!(yield* ready)) {
-      yield* Effect.sleep(pollInterval).pipe(Effect.raceFirst(before.nextEnd));
-      return again;
+    const ticket = yield* pollOnce;
+    if (ticket === skipped) {
+      yield* clock.onWaiting;
+      return yield* waitForNextPoll(before);
     }
-    const ticket = yield* pollTicket(engine, project);
     if (Option.isSome(ticket)) {
       yield* clock.onClaim;
       return claimed(ticket.value);
@@ -91,8 +99,7 @@ export const ticketStream = (
       return idle;
     }
     yield* Console.log('No tickets are found, continuing');
-    yield* Effect.sleep(pollInterval).pipe(Effect.raceFirst(before.nextEnd));
-    return again;
+    return yield* waitForNextPoll(before);
   });
   return Stream.unfold(undefined, () =>
     poll.pipe(

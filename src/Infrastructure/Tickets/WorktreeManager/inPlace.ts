@@ -1,11 +1,10 @@
 import { Effect, FileSystem, Layer, Path } from 'effect';
 import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 
-import { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCommandError';
 import { WorktreeCreationError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCreationError';
 import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
-import { changesOf, gitStatusIn } from './gitStatus';
+import { changesIn } from './gitStatus';
 import { runCommandWith } from './runCommand';
 
 // The in-place Workspace: every Ticket's work happens in the Repository Root itself
@@ -60,13 +59,10 @@ export const WorktreeManagerInPlaceLive = (repositoryRoot: string, ticketsDir?: 
         // The changes `git status` lists, but the untracked files under the tickets
         // folder.
         changedPaths: (worktree) =>
-          spawner.string(gitStatusIn(worktree.path)).pipe(
-            Effect.map((porcelain) =>
-              changesOf(porcelain)
-                .filter((change) => !(change.untracked && isInQueue(change.path)))
-                .map((change) => change.path)
-            ),
-            Effect.mapError(() => new WorktreeCommandError())
+          changesIn(spawner, worktree.path).pipe(
+            Effect.map((changes) =>
+              changes.filter((change) => !(change.untracked && isInQueue(change.path))).map((change) => change.path)
+            )
           ),
       };
     })

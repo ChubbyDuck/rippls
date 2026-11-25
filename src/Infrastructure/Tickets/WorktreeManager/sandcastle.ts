@@ -5,13 +5,12 @@ import { ChildProcess, ChildProcessSpawner } from 'effect/unstable/process';
 import type { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { WorktreeCloseError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCloseError';
-import { WorktreeCommandError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCommandError';
 import { WorktreeCreationError } from '~/Core/Tickets/Domain/Exceptions/WorktreeCreationError';
 import { WorktreeNotExpected } from '~/Core/Tickets/Domain/Exceptions/WorktreeNotExpected';
 import { type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 
 import { ensureDependencies } from './ensureDependencies';
-import { changesOf, gitStatusIn } from './gitStatus';
+import { changesIn } from './gitStatus';
 import { runCommandWith } from './runCommand';
 
 // Sandcastle stores a named-branch worktree at this path. A second createWorktree
@@ -222,10 +221,7 @@ export const WorktreeManagerLive = (repositoryRoot: string) => {
         runCommand: runCommandWith(spawner),
         // Every change `git status` lists.
         changedPaths: (worktree) =>
-          spawner.string(gitStatusIn(worktree.path)).pipe(
-            Effect.map((porcelain) => changesOf(porcelain).map((change) => change.path)),
-            Effect.mapError(() => new WorktreeCommandError())
-          ),
+          changesIn(spawner, worktree.path).pipe(Effect.map((changes) => changes.map((change) => change.path))),
       };
     })
   );
