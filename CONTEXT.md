@@ -254,6 +254,12 @@ expresses each event in its own way; nothing saves a Ticket to it. Source identi
 travels with the Ticket's identity and does not affect processing rules.
 _Avoid_: Backend, provider, tracker, store, repository
 
+**Queue**:
+The folder of ticket files a folder Source reads: the configured tickets folder, or
+else the nearest `.agents/tickets` at or above the folder where Rippls started, up to
+the Repository Root and never above it. A run prints the Queue it uses when it starts.
+_Avoid_: backlog, inbox, Limit
+
 **Ticket Stream**:
 The ongoing sequence of uniform Tickets acquired from a Source for processing by the
 Engine. Records are converted before entering the stream, so consumers use the same
@@ -306,3 +312,16 @@ The Classifier's judgement of one Ticket: ready, HITL, or blocked. It holds whil
 Ticket's text is unchanged, and a blocked one only while the done Tickets are
 unchanged too.
 _Avoid_: verdict, selection
+
+## Config
+
+**Repository config**:
+The config file at the Repository Root. It wins over the User config.
+_Avoid_: project config, local config
+
+**User config**:
+The developer's config file in `$XDG_CONFIG_HOME/rippls/`, or `~/.config/rippls/`,
+that applies to every repository. The Repository config merges over it: plain objects
+key by key at every level, while arrays and values replace, so a Strategy given for a
+Ticket Kind replaces that Kind's Strategy whole. Neither file is required.
+_Avoid_: global config, home config

@@ -1,4 +1,4 @@
-import { Effect, FileSystem, Path } from 'effect';
+import { Effect, FileSystem, Path, type PlatformError } from 'effect';
 
 import {
   type FolderSourceConfig,
@@ -10,7 +10,7 @@ import {
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { QueueNotFound } from '~/Core/Tickets/Domain/Exceptions/QueueNotFound';
 
-export const QUEUE_FOLDER = '.agents/tickets';
+const QUEUE_FOLDER = '.agents/tickets';
 
 const isDirectory = (fs: FileSystem.FileSystem, dir: string) =>
   fs.stat(dir).pipe(
@@ -25,10 +25,10 @@ export const nearestQueue = Effect.fn('config.nearestQueue')(function* (start: s
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const notFound = new QueueNotFound({ start, root });
-  const realStart = yield* fs.realPath(start).pipe(Effect.mapError(() => notFound));
-  const realRoot = yield* fs.realPath(root).pipe(Effect.mapError(() => notFound));
+  const realStart = yield* fs.realPath(start);
+  const realRoot = yield* fs.realPath(root);
   const inRoot = path.relative(realRoot, realStart);
-  if (inRoot.startsWith('..') || path.isAbsolute(inRoot)) {
+  if (inRoot === '..' || inRoot.startsWith(`..${path.sep}`) || path.isAbsolute(inRoot)) {
     return yield* notFound;
   }
   for (let dir = realStart; ; dir = path.dirname(dir)) {
@@ -49,7 +49,7 @@ type QueueServices = FileSystem.FileSystem | Path.Path | RepositoryRoot;
 export const locateFolderQueue = (
   source: FolderSourceConfig,
   start: string
-): Effect.Effect<LocatedFolderSource, QueueNotFound, QueueServices> => {
+): Effect.Effect<LocatedFolderSource, QueueNotFound | PlatformError.PlatformError, QueueServices> => {
   const { ticketsDir } = source;
   if (ticketsDir !== undefined) {
     return Effect.succeed({ ...source, ticketsDir });
@@ -64,7 +64,7 @@ export const locateFolderQueue = (
 export const locateQueue = (
   source: TicketSourceConfig,
   start: string
-): Effect.Effect<LocatedTicketSource, QueueNotFound, QueueServices> =>
+): Effect.Effect<LocatedTicketSource, QueueNotFound | PlatformError.PlatformError, QueueServices> =>
   source._tag === 'linear' ? Effect.succeed(source) : locateFolderQueue(source, start);
 
 // The line a run prints at its start, naming the queue it uses.

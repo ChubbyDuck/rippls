@@ -79,6 +79,12 @@ test('the lookup never goes above the Repository Root', async () => {
   expect((await fail(nearestQueue(`${base}/repo/apps/web`, `${base}/repo`)))._tag).toBe('QueueNotFound');
 });
 
+test('a folder below the Repository Root whose name starts with two dots is inside it', async () => {
+  const root = await tree('.agents/tickets', '..cache/app');
+
+  expect(await run(nearestQueue(`${root}/..cache/app`, root))).toBe(`${root}/.agents/tickets`);
+});
+
 test('a start folder outside the Repository Root finds no queue', async () => {
   const base = await tree('repo/.agents/tickets', 'elsewhere/.agents/tickets');
 
