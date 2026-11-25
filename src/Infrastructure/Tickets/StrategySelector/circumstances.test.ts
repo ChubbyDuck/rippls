@@ -2,10 +2,11 @@ import { expect, test } from 'vitest';
 
 import { verdictInstruction, worktreeCircumstances } from './circumstances';
 
-test('the briefing says the Ticket Worktree is ready and the ticket is in the prompt', () => {
-  expect(worktreeCircumstances).toContain('Ticket Worktree');
-  expect(worktreeCircumstances).toContain('Workspace dependencies are installed');
+test('the briefing says the Agent is in the Workspace and the ticket is in the prompt, and claims no install', () => {
+  expect(worktreeCircumstances).toContain("this ticket's Workspace");
   expect(worktreeCircumstances).toContain('ticket text is in this prompt');
+  expect(worktreeCircumstances).not.toContain('Ticket Worktree');
+  expect(worktreeCircumstances).not.toContain('installed');
 });
 
 test('the briefing names no script runner and does not forbid looking for a ticket file', () => {

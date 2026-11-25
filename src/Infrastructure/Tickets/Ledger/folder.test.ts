@@ -171,6 +171,27 @@ test('an escalation records the reason, the attempt count, and the retained Tick
   expect([...escalations.entries()]).toEqual([[ticket(1), expected]]);
 });
 
+test('an escalation in place records no Ticket Worktree, and reads back without one', async () => {
+  const { escalated, escalations } = await run(
+    Effect.gen(function* () {
+      const dir = yield* gitCommonDir;
+      return yield* inLedger(
+        dir,
+        Effect.gen(function* () {
+          const ledger = yield* Ledger;
+          const escalated = yield* ledger.escalate(ticket(1), { reason: 'check failure' });
+          const escalations = yield* ledger.escalations([ticket(1)]);
+          return { escalated, escalations };
+        })
+      );
+    })
+  );
+  const expected = new Escalation({ ticket: ticket(1), reason: 'check failure', attempts: 1 });
+  expect(escalated).toEqual(expected);
+  expect(escalations.get(ticket(1))?.worktree).toBeUndefined();
+  expect([...escalations.entries()]).toEqual([[ticket(1), expected]]);
+});
+
 test('a second failure of the same ticket raises its attempt count', async () => {
   const escalations = await run(
     Effect.gen(function* () {

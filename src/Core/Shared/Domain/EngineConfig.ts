@@ -177,6 +177,19 @@ export type LocatedFolderSource = FolderSourceConfig & { readonly ticketsDir: Ti
 
 export type LocatedTicketSource = LocatedFolderSource | LinearSourceConfig;
 
+// Where all Agents for one Ticket perform its work: `in-place`, in the Repository Root
+// itself on its current branch, or `worktree`, in a Ticket Worktree (see ADR-0005).
+// In place allows a Concurrency of one.
+export const Workspace = Schema.Literals(['in-place', 'worktree']);
+
+export type Workspace = typeof Workspace.Type;
+
+export const defaultWorkspace: Workspace = 'in-place';
+
+export const workspaceConfig: Config.Config<Workspace> = Config.schema(Workspace, 'workspace').pipe(
+  Config.withDefault(defaultWorkspace)
+);
+
 // The repository's own check command, which the Engine runs in the Ticket Worktree
 // after the Strategy succeeds and before the merge. Its exit code is the verdict.
 // A Project may override the command; a ticket without a Project, or of a Project
@@ -363,6 +376,7 @@ export const EngineConfigSchema = Schema.Struct({
   idleTimeout: Schema.optionalKey(Schema.DurationFromString),
   pollInterval: Schema.optionalKey(Schema.DurationFromString),
   defaultKind: Schema.optionalKey(TicketKind),
+  workspace: Schema.optionalKey(Workspace),
   source: Schema.optionalKey(TicketSourceConfig),
   check: Schema.optionalKey(CheckFileConfig),
   commit: Schema.optionalKey(CommitFileConfig),

@@ -83,7 +83,8 @@ const holderOf = ({ engine, runner, process, host }: Claim) =>
   `Engine ${engine}, ${runner === undefined ? 'no Runner yet' : `Runner ${runner}`}, process ${process}, host ${host}`;
 
 const describeEscalation = ({ reason, attempts, worktree }: Escalation) =>
-  `Escalation: ${reason}, ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}, Ticket Worktree ${worktree}`;
+  `Escalation: ${reason}, ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}` +
+  (worktree === undefined ? ', in place' : `, Ticket Worktree ${worktree}`);
 
 const describeBlockers = ({ open, unresolved }: OutstandingBlockers) =>
   [

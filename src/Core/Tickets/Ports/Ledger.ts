@@ -40,8 +40,8 @@ export class Ledger extends Context.Service<
     readonly read: (tickets: readonly TicketId[]) => Effect.Effect<ReadonlyMap<TicketId, Claim>, LedgerError>;
     /**
      * Records an Escalation of the ticket, with the reason and the path of the
-     * retained Ticket Worktree. Each Escalation of the same ticket raises its
-     * attempt count by one.
+     * retained Ticket Worktree, if any. Each Escalation of the same ticket raises
+     * its attempt count by one.
      */
     readonly escalate: (ticket: TicketId, cause: EscalationCause) => Effect.Effect<Escalation, LedgerError>;
     /**

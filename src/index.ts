@@ -12,9 +12,12 @@ import {
   EngineConfig,
   engineConfig,
   idleTimeoutConfig,
+  type LocatedTicketSource,
   pollIntervalConfig,
   resolveTicketSource,
   TicketSourceTag,
+  type Workspace,
+  workspaceConfig,
 } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import { retryTicket } from '~/Core/Tickets/Application/UseCases/RetryTicket/retryTicket';
@@ -23,6 +26,7 @@ import { RepositoryRootLive } from '~/Core/Tickets/Application/UseCases/RunEngin
 import { runEngine } from '~/Core/Tickets/Application/UseCases/RunEngine/runEngine';
 import { showStatus } from '~/Core/Tickets/Application/UseCases/ShowStatus/showStatus';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
+import { ConcurrencyNotInPlace } from '~/Core/Tickets/Domain/Exceptions/ConcurrencyNotInPlace';
 import { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { QueueNotFound } from '~/Core/Tickets/Domain/Exceptions/QueueNotFound';
 import { TicketNotEscalated } from '~/Core/Tickets/Domain/Exceptions/TicketNotEscalated';
@@ -32,6 +36,7 @@ import { makeTracingLayer } from '~/Infrastructure/Shared/Tracing/otlp';
 import { LedgerFolderLive } from '~/Infrastructure/Tickets/Ledger/folder';
 import { StrategySelectorLive } from '~/Infrastructure/Tickets/StrategySelector/configured';
 import { liveTicketSource } from '~/Infrastructure/Tickets/TicketSource/fromSource';
+import { WorktreeManagerInPlaceLive } from '~/Infrastructure/Tickets/WorktreeManager/inPlace';
 import { WorktreeManagerLive } from '~/Infrastructure/Tickets/WorktreeManager/sandcastle';
 
 const TracingLive = Layer.unwrap(
@@ -41,7 +46,6 @@ const TracingLive = Layer.unwrap(
 const AppLive = Layer.mergeAll(
   StrategySelectorLive,
   ConfiguredHarnessesLive,
-  Layer.unwrap(RepositoryRoot.pipe(Effect.map(WorktreeManagerLive))),
   LedgerFolderLive({ process: process.pid, host: hostname() }),
   TracingLive
 ).pipe(Layer.provideMerge(EngineFileConfigLive), Layer.provideMerge(RepositoryRootLive));
@@ -56,6 +60,17 @@ const locatedSourceFor = (source: Option.Option<TicketSourceTag>) =>
     const resolved = yield* resolveTicketSource(config.source, Option.getOrUndefined(source));
     return yield* locateQueue(resolved, process.cwd());
   });
+
+// The Worktree Manager of the Workspace. In place, the clean check ignores the
+// untracked files of a folder Source's queue.
+const worktreeManagerFor = (workspace: Workspace, located: LocatedTicketSource) =>
+  RepositoryRoot.pipe(
+    Effect.map((root) =>
+      workspace === 'worktree'
+        ? WorktreeManagerLive(root)
+        : WorktreeManagerInPlaceLive(root, located._tag === 'folder' ? located.ticketsDir : undefined)
+    )
+  );
 
 const ticketSourceFor = (source: Option.Option<TicketSourceTag>) =>
   Effect.gen(function* () {
@@ -93,15 +108,18 @@ const engine = Command.make(
       const ticketSource = liveTicketSource(located, config.defaultKind);
       const check = yield* checkConfig;
       const commit = yield* commitConfig;
+      const workspace = yield* workspaceConfig;
+      const worktreeManager = yield* worktreeManagerFor(workspace, located);
       return yield* runEngine({
         project: Option.getOrUndefined(project),
         limit: Option.getOrUndefined(limit),
         concurrency,
+        workspace,
         idleTimeout,
         pollInterval,
         check,
         commit,
-      }).pipe(Effect.provide(ticketSource));
+      }).pipe(Effect.provide(Layer.merge(ticketSource, worktreeManager)));
     })
   )
 );
@@ -139,7 +157,10 @@ export const program = Command.run(command, { version: '0.0.2' }).pipe(
 
 // Errors whose message is written for the person who ran the command.
 const isExplained = (error: unknown): error is Error =>
-  error instanceof TicketNotEscalated || error instanceof TicketNotOfSource || error instanceof QueueNotFound;
+  error instanceof TicketNotEscalated ||
+  error instanceof TicketNotOfSource ||
+  error instanceof QueueNotFound ||
+  error instanceof ConcurrencyNotInPlace;
 
 const describeError = (error: unknown) =>
   error instanceof Config.ConfigError ? error.cause.message : isExplained(error) ? error.message : error;

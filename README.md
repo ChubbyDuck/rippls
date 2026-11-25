@@ -4,7 +4,8 @@
 
 Rippls is an opinionated ticket workflow engine for AI agents. It defines a ticket format, lifecycle
 rules, and reusable **Strategies** of configured steps. A pool of named
-**Runners** processes a **Ticket Stream**, with work performed in isolated Git worktrees.
+**Runners** processes a **Ticket Stream**. By default the work happens in place, in your
+current checkout and on your current branch; config moves it into isolated Git worktrees.
 
 Rippls is a CLI. Install it with npm or pnpm, then run it from the Git repository
 you want it to process. No clone of this project is required.
@@ -48,9 +49,12 @@ describes how to perform it. Each Ticket Kind has one configured Strategy, named
 it, unless config gives it none. Ticket Processing owns claiming, the check, the commit,
 completion, and escalation across Strategies.
 
-The **Worktree Manager** prepares Project and Ticket Worktrees, runs a command in a
-worktree, tells whether a worktree is clean, and merges and closes successful Ticket
-Worktrees.
+The **Workspace** is where all Agents for one Ticket perform its work: **in place**, in
+the Repository Root itself (the default), or in a **Ticket Worktree** (see
+[Workspace](#workspace)). The **Worktree Manager** prepares the Workspace of a ticket,
+runs a command in it, tells whether it is clean, and merges and closes successful Ticket
+Worktrees. In place, it has one adapter that prepares the Repository Root on its current
+branch and merges nothing.
 
 ## What a run does
 
@@ -58,20 +62,24 @@ Worktrees.
   claims it in the **Ledger**, and reports the **Claim** to the Source.
 2. Hands it to a stable, named **Runner**, which the Claim then names.
 3. Selects a configured **Harness**.
-4. Creates a `ticket-<source>-<id>` branch and **Ticket Worktree**.
-5. Installs workspace dependencies with `corepack pnpm install` when needed.
+4. Prepares the **Workspace**. In place, it is the Repository Root on its current
+  branch, with nothing created or installed. With Ticket Worktrees, it creates a
+  `ticket-<source>-<id>` branch and **Ticket Worktree**.
+5. With Ticket Worktrees, installs workspace dependencies with `corepack pnpm install`
+  when needed.
 6. Runs the selected **Strategy**, which invokes the **Harness** to create Agents for its steps.
-7. On success, runs the configured check command in the Ticket Worktree, and sends a fix
+7. On success, runs the configured check command in the Workspace, and sends a fix
   prompt to the Harness when it fails (see [Check command](#check-command)).
 8. Once the check passes, or when none is configured, makes sure the work is committed:
-  a Ticket Worktree with uncommitted work gets the commit prompt (see
+  a Workspace with uncommitted work gets the commit prompt (see
   [Commit prompt](#commit-prompt)).
-9. Once the Ticket Worktree is clean, reports done to the Source, merges the ticket
-  branch, records done in the Ledger, completes the ticket on the Source, and then
-  releases its Claim (see [Completion and `done/`](#completion-and-done)).
+9. Once the Workspace is clean, reports done to the Source, merges the ticket
+  branch (in place, there is nothing to merge), records done in the Ledger, completes
+  the ticket on the Source, and then releases its Claim (see
+  [Completion and `done/`](#completion-and-done)).
 10. On Strategy failure, a check that still fails after its fix attempts, work that is
   still uncommitted after the commit prompt, or a done report the Source does not
-  accept, retains the worktree, records an
+  accept, retains the Ticket Worktree (in place, leaves the tree as it is), records an
   **Escalation** in the Ledger, reports the escalation to the Source, and then releases
   the Claim. The ticket keeps its kind and `hitl`. When the report fails, the Claim stays
   (see [Escalation](#escalation)).
@@ -228,7 +236,9 @@ Common flags:
 
 - `--project <name>` processes only tickets in that project.
 - `--limit <count>` caps how many Tickets this run takes from the Ticket Stream.
-- `--concurrency <count>` keeps that many Runners available. Default: `1`.
+- `--concurrency <count>` keeps that many Runners available. Default: `1`. In place,
+  a Concurrency above one fails at start: set `workspace: worktree` first (see
+  [Workspace](#workspace)).
 - `--idle-timeout <duration>` stops after continuous idle time. Default: `5 minutes`.
 - `--poll-interval <duration>` controls empty-poll delay. Default: `10 seconds`.
 - `--source folder|linear` selects a Source tag.
@@ -247,7 +257,7 @@ Examples:
 # Safest first run: one ticket, one Runner
 npx rippls --limit 1 --concurrency 1
 
-# Process up to six tickets with two concurrent Runners
+# Process up to six tickets with two concurrent Runners (needs `workspace: worktree`)
 npx rippls --limit 6 --concurrency 2
 
 # Work only on one project and stop sooner when idle
@@ -315,7 +325,8 @@ A claimed ticket also shows the holder of its Claim: the Engine, the Runner (or 
 Runner yet`), the process ID, and the host. A ticket whose only Claim is stale shows
 the holder of that Claim the same way, marked `Stale Claim`, so you can tell a running
 Claim from one whose process has ended. An escalated ticket shows the reason of its
-Escalation, the attempt count, and the path of its retained Ticket Worktree. For a
+Escalation, the attempt count, and the path of its retained Ticket Worktree, or `in
+place` for a ticket of the in-place Workspace. For a
 failed Strategy, the reason names the step that failed, by its position in the
 Strategy, and how it failed: a Harness error, its time limit, or a verdict other than
 pass. A blocked
@@ -403,7 +414,8 @@ A ticket is done exactly when its work has landed. Rippls never changes the cont
 a ticket to mark it done. When the Strategy succeeds, the Engine:
 
 1. reports done to the Source,
-2. merges the ticket branch and closes the Ticket Worktree,
+2. merges the ticket branch and closes the Ticket Worktree; in place, the work is already
+   on the current branch, and this step does nothing,
 3. records done in the Ledger,
 4. completes the ticket on the Source, which for a folder ticket outside Git or a Linear
    issue is the step that cannot run before the merge,
@@ -430,7 +442,13 @@ For the folder Source, done moves the ticket file into the `done/` of its folder
 as `ticketsDir/done/` or `ticketsDir/auth/done/`, with its content unchanged. Where the
 move happens depends on whether Git tracks the file:
 
-- **Git tracks the ticket file.** The file is in the Ticket Worktree. Rippls moves it
+- **In place.** The file is in the Repository Root. When Git tracks it, Rippls moves it
+  into `done/` and commits the move on the current branch, with the message
+  `chore: move ticket <identity> to done`. When Git does not track it, as in a tickets
+  folder that Git ignores, Rippls moves the file on the filesystem only, with no commit.
+  A Project changes nothing here.
+- **Git tracks the ticket file, with Ticket Worktrees.** The file is in the Ticket
+  Worktree. Rippls moves it
   into `done/` there and commits the move on the ticket branch before the merge, with
   the message `chore: move ticket <identity> to done`. Commit hooks run; a commit they
   reject escalates the ticket. The move lands with the work:
@@ -439,8 +457,9 @@ move happens depends on whether Git tracks the file:
     Repository Root stays open until you merge the project branch. Meanwhile the
     Ledger keeps the ticket done: the Engine does not take it again, and its
     dependents are Unblocked.
-- **Git ignores the tickets folder, or the ticket is not committed.** Rippls moves the
-  file in the tickets folder once the merge succeeds, with or without a project. After
+- **Git ignores the tickets folder, or the ticket is not committed, with Ticket
+  Worktrees.** Rippls moves the file in the tickets folder once the merge succeeds, with
+  or without a project. After
   a failed merge the file stays where it is.
 
 A ticket file that is already in `done/` is not moved again, for example when the Agent
@@ -455,11 +474,13 @@ becomes Eligible again.
 ## Escalation
 
 When a Strategy fails, the check command still fails after its fix attempts, the
-Ticket Worktree still has uncommitted work after the commit prompt, or the Source does
+Workspace still has uncommitted work after the commit prompt, or the Source does
 not accept the done report, the Engine escalates the ticket and halts the run:
 
 1. It records an **Escalation** in the Ledger with the reason, the attempt count, and
-   the path of the retained Ticket Worktree. The reason is `check failure`,
+   the path of the retained Ticket Worktree. In place there is no Ticket Worktree to
+   retain: the Escalation records no path, and the tree is left as it is. The reason
+   is `check failure`,
    `commit failure`, `done report failure`, or, for a failed Strategy, the step that failed, by its position,
    and how its last run failed:
    - `strategy failure: step 2, Harness error`
@@ -498,7 +519,8 @@ Source is an error. The retry:
    the ticket raises it.
 
 The next Engine run takes the ticket again and continues in its retained Ticket
-Worktree, so the earlier work and any fixes you made there are kept.
+Worktree, so the earlier work and any fixes you made there are kept. In place, the retry
+leaves your tree as it is, and the next run continues in the Repository Root.
 
 - **Folder Source:** nothing else happens.
 - **Linear Source:** the `needs-human` label is removed from the issue.
@@ -524,6 +546,9 @@ A relative `ticketsDir` in either file is resolved against the **Repository Root
 With neither file, Rippls uses Codex, Cursor, Claude, and OpenCode, and a folder Source
 at the nearest `.agents/tickets` (see [Quick start](#quick-start-with-folder-tickets)).
 
+With neither file, the work happens in place, one ticket at a time (see
+[Workspace](#workspace)).
+
 To override those defaults, export `engineFileConfig` or a default object:
 
 ```ts
@@ -535,6 +560,25 @@ export const engineFileConfig = {
   },
 };
 ```
+
+### Workspace
+
+```ts
+workspace: 'in-place', // the default; or 'worktree'
+```
+
+- **`in-place`.** The work of every ticket happens in the Repository Root and lands on
+  your current branch, as you would work by hand. No worktree is created and no
+  dependencies are installed. Your `.env`, ports, and end-to-end suite behave as they do
+  for you. Nothing is merged. A Concurrency above one fails at start, since two Agents
+  would share one checkout. The check for a clean Workspace after the Strategy ignores
+  untracked files under the tickets folder, so a queue that Git does not track still
+  works; ignored files never count.
+- **`worktree`.** Each ticket gets its own Ticket Worktree and branch under
+  `.sandcastle/worktrees/`, with its dependencies installed, and success merges it (see
+  [Projects and worktrees](#projects-and-worktrees)). Use it for a Concurrency above one.
+
+ADR-0005 records why in place is the default.
 
 ### Ticket fallbacks
 
@@ -630,7 +674,7 @@ check: {
 },
 ```
 
-- **When.** The Engine runs the command in the Ticket Worktree after the Strategy
+- **When.** The Engine runs the command in the Workspace after the Strategy
   succeeds and before the merge.
 - **Command.** `command` runs for a ticket without a Project. A ticket of a Project that
   `projects` names runs that override; a ticket of any other Project runs `command`.
@@ -744,8 +788,7 @@ strategies: {
   no signal included, fails the step. Your prompt only has to say what to judge.
 
 After each step's prompt the Engine appends the facts it arranged: the Agent is in the
-Ticket Worktree, workspace dependencies are installed, and the ticket text is in the
-prompt. No Strategy sends a commit command: after the check command, the Engine sends
+ticket's Workspace, and the ticket text is in the prompt. No Strategy sends a commit command: after the check command, the Engine sends
 the [commit prompt](#commit-prompt) when the work is not committed yet.
 
 ### Runtime defaults and tracing
@@ -763,8 +806,9 @@ written under `.sandcastle/logs/`, separately from the concise Engine output.
 
 ### Environment of the Agent
 
-An Agent runs with its Ticket Worktree as its working directory, and
-`.sandcastle/.env` is normally ignored by Git, so a Ticket Worktree has none. Rippls reads the
+An Agent runs with its Workspace as its working directory: the Repository Root in
+place, or its Ticket Worktree. `.sandcastle/.env` is normally ignored by Git, so a
+Ticket Worktree has none. Rippls reads the
 `.sandcastle/.env` of the **Repository Root** and passes its keys to every Agent, as
 Sandcastle reads the file for a run in the Repository Root: a key with a value there
 wins over the same key in the shell, and a key with an empty value is left to the
@@ -1040,7 +1084,11 @@ the `kind` or `hitl` labels. While the issue has `needs-human`, Rippls does not 
 
 ## Projects and worktrees
 
-Project determines where successful ticket work accumulates:
+In place, a Project gives no Project Worktree: all work lands on the current branch. A
+Project still scopes `--project` and picks its check command override. The rest of this
+section is about `workspace: worktree`.
+
+With Ticket Worktrees, Project determines where successful ticket work accumulates:
 
 - With no project, a Ticket Worktree branches from the Repository Root's current
 `HEAD`, and success merges back into the Repository Root.
@@ -1108,7 +1156,7 @@ distinguish generated fixtures from hand-written tickets.
 Process a bounded batch before leaving it unattended:
 
 ```bash
-npx rippls --project api --limit 4 --concurrency 2
+npx rippls --project api --limit 4
 ```
 
 Use a smaller Harness rotation:
@@ -1138,7 +1186,8 @@ Investigate a Harness failure:
 
 1. Read the Engine error and `.sandcastle/logs/ticket-<identity>-*.log`, such as
    `ticket-folder:4-step-1.log`.
-2. Inspect the retained Ticket Worktree under `.sandcastle/worktrees/`.
+2. Inspect the retained Ticket Worktree under `.sandcastle/worktrees/`, or, in place,
+   your own tree.
 3. Run `npx rippls status` to see the reason of the Escalation and the retained
    worktree, or read its record in `.git/rippls/ledger/escalations/`.
 4. Address the problem. You may fix it by hand in the retained worktree; the retry

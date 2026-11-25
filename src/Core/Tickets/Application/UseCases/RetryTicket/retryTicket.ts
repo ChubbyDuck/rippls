@@ -9,7 +9,8 @@ import type { RetryTicketCommand } from './command';
 /**
  * Returns an escalated ticket to unattended processing. The Source hears retried,
  * then the Ledger clears the Escalation and keeps its attempt count. The next
- * Engine run takes the ticket and continues in its retained Ticket Worktree.
+ * Engine run takes the ticket and continues in its retained Ticket Worktree, or, in
+ * place, in the Repository Root as it is: a Retry never touches the tree.
  *
  * The Source hears first: a Source may show the ticket as not ready until it hears
  * retried, so a report that fails leaves the Escalation in place for another retry.
@@ -24,7 +25,8 @@ export const retryTicket = Effect.fn('ticket.retry')(function* ({ ticket }: Retr
   yield* source.report(ticket, 'retried');
   yield* ledger.clearEscalation(ticket);
   const { attempts, worktree } = escalation;
+  const where = worktree === undefined ? 'in the Repository Root as it is' : `in its Ticket Worktree at ${worktree}`;
   yield* Console.log(
-    `${ticket} is retried after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}; the next Engine run continues in its Ticket Worktree at ${worktree}`
+    `${ticket} is retried after ${attempts} ${attempts === 1 ? 'attempt' : 'attempts'}; the next Engine run continues ${where}`
   );
 });

@@ -20,6 +20,7 @@ import {
   engineConfigProvider,
   resolveTicketSource,
   strategiesConfig,
+  workspaceConfig,
 } from './EngineConfig';
 
 const defaultValues = {
@@ -461,6 +462,20 @@ test('resolveTicketSource fails when the CLI selects an incomplete source', () =
 test('resolveTicketSource fails when the source is missing', () => {
   expect(Effect.runSync(resolveTicketSource(undefined).pipe(Effect.flip)).cause.message).toBe(
     'Expected object\n  at ["source"]\nExpected object\n  at ["source"]'
+  );
+});
+
+const loadWorkspace = (entries: Record<string, unknown>) => workspaceConfig.parse(engineConfigProvider(entries));
+
+test('workspaceConfig is in place unless set, and reads worktree', () => {
+  expect(Effect.runSync(loadWorkspace({}))).toBe('in-place');
+  expect(Effect.runSync(loadWorkspace({ workspace: 'in-place' }))).toBe('in-place');
+  expect(Effect.runSync(loadWorkspace({ workspace: 'worktree' }))).toBe('worktree');
+});
+
+test('workspaceConfig rejects a Workspace it does not know', () => {
+  expect(Effect.runSync(loadWorkspace({ workspace: 'worktrees' }).pipe(Effect.flip)).cause.message).toBe(
+    'Expected "in-place" | "worktree"\n  at ["workspace"]'
   );
 });
 

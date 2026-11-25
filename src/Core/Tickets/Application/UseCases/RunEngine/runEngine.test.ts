@@ -25,6 +25,7 @@ import { formatTicketId, type TicketId } from '~/Core/Tickets/Domain/Entities/Ti
 import { UnreadableTicket } from '~/Core/Tickets/Domain/Entities/UnreadableTicket/entity';
 import { Project } from '~/Core/Tickets/Domain/Entities/Ticket/properties/Project';
 import type { TicketEvent } from '~/Core/Tickets/Domain/Events/TicketEvent';
+import { ConcurrencyNotInPlace } from '~/Core/Tickets/Domain/Exceptions/ConcurrencyNotInPlace';
 import { EngineHalted } from '~/Core/Tickets/Domain/Exceptions/EngineHalted';
 import { RepositoryRootNotFound } from '~/Core/Tickets/Domain/Exceptions/RepositoryRootNotFound';
 import { StrategyRuntimeError } from '~/Core/Tickets/Domain/Exceptions/StrategyRuntimeError';
@@ -40,7 +41,8 @@ import { type AfterMerge, TicketSource } from '~/Core/Tickets/Ports/TicketSource
 import { type CommandRun, type Worktree, WorktreeManager } from '~/Core/Tickets/Ports/WorktreeManager';
 import { makeLedgerMemory } from '~/Infrastructure/Tickets/Ledger/memory';
 import { StrategySelectorNoop } from '~/Infrastructure/Tickets/StrategySelector/noop';
-import { TicketSourceFolderLive } from '~/Infrastructure/Tickets/TicketSource/folder';
+import { doneMoveMessage, TicketSourceFolderLive } from '~/Infrastructure/Tickets/TicketSource/folder';
+import { WorktreeManagerInPlaceLive } from '~/Infrastructure/Tickets/WorktreeManager/inPlace';
 import { WorktreeManagerLive } from '~/Infrastructure/Tickets/WorktreeManager/sandcastle';
 
 import { retryTicket } from '../RetryTicket/retryTicket';
@@ -1280,7 +1282,7 @@ test('runEngine source.scopeReads.length once every 10 seconds when empty regard
         HarnessSelectorNoop,
         StrategySelectorNoop
       );
-      yield* runEngine({ project, concurrency: 3 }).pipe(
+      yield* runEngine({ project, concurrency: 3, workspace: 'worktree' }).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
@@ -1304,7 +1306,7 @@ test('runEngine claims queued tickets with distinct runners when concurrency all
   );
 
   expect(
-    await Effect.runPromise(runEngine({ project, limit: 2, concurrency: 2 }, ledger).pipe(Effect.provide(layer)))
+    await Effect.runPromise(runEngine({ project, limit: 2, concurrency: 2, workspace: 'worktree' }, ledger).pipe(Effect.provide(layer)))
   ).toBeUndefined();
   expect(new Set(seen.map((claim) => claim?.runner))).toEqual(new Set([claiming, runnerIdFrom(engineId, '1')]));
 });
@@ -1339,7 +1341,7 @@ test('runEngine claims a single unblocked ticket once', async () => {
 
   await Effect.runPromise(
     Effect.gen(function* () {
-      const fiber = yield* runEngine({ project, concurrency: 2 }).pipe(
+      const fiber = yield* runEngine({ project, concurrency: 2, workspace: 'worktree' }).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
@@ -1858,7 +1860,7 @@ test('runEngine stays up while a Runner is in Ticket Processing even if other po
         HarnessSelectorNoop,
         hangingImplementation
       );
-      const fiber = yield* runEngine({ project, concurrency: 2 }).pipe(
+      const fiber = yield* runEngine({ project, concurrency: 2, workspace: 'worktree' }).pipe(
         Effect.provide(layer),
         Effect.forkChild({ startImmediately: true })
       );
@@ -1920,7 +1922,7 @@ test('runEngine zeros the Idle clock when a Claim starts', async () => {
   );
 });
 
-test('runEngine creates a missing worktrees directory under the repository root', async () => {
+test('runEngine with Ticket Worktrees creates a missing worktrees directory under the repository root', async () => {
   const messages: string[] = [];
   await Effect.runPromise(
     Effect.gen(function* () {
@@ -1938,7 +1940,7 @@ test('runEngine creates a missing worktrees directory under the repository root'
         Layer.succeed(Console.Console, capturingConsole(messages))
       );
 
-      yield* executeEngine({ limit: 0 }).pipe(Random.withSeed('test'), Effect.provide(layer));
+      yield* executeEngine({ limit: 0, workspace: 'worktree' }).pipe(Random.withSeed('test'), Effect.provide(layer));
       expect(yield* fs.exists(worktrees)).toBe(true);
       expect(messages).toEqual([
         `Worktrees directory is creating at ${worktrees}`,
@@ -1948,7 +1950,7 @@ test('runEngine creates a missing worktrees directory under the repository root'
   );
 });
 
-test('runEngine stops before any ticket when the worktrees directory is not writable', async () => {
+test('runEngine with Ticket Worktrees stops before any ticket when the worktrees directory is not writable', async () => {
   const ran: Ticket[] = [];
   const messages: string[] = [];
   await Effect.runPromise(
@@ -1970,7 +1972,7 @@ test('runEngine stops before any ticket when the worktrees directory is not writ
         Layer.succeed(Console.Console, capturingConsole(messages))
       );
 
-      const error = yield* executeEngine({ project, limit: 1 }).pipe(
+      const error = yield* executeEngine({ project, limit: 1, workspace: 'worktree' }).pipe(
         Random.withSeed('test'),
         Effect.provide(layer),
         Effect.flip
@@ -1982,7 +1984,7 @@ test('runEngine stops before any ticket when the worktrees directory is not writ
   );
 });
 
-test('runEngine proceeds when the worktrees directory is writable', async () => {
+test('runEngine with Ticket Worktrees proceeds when the worktrees directory is writable', async () => {
   const ran: Ticket[] = [];
   const ticket = sampleTicket(1);
   await Effect.runPromise(
@@ -2000,7 +2002,7 @@ test('runEngine proceeds when the worktrees directory is writable', async () => 
         WorktreeManagerNoop
       );
 
-      yield* executeEngine({ project, limit: 1 }).pipe(Random.withSeed('test'), Effect.provide(layer));
+      yield* executeEngine({ project, limit: 1, workspace: 'worktree' }).pipe(Random.withSeed('test'), Effect.provide(layer));
       expect(ran).toEqual([ticket]);
     }).pipe(Effect.provide(NodeServices.layer))
   );
@@ -2475,4 +2477,242 @@ test('runEngine escalates with no merge when it cannot read whether the Ticket W
   expect(outcome).toEqual(Result.fail(new EngineHalted({ ticketId: id(1), reason: 'commit failure' })));
   expect(merged).toEqual([]);
   expect(ledger.done.size).toBe(0);
+});
+
+// The in-place Workspace. The Engine runs with the in-place Worktree Manager and the
+// folder Source against a temporary Git repository on the branch `trunk`, whose
+// queue Git tracks and whose `*.log` files Git ignores.
+
+test('runEngine in place fails at start with a Concurrency above one, and claims nothing', () => {
+  const ledger = makeLedgerMemory();
+  const source = fakeSource([sampleTicket(1), sampleTicket(2)]);
+  const layer = Layer.mergeAll(source.layer, HarnessSelectorNoop, StrategySelectorNoop);
+
+  const error = Effect.runSync(runEngine({ project, concurrency: 2 }, ledger).pipe(Effect.provide(layer), Effect.flip));
+
+  expect(error).toEqual(new ConcurrencyNotInPlace({ concurrency: 2 }));
+  expect(error.message).toBe(
+    'The in-place Workspace allows a Concurrency of one, and the Concurrency is 2: two Agents would share one checkout. ' +
+      'Set `workspace: worktree` in the config to run Tickets in parallel in Ticket Worktrees, or run with `--concurrency 1`.'
+  );
+  expect(source.reports).toEqual([]);
+  expect(ledger.claims.size).toBe(0);
+});
+
+type InPlaceServices = FileSystem.FileSystem | Path.Path | ChildProcessSpawner.ChildProcessSpawner;
+
+// A repository with the given ticket files in its queue, all committed.
+const inPlaceRepository = (tickets: Readonly<Record<string, string>>) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const root = yield* fs.realPath(yield* fs.makeTempDirectory({ prefix: 'engine-in-place-' }));
+    const ticketsDir = path.join(root, '.agents', 'tickets');
+    yield* gitIn(root, ['init', '-b', 'trunk']);
+    yield* gitIn(root, ['config', 'user.email', 'test@test.com']);
+    yield* gitIn(root, ['config', 'user.name', 'Test']);
+    for (const [file, text] of Object.entries(tickets)) {
+      yield* fs.makeDirectory(path.dirname(path.join(ticketsDir, file)), { recursive: true });
+      yield* fs.writeFileString(path.join(ticketsDir, file), text);
+    }
+    yield* fs.writeFileString(path.join(root, '.gitignore'), '*.log\n');
+    yield* fs.writeFileString(path.join(root, 'base.txt'), 'from trunk\n');
+    yield* gitIn(root, ['add', '-A']);
+    yield* gitIn(root, ['commit', '-m', 'init']);
+    return { root, ticketsDir };
+  });
+
+// The Engine in place on the repository, with the given Harness and Strategies.
+const inPlaceLayer = (
+  repository: { readonly root: string; readonly ticketsDir: string },
+  ledger: ReturnType<typeof makeLedgerMemory>,
+  harness: Harness,
+  strategies: Layer.Layer<StrategySelector> = StrategySelectorNoop,
+  messages: string[] = []
+) =>
+  Layer.mergeAll(
+    TicketSourceFolderLive.pipe(
+      Layer.provide(
+        Layer.merge(
+          ConfigProvider.layer(ConfigProvider.fromUnknown({ ticketsDir: repository.ticketsDir })),
+          gitRootOf(repository.root)
+        )
+      )
+    ),
+    WorktreeManagerInPlaceLive(repository.root, repository.ticketsDir),
+    gitRootOf(repository.root),
+    ledger.layer,
+    Layer.succeed(HarnessSelector, { select: Effect.succeed(harness) }),
+    strategies,
+    Layer.succeed(Console.Console, capturingConsole(messages))
+  );
+
+// A Harness whose Agent writes the work in its directory and commits it.
+const committingHarness: Harness = {
+  name: 'committing',
+  model: 'test-model',
+  run: (_prompt, options) =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      yield* fs.writeFileString(path.join(options.cwd!, `${options.label.replace(/[^A-Za-z0-9-]/g, '-')}.txt`), 'the work\n');
+      yield* gitIn(options.cwd!, ['add', '-A']);
+      yield* gitIn(options.cwd!, ['commit', '-m', `feat: ${options.label}`]);
+      return { completionSignal: undefined };
+    }).pipe(Effect.provide(NodeServices.layer), Effect.orDie),
+};
+
+const runInPlace = <A, E>(effect: Effect.Effect<A, E, InPlaceServices>) =>
+  Effect.runPromise(effect.pipe(Effect.provide(NodeServices.layer)));
+
+test('runEngine in place lands the work and the done move on the current branch, with no merge and no worktree, and records done', async () => {
+  const ledger = makeLedgerMemory();
+  const result = await runInPlace(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repository = yield* inPlaceRepository({ '01-first.md': standardTemplate('01', 'First', 'None') });
+      const { root, ticketsDir } = repository;
+      yield* executeEngine({ limit: 1 }).pipe(
+        Random.withSeed('test'),
+        Effect.provide(inPlaceLayer(repository, ledger, committingHarness))
+      );
+      return {
+        subjects: (yield* gitIn(root, ['log', '--format=%s'])).trim().split('\n'),
+        merges: (yield* gitIn(root, ['log', '--merges', '--format=%s'])).trim(),
+        branches: (yield* gitIn(root, ['branch', '--format=%(refname:short)'])).trim(),
+        worktrees: (yield* gitIn(root, ['worktree', 'list', '--porcelain'])).trim().split('\n')[0],
+        status: (yield* gitIn(root, ['status', '--porcelain', '--untracked-files=all'])).trim(),
+        sandcastle: yield* fs.exists(path.join(root, '.sandcastle')),
+        open: yield* fs.exists(path.join(ticketsDir, '01-first.md')),
+        done: yield* fs.exists(path.join(ticketsDir, 'done', '01-first.md')),
+        root,
+      };
+    })
+  );
+
+  expect(result.subjects).toEqual([doneMoveMessage(id(1)), 'feat: ticket-folder:1', 'init']);
+  expect(result.merges).toBe('');
+  expect(result.branches).toBe('trunk');
+  expect(result.worktrees).toBe(`worktree ${result.root}`);
+  expect(result.status).toBe('');
+  expect(result.sandcastle).toBe(false);
+  expect(result.open).toBe(false);
+  expect(result.done).toBe(true);
+  expect([...ledger.done]).toEqual([id(1)]);
+  expect(ledger.escalated.size).toBe(0);
+  expect(ledger.claims.size).toBe(0);
+});
+
+test('runEngine in place escalates a failed ticket with no worktree path, and a Retry leaves the tree as it is', async () => {
+  const ledger = makeLedgerMemory();
+  const messages: string[] = [];
+  // The Agent leaves half the work uncommitted, and the Strategy fails.
+  const halfDone: Harness = {
+    name: 'half-done',
+    model: 'test-model',
+    run: (_prompt, options) =>
+      FileSystem.FileSystem.pipe(
+        Effect.flatMap((fs) => fs.writeFileString(`${options.cwd!}/half-done.txt`, 'half the work\n')),
+        Effect.as({ completionSignal: undefined }),
+        Effect.provide(NodeServices.layer),
+        Effect.orDie
+      ),
+  };
+  const failingAfterHarness = Layer.succeed(StrategySelector, {
+    select: () =>
+      Effect.succeed({
+        name: 'implementation',
+        run: (ticket: Ticket, harness: Harness) =>
+          harness
+            .run(ticket.body, { label: `ticket-${ticket.id}` })
+            .pipe(Effect.orDie, Effect.as(Result.fail(new StrategyRuntimeError({ step: 1, failure: 'Harness error' })))),
+      }),
+  });
+  const result = await runInPlace(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repository = yield* inPlaceRepository({ '01-first.md': standardTemplate('01', 'First', 'None') });
+      const { root, ticketsDir } = repository;
+      const layer = inPlaceLayer(repository, ledger, halfDone, failingAfterHarness, messages);
+      const halt = yield* executeEngine({ limit: 1 }).pipe(Random.withSeed('test'), Effect.provide(layer), Effect.flip);
+      const escalation = ledger.escalated.get(id(1));
+      const statusAfterRun = (yield* gitIn(root, ['status', '--porcelain', '--untracked-files=all'])).trim();
+      yield* retryTicket({ ticket: id(1) }).pipe(Effect.provide(layer));
+      return {
+        halt,
+        escalation,
+        statusAfterRun,
+        statusAfterRetry: (yield* gitIn(root, ['status', '--porcelain', '--untracked-files=all'])).trim(),
+        halfDone: yield* fs.readFileString(path.join(root, 'half-done.txt')),
+        open: yield* fs.exists(path.join(ticketsDir, '01-first.md')),
+        subjects: (yield* gitIn(root, ['log', '--format=%s'])).trim(),
+        root,
+      };
+    })
+  );
+
+  expect(result.halt).toEqual(new EngineHalted({ ticketId: id(1), reason: 'strategy failure: step 1, Harness error' }));
+  expect(result.escalation).toEqual(
+    new Escalation({ ticket: id(1), reason: 'strategy failure: step 1, Harness error', attempts: 1 })
+  );
+  expect(result.escalation?.worktree).toBeUndefined();
+  expect(messages).toContain(
+    `Ticket folder:1 -- implementation failed (strategy failure: step 1, Harness error) and is escalated after 1 attempt(s); its work stays in the Repository Root at ${result.root} as it is`
+  );
+  expect(messages).toContain(
+    'folder:1 is retried after 1 attempt; the next Engine run continues in the Repository Root as it is'
+  );
+  expect(result.statusAfterRun).toBe('?? half-done.txt');
+  expect(result.statusAfterRetry).toBe(result.statusAfterRun);
+  expect(result.halfDone).toBe('half the work\n');
+  expect(result.open).toBe(true);
+  expect(result.subjects).toBe('init');
+  expect(ledger.escalated.has(id(1))).toBe(false);
+  expect(ledger.done.size).toBe(0);
+});
+
+test('runEngine in place scopes the run to a Project and runs the check command of that Project, on the current branch', async () => {
+  const ledger = makeLedgerMemory();
+  const auth = Schema.decodeSync(Project)('auth');
+  const check = checkOf({
+    command: 'echo default >> check.log',
+    projects: { [auth]: 'echo auth >> check.log' },
+  });
+  const result = await runInPlace(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const repository = yield* inPlaceRepository({
+        '01-root.md': standardTemplate('01', 'Root', 'None'),
+        'auth/01-login.md': standardTemplate('01', 'Login', 'None'),
+        'billing/01-invoice.md': standardTemplate('01', 'Invoice', 'None'),
+      });
+      const { root, ticketsDir } = repository;
+      yield* executeEngine({ project: auth, limit: 1, check }).pipe(
+        Random.withSeed('test'),
+        Effect.provide(inPlaceLayer(repository, ledger, committingHarness))
+      );
+      return {
+        checked: yield* fs.readFileString(path.join(root, 'check.log')),
+        branches: (yield* gitIn(root, ['branch', '--format=%(refname:short)'])).trim(),
+        subjects: (yield* gitIn(root, ['log', '--format=%s'])).trim().split('\n'),
+        sandcastle: yield* fs.exists(path.join(root, '.sandcastle')),
+        open: {
+          root: yield* fs.exists(path.join(ticketsDir, '01-root.md')),
+          login: yield* fs.exists(path.join(ticketsDir, 'auth', '01-login.md')),
+          invoice: yield* fs.exists(path.join(ticketsDir, 'billing', '01-invoice.md')),
+        },
+      };
+    })
+  );
+
+  const login = formatTicketId('folder', 'auth/1');
+  expect(result.checked).toBe('auth\n');
+  expect(result.branches).toBe('trunk');
+  expect(result.subjects).toEqual([doneMoveMessage(login), `feat: ticket-${login}`, 'init']);
+  expect(result.sandcastle).toBe(false);
+  expect(result.open).toEqual({ root: true, login: false, invoice: true });
+  expect([...ledger.done]).toEqual([login]);
 });

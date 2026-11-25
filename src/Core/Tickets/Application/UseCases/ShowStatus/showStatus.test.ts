@@ -347,6 +347,15 @@ describe('showStatus', () => {
     ]);
   });
 
+  it('prints an escalated ticket of the in-place Workspace, which holds no Ticket Worktree, as in place', async () => {
+    const inPlace = new Escalation({ ticket: id(5), reason: 'check failure', attempts: 1 });
+    const layer = setup([ticket(5)], { escalations: [inPlace] });
+
+    expect(await printed(layer)).toEqual([
+      'folder:5  Ticket 5  escalated  (Escalation: check failure, 1 attempt, in place)',
+    ]);
+  });
+
   it('prints each unreadable ticket with its reason, and a dash for a file with no identity', async () => {
     const layer = setup([ticket(1)], { unreadable });
 

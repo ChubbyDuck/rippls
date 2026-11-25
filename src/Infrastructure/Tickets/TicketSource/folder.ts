@@ -324,7 +324,10 @@ const fileToTicket = (text: string, file: TicketFile, fallbacks: TicketFallbacks
   );
 };
 
-/** The fixed message of the commit that moves a ticket into `done/` on its ticket branch. */
+/**
+ * The fixed message of the commit that moves a ticket into `done/` on the branch of
+ * its Workspace: its ticket branch, or, in place, the current branch.
+ */
 export const doneMoveMessage = (ticket: TicketId): string => `chore: move ticket ${ticket} to done`;
 
 // The processing order: the tickets that are not done, then those in a `done/`,
@@ -526,7 +529,10 @@ export const TicketSourceFolderLive = Layer.effect(
       // branch before the merge, so the merge moves the copy in the Repository
       // Root, or the Ledger covers it for a Project ticket. Any other file, as in a
       // tickets folder that Git ignores, waits for the merge: its folder and name
-      // are returned. A file already in `done/` stays where it is.
+      // are returned. A file already in `done/` stays where it is. In place, the
+      // Workspace is the Repository Root: the move is committed on its current
+      // branch, and a file Git does not track moves on the filesystem only, with
+      // no commit, after the merge that does nothing.
       const moveBeforeMerge = (ticket: TicketId, worktree: Worktree) =>
         Effect.gen(function* () {
           const file = yield* fileOf(ticket);

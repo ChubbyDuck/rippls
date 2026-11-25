@@ -21,8 +21,10 @@ export type CommandRun =
 export class WorktreeManager extends Context.Service<
   WorktreeManager,
   {
-    // Both preparations reuse a directory already on disk only when it is the Git
-    // worktree on the expected branch. Otherwise they fail with WorktreeNotExpected.
+    // In Ticket Worktrees, both preparations reuse a directory already on disk only
+    // when it is the Git worktree on the expected branch. Otherwise they fail with
+    // WorktreeNotExpected. In place, both return the Repository Root on its current
+    // branch, and merge and close does nothing.
     readonly prepareProject: (project: Project) => Effect.Effect<Worktree, WorktreeCreationError | WorktreeNotExpected>;
     readonly prepareTicket: (input: {
       readonly id: TicketId;
@@ -37,7 +39,8 @@ export class WorktreeManager extends Context.Service<
       readonly timeLimit: Duration.Input;
     }) => Effect.Effect<CommandRun, WorktreeCommandError>;
     // Whether the worktree is clean: no uncommitted change, and no untracked file
-    // that Git does not ignore.
+    // that Git does not ignore. In place, the untracked files under the tickets
+    // folder do not count.
     readonly isClean: (worktree: Worktree) => Effect.Effect<boolean, WorktreeCommandError>;
   }
 >()('WorktreeManager') {}

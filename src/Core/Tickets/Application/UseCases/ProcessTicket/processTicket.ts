@@ -21,14 +21,20 @@ import { prepareTicketWorktree } from './prepareTicketWorktree';
 // retained Ticket Worktree, the Source hears escalated, and only then is the Claim
 // released. A report that fails is logged, and the Claim stays: the exit that
 // follows the halt reports escalated again, and a later Engine that meets the
-// record finishes it. The Engine then halts.
-const escalate = (ticket: Ticket, worktree: Worktree, reason: string) =>
+// record finishes it. The Engine then halts. In place, the work is in the
+// Repository Root itself: there is no Ticket Worktree to retain, so the Escalation
+// records no path, and the tree is left as it is.
+const escalate = (ticket: Ticket, worktree: Worktree, repositoryRoot: string, reason: string) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
     const source = yield* TicketSource;
-    const escalation = yield* ledger.escalate(ticket.id, { reason, worktree: worktree.path });
+    const inPlace = worktree.path === repositoryRoot;
+    const escalation = yield* ledger.escalate(ticket.id, inPlace ? { reason } : { reason, worktree: worktree.path });
+    const kept = inPlace
+      ? `its work stays in the Repository Root at ${worktree.path} as it is`
+      : `its Ticket Worktree is retained at ${worktree.path}`;
     yield* Console.error(
-      `${ticket.label} failed (${reason}) and is escalated after ${escalation.attempts} attempt(s); its Ticket Worktree is retained at ${worktree.path}`
+      `${ticket.label} failed (${reason}) and is escalated after ${escalation.attempts} attempt(s); ${kept}`
     );
     yield* source.report(ticket.id, 'escalated').pipe(
       Effect.andThen(ledger.release(ticket.id)),
@@ -46,15 +52,17 @@ const escalate = (ticket: Ticket, worktree: Worktree, reason: string) =>
 // done, the Source finishes what it could not do before the merge, and only then
 // is the Claim released. A failure after the merge does not undo the work: it is
 // logged, and the Claim stays, so the exit that follows completes the ticket on the
-// Source again, and a later Engine that meets the record finishes it.
-const landDone = (ticket: Ticket, worktree: Worktree) =>
+// Source again, and a later Engine that meets the record finishes it. In place,
+// the merge does nothing: the work and the done move are already on the current
+// branch.
+const landDone = (ticket: Ticket, worktree: Worktree, repositoryRoot: string) =>
   Effect.gen(function* () {
     const ledger = yield* Ledger;
     const source = yield* TicketSource;
     const worktrees = yield* WorktreeManager;
     const afterMerge = yield* source
       .reportDone(ticket.id, worktree)
-      .pipe(Effect.catchTag('TicketEventNotReported', () => escalate(ticket, worktree, 'done report failure')));
+      .pipe(Effect.catchTag('TicketEventNotReported', () => escalate(ticket, worktree, repositoryRoot, 'done report failure')));
     yield* Effect.suspend(() =>
       Console.log(`${ticket.label} is merging worktree ${worktree.branch}`).pipe(
         Effect.andThen(worktrees.mergeAndClose(worktree))
@@ -93,6 +101,7 @@ const failingOn =
 export const processTicket = ({
   ticket,
   runnerId,
+  repositoryRoot,
   check = defaultCheckConfig,
   commit = defaultCommitConfig,
 }: ProcessTicketCommand) =>
@@ -126,7 +135,7 @@ export const processTicket = ({
       .run(ticket, worktreeHarness)
       .pipe(Effect.withSpan('strategy.run', { attributes: { harness: harness.name, strategy: strategy.name } }));
     if (Result.isFailure(outcome)) {
-      return yield* escalate(ticket, worktree, outcome.failure.message);
+      return yield* escalate(ticket, worktree, repositoryRoot, outcome.failure.message);
     }
     // A check command that cannot run, or a fix the Harness cannot carry out, fails
     // the check as a failing command does.
@@ -137,7 +146,7 @@ export const processTicket = ({
       })
     );
     if (!passed) {
-      return yield* escalate(ticket, worktree, 'check failure');
+      return yield* escalate(ticket, worktree, repositoryRoot, 'check failure');
     }
     // The commit is a post-condition: a worktree still dirty after the commit
     // prompt, one whose state cannot be read, or a commit prompt the Harness fails
@@ -149,9 +158,9 @@ export const processTicket = ({
       })
     );
     if (!committed) {
-      return yield* escalate(ticket, worktree, 'commit failure');
+      return yield* escalate(ticket, worktree, repositoryRoot, 'commit failure');
     }
-    yield* landDone(ticket, worktree);
+    yield* landDone(ticket, worktree, repositoryRoot);
   }).pipe(
     Effect.withSpan('runner.run', {
       attributes: {

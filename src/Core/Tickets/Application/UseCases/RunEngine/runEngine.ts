@@ -1,11 +1,12 @@
 import { Console, Effect, Queue, Stream } from 'effect';
 
 import type { Runner } from '~/Core/Shared/Domain/Entities/Runner';
-import { defaultIdleTimeout, defaultPollInterval } from '~/Core/Shared/Domain/EngineConfig';
+import { defaultIdleTimeout, defaultPollInterval, defaultWorkspace } from '~/Core/Shared/Domain/EngineConfig';
 import { RepositoryRoot } from '~/Core/Shared/Domain/RepositoryRoot';
 import type { EngineId } from '~/Core/Shared/Domain/Properties/EngineId';
 import type { TicketId } from '~/Core/Tickets/Domain/Entities/Ticket/properties/TicketId';
 import { endSaga } from '~/Core/Tickets/Application/Services/endSaga';
+import { ConcurrencyNotInPlace } from '~/Core/Tickets/Domain/Exceptions/ConcurrencyNotInPlace';
 import { Ledger } from '~/Core/Tickets/Ports/Ledger';
 
 import { processTicket } from '../ProcessTicket/processTicket';
@@ -41,13 +42,21 @@ export const runEngine = Effect.fn('engine.run')(function* ({
   project,
   limit,
   concurrency = 1,
+  workspace = defaultWorkspace,
   idleTimeout = defaultIdleTimeout,
   pollInterval = defaultPollInterval,
   check,
   commit,
 }: RunEngineCommand) {
+  // In place, every Runner would share the Repository Root, so the run fails
+  // before it touches anything. In place needs no worktrees directory.
+  if (workspace === 'in-place' && concurrency > 1) {
+    return yield* new ConcurrencyNotInPlace({ concurrency });
+  }
   const root = yield* RepositoryRoot;
-  yield* ensureWorktreesWritable(root);
+  if (workspace === 'worktree') {
+    yield* ensureWorktreesWritable(root);
+  }
   const engine = yield* createEngine;
   yield* reportUnreadable(project);
   const availableRunners = yield* Queue.unbounded<Runner>();
